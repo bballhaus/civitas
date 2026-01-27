@@ -2,4 +2,9 @@
 
 [Link to Wiki](https://github.com/StanfordCS194/win26-Team9/wiki)
 
-Iona
+
+### Project Members 
+An Doan
+erika li
+clara wang
+Iona xia
