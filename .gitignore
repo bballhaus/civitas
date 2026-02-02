@@ -1,0 +1,72 @@
+/.DS_Store
+
+# -----------------------
+# Node / Next.js frontend (inside front_end/)
+# -----------------------
+
+# dependencies
+/front_end/node_modules/
+/front_end/.pnp
+/front_end/.pnp.*
+/front_end/.yarn/*
+!/front_end/.yarn/patches
+!/front_end/.yarn/plugins
+!/front_end/.yarn/releases
+!/front_end/.yarn/versions
+
+# Ignore all node_modules folders
+**/node_modules/
+
+# build output
+/front_end/.next/
+/front_end/out/
+/front_end/build/
+
+# env files
+/front_end/.env*
+/front_end/.vercel
+.env*
+
+# debug logs
+/front_end/npm-debug.log*
+/front_end/yarn-debug.log*
+/front_end/yarn-error.log*
+/front_end/.pnpm-debug.log*
+
+# test coverage
+/front_end/coverage/
+
+# misc
+.DS_Store
+*.pem
+
+# typescript
+*.tsbuildinfo
+/front_end/next-env.d.ts
+
+
+# -----------------------
+# Python / Django Backend (inside back_end/)
+# -----------------------
+
+# virtual environment
+/back_end/venv/
+
+# python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# logs, databases, coverage
+/back_end/*.log
+/back_end/*.coverage
+/back_end/.coverage.*
+/back_end/.cache/
+/back_end/*.sqlite3
+
+# env files 
+/back_end/.env*
+
+# local venv files
+.venv/
+
