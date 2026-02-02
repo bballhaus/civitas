@@ -46,7 +46,7 @@
 
 
 # -----------------------
-# Python / Django Backend (inside back_end/)
+# Python / Django Backend
 # -----------------------
 
 # virtual environment
@@ -64,7 +64,7 @@ __pycache__/
 /back_end/.cache/
 /back_end/*.sqlite3
 
-# env files 
+# env files (if any in Django server)
 /back_end/.env*
 
 # local venv files
