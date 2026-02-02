@@ -1,6 +1,5 @@
 """
-Simple test script to verify Selenium can scrape one event
-Run this first to make sure everything works
+Test script that scrapes one event and saves it to CSV
 """
 
 from selenium import webdriver
@@ -9,9 +8,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+import csv
 import time
 
-TEST_URL = 'https://caleprocure.ca.gov/event/0531/0000037891'
+TEST_URL = 'https://caleprocure.ca.gov/event/3540/35409TSC01'
+OUTPUT_FILE = 'test_event.csv'
 
 def test_selenium_scrape():
     print(f"Testing Selenium scrape on: {TEST_URL}")
@@ -45,66 +46,149 @@ def test_selenium_scrape():
         print("\n3. Extracting data...")
         print("-" * 80)
         
+        # Create dictionary to store event data
+        event_data = {
+            'event_url': TEST_URL,
+            'event_id': '',
+            'title': '',
+            'description': '',
+            'contact_name': '',
+            'contact_email': '',
+            'contact_phone': '',
+            'department': '',
+            'start_date': '',
+            'end_date': '',
+            'format': ''
+        }
+        
+        # Extract event ID from URL
+        parts = TEST_URL.split('/')
+        if len(parts) >= 4:
+            event_data['event_id'] = f"{parts[-2]}/{parts[-1]}"
+        
         # Extract title
         try:
             title_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="eventName"]')
             title = title_elem.text.strip()
-            print(f"Title: {title}")
+            if title and title != '[Event Title]':
+                event_data['title'] = title
+                print(f"✓ Title: {title}")
         except:
-            print("Title: NOT FOUND")
+            print("✗ Title: NOT FOUND")
         
         # Extract description
         try:
             desc_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="descriptiondetails"]')
             desc = desc_elem.text.strip()
-            print(f"Description (first 200 chars): {desc[:200]}...")
+            if desc and desc != '[Detail Description]':
+                event_data['description'] = desc
+                print(f"✓ Description: {desc[:100]}...")
         except:
-            print("Description: NOT FOUND")
+            print("✗ Description: NOT FOUND")
         
         # Extract contact name
         try:
             contact_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="contactName"]')
             contact = contact_elem.text.strip()
-            print(f"Contact Name: {contact}")
+            if contact and contact != '[Contact Name]':
+                event_data['contact_name'] = contact
+                print(f"✓ Contact Name: {contact}")
         except:
-            print("Contact Name: NOT FOUND")
+            print("✗ Contact Name: NOT FOUND")
         
         # Extract email
         try:
             email_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="emailAnchor"]')
             email = email_elem.text.strip()
-            print(f"Email: {email}")
+            if email and email != '[EmailAddress]':
+                event_data['contact_email'] = email
+                print(f"✓ Email: {email}")
         except:
             try:
                 email_elem = driver.find_element(By.ID, 'RESP_INQ_DL0_WK_EMAILID')
                 email = email_elem.text.strip()
-                print(f"Email (alternate): {email}")
+                if email:
+                    event_data['contact_email'] = email
+                    print(f"✓ Email (alternate): {email}")
             except:
-                print("Email: NOT FOUND")
+                print("✗ Email: NOT FOUND")
         
         # Extract phone
         try:
             phone_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="phoneText"]')
             phone = phone_elem.text.strip()
-            print(f"Phone: {phone}")
+            if phone and phone != '[Phone Number]':
+                event_data['contact_phone'] = phone
+                print(f"✓ Phone: {phone}")
         except:
-            print("Phone: NOT FOUND")
+            print("✗ Phone: NOT FOUND")
         
-        # Extract dept
+        # Extract department
         try:
             dept_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="dept"]')
             dept = dept_elem.text.strip()
-            print(f"Department: {dept}")
+            if dept:
+                event_data['department'] = dept
+                print(f"✓ Department: {dept}")
         except:
-            print("Department: NOT FOUND")
+            print("✗ Department: NOT FOUND")
+        
+        # Extract start date
+        try:
+            start_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="eventStartDate"]')
+            start_date = start_elem.text.strip()
+            if start_date:
+                event_data['start_date'] = start_date
+                print(f"✓ Start Date: {start_date}")
+        except:
+            print("✗ Start Date: NOT FOUND")
+        
+        # Extract end date
+        try:
+            end_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="eventEndDate"]')
+            end_date = end_elem.text.strip()
+            if end_date:
+                event_data['end_date'] = end_date
+                print(f"✓ End Date: {end_date}")
+        except:
+            print("✗ End Date: NOT FOUND")
+        
+        # Extract format
+        try:
+            format1_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="format1"]')
+            format2_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="format2"]')
+            format1 = format1_elem.text.strip()
+            format2 = format2_elem.text.strip()
+            if format1 or format2:
+                event_data['format'] = f"{format1} / {format2}".strip(' /')
+                print(f"✓ Format: {event_data['format']}")
+        except:
+            print("✗ Format: NOT FOUND")
         
         print("-" * 80)
-        print("\n✓ Test complete! If you see actual data above (not placeholders),")
-        print("  then Selenium is working and you can run the full scraper.")
-        print("\nPress Ctrl+C when you're done examining the browser window.")
+        
+        # Write to CSV
+        print(f"\n4. Writing data to {OUTPUT_FILE}...")
+        
+        with open(OUTPUT_FILE, mode='w', newline='', encoding='utf-8') as csv_file:
+            fieldnames = [
+                'event_id', 'event_url', 'title', 'description',
+                'department', 'format', 'start_date', 'end_date',
+                'contact_name', 'contact_email', 'contact_phone'
+            ]
+            
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerow(event_data)
+        
+        print(f"✓ Successfully saved to {OUTPUT_FILE}")
+        print("\n" + "=" * 80)
+        print("Test complete!")
+        print(f"Check {OUTPUT_FILE} for the scraped data.")
+        print("\nPress Enter to close browser...")
         
         # Keep browser open so you can inspect
-        input("\nPress Enter to close browser...")
+        input()
         
     except Exception as e:
         print(f"\n✗ Error: {e}")

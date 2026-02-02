@@ -26,19 +26,49 @@ def test_search_results():
     
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 30)  # Increased timeout to 30 seconds
     
     try:
         # Load the search page
         print("\n1. Loading search page...")
         driver.get(SEARCH_URL)
         
-        # Wait for table to load
-        print("2. Waiting for table to populate...")
+        # Wait for table to load and populate with data
+        print("2. Waiting for table to populate (this may take a while)...")
+        
+        # First, wait for the table structure to exist
         wait.until(
             EC.presence_of_element_located((By.CSS_SELECTOR, '[data-if-label="tblBodyTr"]'))
         )
-        time.sleep(3)  # Extra time for data
+        print("   Table structure loaded, waiting for data to populate...")
+        
+        # Now wait for actual data to appear (retry logic)
+        max_retries = 10
+        retry_count = 0
+        event_rows = []
+        
+        while retry_count < max_retries:
+            time.sleep(2)  # Wait between checks
+            event_rows = driver.find_elements(By.CSS_SELECTOR, '[data-if-label="tblBodyTr"]')
+            
+            if event_rows:
+                # Check if first row has actual data (not empty)
+                try:
+                    first_row = event_rows[0]
+                    event_id_elem = first_row.find_element(By.CSS_SELECTOR, '[data-if-label="tdEventId"]')
+                    event_id = event_id_elem.text.strip()
+                    
+                    if event_id and len(event_id) > 0:
+                        print(f"   ✓ Data loaded after {(retry_count + 1) * 2} seconds")
+                        break
+                except:
+                    pass
+            
+            retry_count += 1
+            print(f"   Still waiting... ({retry_count}/{max_retries})")
+        
+        if retry_count >= max_retries:
+            print("   ⚠ Timeout waiting for data, proceeding anyway...")
         
         # Find all event rows
         print("\n3. Finding event rows...")
