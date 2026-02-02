@@ -1,6 +1,5 @@
 
 import lxml.html
-URL_PREFIX = 'https://reedsy.com'
 
 import logging
 import time
@@ -12,7 +11,8 @@ import requests # for making HTTP requests
 logging.basicConfig(level=logging.INFO)
 
 # constants 
-URL_TEMPLATE = 'https://caleprocure.ca.gov/pages/Events-BS3/event-search.aspx'
+BASE_URL = 'https://caleprocure.ca.gov'
+SEARCH_URL = 'https://caleprocure.ca.gov/pages/Events-BS3/event-search.aspx'
 MAX_WAIT = 128 
 OUT_FILE = 'proposals.csv'
 
