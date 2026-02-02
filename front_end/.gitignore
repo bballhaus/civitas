@@ -39,3 +39,26 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# pip / build stuff
+pip-wheel-metadata/
+dist/
+build/
+*.egg-info/
+
+# Environment variables
+.env
+.env.*
+
+# OS junk
+.DS_Store
