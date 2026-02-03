@@ -1,6 +1,6 @@
 """
-Simple Click-and-Scrape
-Just clicks each event and scrapes whatever page opens
+Click-and-Switch-Tab Scraper
+Handles events that open in new tabs
 """
 
 from selenium import webdriver
@@ -18,10 +18,10 @@ SEARCH_URL = 'https://caleprocure.ca.gov/pages/Events-BS3/event-search.aspx'
 OUTPUT_CSV = 'all_events_detailed.csv'
 OUTPUT_JSON = 'all_events_detailed.json'
 
-def scrape_current_page(driver, wait):
-    """Scrape data from whatever page we're currently on - using your proven code"""
+def scrape_event_page(driver, wait):
+    """Scrape data from event detail page - using your proven code"""
     event_data = {
-        'event_url': driver.current_url,  # Just get whatever URL we're on
+        'event_url': driver.current_url,
         'event_id': '',
         'title': '',
         'description': '',
@@ -39,17 +39,16 @@ def scrape_current_page(driver, wait):
     if len(parts) >= 4:
         event_data['event_id'] = f"{parts[-2]}/{parts[-1]}"
     
-    # Wait for JavaScript to load data
+    # Wait for JavaScript to load data - YOUR PROVEN TIMING
     try:
         wait.until(
             EC.presence_of_element_located((By.CSS_SELECTOR, '[data-if-label="eventName"]'))
         )
-        # Give extra time for all data to load
         time.sleep(3)
     except:
         pass
     
-    # Extract title
+    # Extract all fields - exactly like your working code
     try:
         title_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="eventName"]')
         title = title_elem.text.strip()
@@ -58,7 +57,6 @@ def scrape_current_page(driver, wait):
     except:
         pass
     
-    # Extract description
     try:
         desc_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="descriptiondetails"]')
         desc = desc_elem.text.strip()
@@ -67,7 +65,6 @@ def scrape_current_page(driver, wait):
     except:
         pass
     
-    # Extract contact name
     try:
         contact_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="contactName"]')
         contact = contact_elem.text.strip()
@@ -76,7 +73,6 @@ def scrape_current_page(driver, wait):
     except:
         pass
     
-    # Extract email
     try:
         email_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="emailAnchor"]')
         email = email_elem.text.strip()
@@ -91,7 +87,6 @@ def scrape_current_page(driver, wait):
         except:
             pass
     
-    # Extract phone
     try:
         phone_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="phoneText"]')
         phone = phone_elem.text.strip()
@@ -100,7 +95,6 @@ def scrape_current_page(driver, wait):
     except:
         pass
     
-    # Extract department
     try:
         dept_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="dept"]')
         dept = dept_elem.text.strip()
@@ -109,7 +103,6 @@ def scrape_current_page(driver, wait):
     except:
         pass
     
-    # Extract start date
     try:
         start_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="eventStartDate"]')
         start_date = start_elem.text.strip()
@@ -118,7 +111,6 @@ def scrape_current_page(driver, wait):
     except:
         pass
     
-    # Extract end date
     try:
         end_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="eventEndDate"]')
         end_date = end_elem.text.strip()
@@ -127,7 +119,6 @@ def scrape_current_page(driver, wait):
     except:
         pass
     
-    # Extract format
     try:
         format1_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="format1"]')
         format2_elem = driver.find_element(By.CSS_SELECTOR, '[data-if-label="format2"]')
@@ -143,15 +134,14 @@ def scrape_current_page(driver, wait):
 
 def main():
     print("\n" + "=" * 80)
-    print("Simple Click-and-Scrape")
+    print("Tab-Aware Event Scraper")
+    print("Handles events that open in new tabs")
     print("=" * 80)
     
-    # Set up Chrome
     options = webdriver.ChromeOptions()
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920,1080')
-    # options.add_argument('--headless')  # Uncomment to hide browser
     
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
@@ -163,28 +153,25 @@ def main():
         # Load search page
         print("\n1. Loading search page...")
         driver.get(SEARCH_URL)
-        
-        print("2. Waiting for data...")
         time.sleep(10)
         
         # Count events
-        print("\n3. Counting events...")
+        print("\n2. Counting events...")
         all_rows = driver.find_elements(By.CSS_SELECTOR, '[data-if-label^="tblBodyTr"]')
         visible_rows = [row for row in all_rows if 'if-hide' not in (row.get_attribute('class') or '') and row.is_displayed()]
         total_events = len(visible_rows)
         print(f"   Found {total_events} events")
         
-        print("\n4. Scraping events...")
+        print("\n3. Scraping events...")
         print("=" * 80)
         
-        # Process each event
         for i in range(total_events):
             print(f"\nEvent {i+1}/{total_events}:")
             
             try:
-                # Always reload search page to avoid stale elements
+                # Reload search page
                 driver.get(SEARCH_URL)
-                time.sleep(3)
+                time.sleep(10)  # Wait for search page data to populate (was 3, needs 10)
                 
                 # Find all rows again
                 all_rows = driver.find_elements(By.CSS_SELECTOR, '[data-if-label^="tblBodyTr"]')
@@ -196,36 +183,63 @@ def main():
                 
                 row = visible_rows[i]
                 
-                # Get event ID for display
+                # Get event ID
                 try:
                     event_id_text = row.find_element(By.CSS_SELECTOR, '[data-if-label="tdEventId"]').text.strip()
                     print(f"  ID: {event_id_text}")
                 except:
                     pass
                 
-                # Click the event
-                try:
-                    event_id_cell = row.find_element(By.CSS_SELECTOR, '[data-if-label="tdEventId"]')
-                    print(f"  Clicking...")
-                    event_id_cell.click()
-                    time.sleep(2)
-                except Exception as e:
-                    print(f"  ✗ Error clicking: {e}")
-                    continue
+                # Remember current tab
+                original_window = driver.current_window_handle
+                original_windows = driver.window_handles
                 
-                # Scrape whatever page we're on now
-                print(f"  Scraping current page...")
-                event_data = scrape_current_page(driver, wait)
+                # Click event
+                print(f"  Clicking...")
+                event_id_cell = row.find_element(By.CSS_SELECTOR, '[data-if-label="tdEventId"]')
+                event_id_cell.click()
                 
-                # Show what we got
-                if event_data['title']:
-                    print(f"  ✓ Title: {event_data['title'][:60]}...")
-                if event_data['contact_email']:
-                    print(f"    Contact: {event_data['contact_email']}")
-                if event_data['end_date']:
-                    print(f"    End Date: {event_data['end_date']}")
+                # Wait for new tab/window
+                time.sleep(2)
                 
-                all_events.append(event_data)
+                # Check if a new tab opened
+                new_windows = driver.window_handles
+                
+                if len(new_windows) > len(original_windows):
+                    # New tab opened!
+                    print(f"  ✓ New tab opened, switching...")
+                    new_window = [w for w in new_windows if w not in original_windows][0]
+                    driver.switch_to.window(new_window)
+                    
+                    # Scrape the event page
+                    print(f"  Scraping event page...")
+                    event_data = scrape_event_page(driver, wait)
+                    
+                    # Show what we got
+                    if event_data['title']:
+                        print(f"  ✓ Title: {event_data['title'][:60]}...")
+                    if event_data['contact_email']:
+                        print(f"    Contact: {event_data['contact_email']}")
+                    if event_data['end_date']:
+                        print(f"    End Date: {event_data['end_date']}")
+                    
+                    all_events.append(event_data)
+                    
+                    # Close the tab and switch back
+                    driver.close()
+                    driver.switch_to.window(original_window)
+                    
+                else:
+                    # Same window/tab - scrape here
+                    print(f"  No new tab, scraping current page...")
+                    event_data = scrape_event_page(driver, wait)
+                    
+                    if event_data['title']:
+                        print(f"  ✓ Title: {event_data['title'][:60]}...")
+                    if event_data['contact_email']:
+                        print(f"    Contact: {event_data['contact_email']}")
+                    
+                    all_events.append(event_data)
                 
                 # Save progress every 10 events
                 if len(all_events) % 10 == 0:
@@ -242,6 +256,11 @@ def main():
                 break
             except Exception as e:
                 print(f"  ✗ Error: {e}")
+                # Make sure we're back on original window
+                try:
+                    driver.switch_to.window(original_window)
+                except:
+                    pass
                 continue
         
         # Save final results
@@ -265,7 +284,6 @@ def main():
         
         # Save JSON
         if all_events:
-            print(f"Saving to {OUTPUT_JSON}...")
             with open(OUTPUT_JSON, 'w', encoding='utf-8') as f:
                 json.dump({
                     'scrape_date': datetime.now().isoformat(),
@@ -279,11 +297,6 @@ def main():
         
         if all_events:
             print(f"\nTotal events scraped: {len(all_events)}")
-            print("\nSample of first event:")
-            first = all_events[0]
-            print(f"  Event ID: {first['event_id']}")
-            print(f"  Title: {first['title']}")
-            print(f"  Contact: {first['contact_email']}")
         
     except Exception as e:
         print(f"\n✗ Error: {e}")
