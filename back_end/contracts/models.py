@@ -1,0 +1,92 @@
+from django.conf import settings
+from django.db import models
+
+
+class Contract(models.Model):
+    """User-uploaded contract with structured metadata."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='contracts'
+    )
+    title = models.CharField(max_length=255, blank=True)
+    document = models.FileField(upload_to='contracts/%Y/%m/', blank=True, null=True)
+
+    # Core fields
+    issuing_agency = models.CharField(max_length=255)
+    jurisdiction_state = models.CharField(max_length=2, default='CA')
+    jurisdiction_county = models.CharField(max_length=255, null=True, blank=True)
+    jurisdiction_city = models.CharField(max_length=255, null=True, blank=True)
+
+    # Features (structured metadata)
+    required_certifications = models.JSONField(default=list, blank=True)  # ["string"]
+    required_clearances = models.JSONField(default=list, blank=True)     # ["string"]
+    onsite_required = models.BooleanField(null=True, blank=True)
+    work_locations = models.JSONField(default=list, blank=True)          # ["string"]
+    naics_codes = models.JSONField(default=list, blank=True)             # ["string"]
+    industry_tags = models.JSONField(default=list, blank=True)           # ["string"]
+    min_past_performance = models.CharField(max_length=255, null=True, blank=True)
+    contract_value_estimate = models.CharField(max_length=255, null=True, blank=True)
+    timeline_duration = models.CharField(max_length=255, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title or f"Contract {self.id} ({self.issuing_agency})"
+
+
+class UserProfile(models.Model):
+    """User background aggregated from past contracts (certifications, total pay, etc.)."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='profile'
+    )
+    # Total value from past contracts (numeric for calculations; store as string for display flexibility)
+    total_contract_value = models.DecimalField(
+        max_digits=14, decimal_places=2, default=0, blank=True
+    )
+    # Aggregated sets from contracts (deduplicated)
+    certifications = models.JSONField(default=list, blank=True)  # ["string"]
+    clearances = models.JSONField(default=list, blank=True)     # ["string"]
+    naics_codes = models.JSONField(default=list, blank=True)   # ["string"]
+    industry_tags = models.JSONField(default=list, blank=True) # ["string"]
+    work_locations = models.JSONField(default=list, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def refresh_from_contracts(self):
+        """Recalculate profile from user's contracts."""
+        contracts = self.user.contracts.all()
+        certs = set()
+        clearances_set = set()
+        naics = set()
+        tags = set()
+        locations = set()
+        total_val = 0
+        for c in contracts:
+            certs.update(c.required_certifications or [])
+            clearances_set.update(c.required_clearances or [])
+            naics.update(c.naics_codes or [])
+            tags.update(c.industry_tags or [])
+            locations.update(c.work_locations or [])
+            try:
+                total_val += float(
+                    (c.contract_value_estimate or '0').replace(',', '').replace('$', '')
+                )
+            except (ValueError, TypeError):
+                pass
+        self.certifications = list(certs)
+        self.clearances = list(clearances_set)
+        self.naics_codes = list(naics)
+        self.industry_tags = list(tags)
+        self.work_locations = list(locations)
+        self.total_contract_value = total_val
+        self.save()
