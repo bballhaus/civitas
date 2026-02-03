@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Contract, UserProfile
+from .services import extract_metadata_from_document, ExtractionError
 
 
 class ContractSerializer(serializers.ModelSerializer):
@@ -19,6 +20,9 @@ class ContractSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['created_at', 'updated_at']
+        extra_kwargs = {
+            'issuing_agency': {'required': False},
+        }
 
     def get_jurisdiction(self, obj):
         return {
@@ -41,9 +45,26 @@ class ContractSerializer(serializers.ModelSerializer):
         }
 
     def create(self, validated_data):
-        # Extract jurisdiction and features from nested input if provided
-        jurisdiction = self.initial_data.get('jurisdiction', {})
-        features = self.initial_data.get('features', {})
+        jurisdiction = self.initial_data.get('jurisdiction') or {}
+        features = self.initial_data.get('features') or {}
+
+        # Run LLM extraction if document uploaded and extract=true
+        extract = self.initial_data.get('extract')
+        if extract in (True, 'true', '1') and validated_data.get('document'):
+            try:
+                extracted = extract_metadata_from_document(validated_data['document'])
+                # Merge: user-provided values override extracted
+                jurisdiction = {**extracted.get('jurisdiction', {}), **jurisdiction}
+                features = {**extracted.get('features', {}), **features}
+                if not validated_data.get('issuing_agency'):
+                    validated_data['issuing_agency'] = extracted.get('issuing_agency', 'Unknown')
+                if not validated_data.get('title') and extracted.get('title'):
+                    validated_data['title'] = extracted['title']
+            except ExtractionError as e:
+                raise serializers.ValidationError({'document': str(e)})
+
+        if not validated_data.get('issuing_agency'):
+            validated_data['issuing_agency'] = 'Unknown'
 
         validated_data['jurisdiction_state'] = jurisdiction.get(
             'state', validated_data.get('jurisdiction_state', 'CA')

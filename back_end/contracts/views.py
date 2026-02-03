@@ -2,9 +2,31 @@ from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.views import APIView
 
 from .models import Contract, UserProfile
 from .serializers import ContractSerializer, UserProfileSerializer
+from .services import extract_metadata_from_document, ExtractionError
+
+
+class ContractExtractView(APIView):
+    """Extract metadata from a document without saving. Returns structured JSON."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        document = request.FILES.get('document')
+        if not document:
+            return Response(
+                {'document': 'No file provided. Send multipart form with "document" field.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            data = extract_metadata_from_document(document)
+            return Response(data)
+        except ExtractionError as e:
+            return Response({'document': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ContractListCreateView(generics.ListCreateAPIView):
