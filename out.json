@@ -1,0 +1,71 @@
+[
+  {
+    "rfp_id": "caleprocure:3540/35409TSC01",
+    "source": "Cal eProcure",
+    "rfp_url": "https://caleprocure.ca.gov/event/3540/35409TSC01",
+    "title": "9TSC0106 Baker Fire Station-Facility Replacement",
+    "issuing_agency": "CAL FIRE",
+    "jurisdiction": {
+      "state": "CA",
+      "county": null,
+      "city": null
+    },
+    "posted_at": "2025-12-05T11:51:00-08:00",
+    "due_at": "2026-02-02T14:00:00-08:00",
+    "procurement_type": "Sell Event / RFx",
+    "contact": {
+      "name": "Dennis Schrader",
+      "email": "dennis.schrader@fire.ca.gov",
+      "phone": "916/653-5123"
+    },
+    "raw_text": "Major components of project work consist of demolition of the existing fire station and constructing a standard 3-bay fire station. The fire station consists of: 2-engine, 3-bay fire station (R- 2/B/S-2 occupancies), generator/pump building (F1 occupancy), storage building (S-2 occupancy), carport (u occupancy), trash enclosure, above ground fuel vault on-site improvements include grading, pavement, utilities, septic system, LPG tank, drainage, site curb/gutter/sidewalks, site lighting, site fencing, hose wash rack, hydrants, flagpole, facility sign, landscaping, and irrigation. Demolition work includes removal of existing structures, hose rack, tanks, poles, towers, signs, a/c, paving, concrete, sidewalks, curbs, trees and related utilities.",
+    "summary": [
+      "Major components of project work consist of demolition of the existing fire station and constructing a standard 3-bay fire station. The fire station consists of: 2-engine, 3-bay fi..."
+    ],
+    "requirements": [
+      "Major components of project work consist of demolition of the existing fire station and constructing a standard 3-bay fire station.",
+      "The fire station consists of: 2-engine, 3-bay fire station (R- 2/B/S-2 occupancies), generator/pump building (F1 occupancy), storage building (S-2 occupancy), carport (u occupancy), trash enclosure, above ground fuel...",
+      "Demolition work includes removal of existing structures, hose rack, tanks, poles, towers, signs, a/c, paving, concrete, sidewalks, curbs, trees and related utilities."
+    ],
+    "features": {
+      "industry_tags": [
+        "construction/capital",
+        "facilities/maintenance"
+      ],
+      "work_locations": [
+        "Baker Fire Station"
+      ],
+      "work_address": null,
+      "work_address_confidence": "none",
+      "onsite_required": true,
+      "required_certifications": [],
+      "required_clearances": [],
+      "naics_codes": [],
+      "submission_method": null,
+      "contract_value_estimate": null
+    },
+    "constraint_results": [
+      {
+        "name": "deadline_not_passed",
+        "status": "fail",
+        "reason": "now=2026-02-03T12:57:32.763933-08:00 due_at=2026-02-02T14:00:00-08:00"
+      },
+      {
+        "name": "jurisdiction_state_ca",
+        "status": "pass",
+        "reason": "Source is Cal eProcure (CA state portal)."
+      },
+      {
+        "name": "rfp_url_present",
+        "status": "pass",
+        "reason": "Has event_url."
+      }
+    ],
+    "parse_meta": {
+      "method": "csv_heuristics",
+      "warnings": [
+        "CSV-only parse: set-asides/certifications, evaluation criteria, and full submission instructions likely require event page + attachments."
+      ]
+    }
+  }
+]
