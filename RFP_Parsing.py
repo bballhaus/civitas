@@ -90,6 +90,37 @@ def extract_tags(title: str, description: str) -> List[str]:
     return sorted(tags)
 
 
+def extract_address(text: str) -> Optional[str]:
+    """
+    Best-effort: detect explicit addresses in the description/title text.
+    Returns a single address string if found, else None.
+    """
+    t = clean_text(text)
+
+    # Common label-based patterns
+    label_patterns = [
+        re.compile(r"\b(Address|Location|Job Site)\s*:\s*(.+?)(?=\.|;|$)", re.IGNORECASE),
+    ]
+    for pat in label_patterns:
+        m = pat.search(t)
+        if m:
+            addr = m.group(2).strip()
+            return addr[:200]
+
+    # Generic US street address pattern (rough)
+    street_pat = re.compile(
+        r"\b\d{1,6}\s+[A-Za-z0-9.\- ]+\s+(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Parkway|Pkwy)\b"
+        r"(?:,\s*[A-Za-z .'-]+)?(?:,\s*CA)?(?:\s*\d{5})?",
+        re.IGNORECASE
+    )
+    m = street_pat.search(t)
+    if m:
+        return m.group(0).strip()[:200]
+
+    return None
+
+
+
 def extract_locations(title: str, description: str) -> List[str]:
     blob = f"{title} {description}"
     candidates = set()
@@ -201,6 +232,7 @@ def row_to_json(row: Dict[str, str]) -> Dict[str, Any]:
     tags = extract_tags(title, desc_clean)
     locations = extract_locations(title, desc_clean)
     requirements = extract_requirements(desc_clean)
+    addr = extract_address(f"{title} {desc_clean}")
 
     return {
         "rfp_id": f"{SOURCE_PREFIX}:{event_id}" if event_id else None,
@@ -223,6 +255,8 @@ def row_to_json(row: Dict[str, str]) -> Dict[str, Any]:
         "features": {
             "industry_tags": tags,
             "work_locations": locations,
+            "work_address": addr,
+            "work_address_confidence": "explicit" if addr else "none",
             "onsite_required": infer_onsite(tags),
 
             # CSV-only limitations: keep explicit/unknown fields empty

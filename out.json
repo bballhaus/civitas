@@ -35,6 +35,8 @@
       "work_locations": [
         "Baker Fire Station"
       ],
+      "work_address": null,
+      "work_address_confidence": "none",
       "onsite_required": true,
       "required_certifications": [],
       "required_clearances": [],
@@ -46,7 +48,7 @@
       {
         "name": "deadline_not_passed",
         "status": "fail",
-        "reason": "now=2026-02-03T12:53:53.258685-08:00 due_at=2026-02-02T14:00:00-08:00"
+        "reason": "now=2026-02-03T12:57:32.763933-08:00 due_at=2026-02-02T14:00:00-08:00"
       },
       {
         "name": "jurisdiction_state_ca",
