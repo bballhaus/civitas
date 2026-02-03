@@ -18,7 +18,7 @@ DEFAULT_TZ = ZoneInfo("America/Los_Angeles")  # handles PST/PDT
 
 # Broad taxonomy tags across many contract types
 TAG_RULES = {
-    "it/software": ["software", "application", "web", "mobile", "saas", "platform", "system", "implementation", "integration", "api"],
+    "it/software": ["software", "application", "saas", "platform", "implementation", "integration", "api", "database"],
     "cybersecurity": ["cyber", "security", "soc", "siem", "penetration", "vulnerability", "zero trust", "incident response"],
     "data/ai": ["data", "analytics", "warehouse", "etl", "machine learning", "ai", "model", "llm", "forecast", "dashboard", "bi"],
     "cloud/infrastructure": ["cloud", "aws", "azure", "gcp", "infrastructure", "devops", "kubernetes", "network", "hosting"],
@@ -65,9 +65,30 @@ def parse_caleprocure_datetime(dt_str: str) -> Optional[str]:
     return None
 
 def extract_tags(title: str, description: str) -> List[str]:
-    blob = f"{title} {description}".lower()
-    tags = {tag for tag, kws in TAG_RULES.items() if any(k in blob for k in kws)}
+    text = f"{title} {description}".lower()
+
+    tokens = set(re.findall(r"[a-z0-9]+", text))
+
+    def has_keyword(k: str) -> bool:
+        k = k.lower().strip()
+
+        if " " in k:
+            return k in text
+
+        if len(k) <= 2:
+            return k in tokens
+
+        if k in tokens:
+            return True
+        return re.search(rf"\b{re.escape(k)}\b", text) is not None
+
+    tags = set()
+    for tag, keywords in TAG_RULES.items():
+        if any(has_keyword(k) for k in keywords):
+            tags.add(tag)
+
     return sorted(tags)
+
 
 def extract_locations(title: str, description: str) -> List[str]:
     blob = f"{title} {description}"

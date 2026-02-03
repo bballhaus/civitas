@@ -30,9 +30,7 @@
     "features": {
       "industry_tags": [
         "construction/capital",
-        "data/ai",
-        "facilities/maintenance",
-        "it/software"
+        "facilities/maintenance"
       ],
       "work_locations": [
         "Baker Fire Station"
@@ -48,7 +46,7 @@
       {
         "name": "deadline_not_passed",
         "status": "fail",
-        "reason": "now=2026-02-03T12:43:01.953483-08:00 due_at=2026-02-02T14:00:00-08:00"
+        "reason": "now=2026-02-03T12:53:53.258685-08:00 due_at=2026-02-02T14:00:00-08:00"
       },
       {
         "name": "jurisdiction_state_ca",
