@@ -1,20 +1,34 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 interface ExtractedData {
   companyName: string;
   industry: string[];
+  sizeStatus: string[];
+  certifications: string[];
+  capabilities: string[];
+  contractTypes: string[];
+  clearances: string[];
+  naicsCodes: string[];
+  workCities: string[];
+  workCounties: string[];
+  agencyExperience: string[];
+  contractCount: number;
+  totalPastContractValue: string;
+  pastPerformance: string;
+  strategicGoals: string;
 }
 
 // Remove the old helper functions - they're no longer needed
 // The backend handles all the extraction logic
 
 export default function UploadPage() {
+  const router = useRouter();
   const [files, setFiles] = useState<File[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files;
@@ -65,11 +79,10 @@ export default function UploadPage() {
       }
 
       const data = await response.json();
-      if (!data.success) {
-        throw new Error("Document processing failed");
+      if (!data.profile) {
+        throw new Error("Invalid response from server: missing profile data");
       }
-      // Return empty data for now - just parsing, no profile extraction yet
-      return { companyName: '', industry: [] };
+      return data.profile;
     } catch (error) {
       // Handle network errors (backend not running, CORS, etc.)
       if (error instanceof TypeError && error.message.includes("fetch")) {
@@ -101,10 +114,7 @@ export default function UploadPage() {
       const extractedData = await parseDocumentsWithBackend(files);
       setProgress(90);
 
-      // Store extracted data in state to display on page
-      setExtractedData(extractedData);
-
-      // Store extracted data in local storage (for future use)
+      // Store extracted data in local storage
       localStorage.setItem("extractedProfileData", JSON.stringify(extractedData));
 
       // Store uploaded files info
@@ -117,6 +127,11 @@ export default function UploadPage() {
       localStorage.setItem("uploadedFiles", JSON.stringify(fileInfo));
 
       setProgress(100);
+
+      // Redirect to profile setup with pre-filled data
+      setTimeout(() => {
+        router.push("/profile-setup?prefilled=true");
+      }, 500);
     } catch (error) {
       console.error("Error processing files:", error);
       alert(`Error processing files: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`);
@@ -267,43 +282,19 @@ export default function UploadPage() {
                 : "bg-[#3C89C6] text-white hover:bg-[#2d6fa0]"
             } focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:ring-offset-2`}
           >
-            {isProcessing ? "Processing..." : "Process Documents"}
+            {isProcessing ? "Processing..." : "Process Documents & Continue"}
           </button>
         </div>
 
-        {/* Extracted Data Display */}
-        {extractedData && !isProcessing && (
-          <div className="mt-8 bg-white rounded-lg border border-slate-200 p-6">
-            <h2 className="text-xl font-bold text-slate-900 mb-4">
-              Extracted Information
-            </h2>
-            <div className="space-y-4">
-              {extractedData.companyName && (
-                <div>
-                  <h3 className="text-sm font-medium text-slate-700 mb-1">
-                    Company Name
-                  </h3>
-                  <p className="text-slate-900">{extractedData.companyName}</p>
-                </div>
-              )}
-              {extractedData.industry && extractedData.industry.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-medium text-slate-700 mb-1">
-                    Industries
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {extractedData.industry.map((ind, index) => (
-                      <span
-                        key={index}
-                        className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-[#3C89C6] text-white"
-                      >
-                        {ind}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+        {/* Skip Option */}
+        {!isProcessing && (
+          <div className="text-center mt-4">
+            <button
+              onClick={() => router.push("/profile-setup")}
+              className="text-sm text-slate-600 hover:text-slate-900 underline"
+            >
+              Skip and fill out manually
+            </button>
           </div>
         )}
       </div>
