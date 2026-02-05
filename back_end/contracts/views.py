@@ -58,8 +58,8 @@ class ContractDetailView(generics.RetrieveUpdateDestroyAPIView):
             pass
 
 
-class UserProfileView(generics.RetrieveAPIView):
-    """Get current user's profile (background from past contracts)."""
+class UserProfileView(generics.RetrieveUpdateAPIView):
+    """Get or update current user's profile (background from past contracts)."""
     serializer_class = UserProfileSerializer
     permission_classes = [IsAuthenticated]
 

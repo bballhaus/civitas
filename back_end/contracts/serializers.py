@@ -171,22 +171,30 @@ class UserProfileSerializer(serializers.ModelSerializer):
         decimal_places=2,
         read_only=True
     )
+    average_contract_value = serializers.SerializerMethodField()
 
     class Meta:
         model = UserProfile
         fields = [
             'id',
+            'name',
+            'contract_count',
             'total_past_contract_value',
+            'average_contract_value',
             'certifications',
             'clearances',
             'naics_codes',
             'industry_tags',
-            'work_locations',
+            'work_cities',
+            'work_counties',
+            'capabilities',
+            'agency_experience',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = [
-            'total_past_contract_value', 'certifications', 'clearances',
-            'naics_codes', 'industry_tags', 'work_locations',
-            'created_at', 'updated_at',
-        ]
+        read_only_fields = ['id', 'average_contract_value', 'created_at', 'updated_at']
+
+    def get_average_contract_value(self, obj):
+        if obj.contract_count == 0:
+            return 0
+        return round(float(obj.total_contract_value) / obj.contract_count, 2)

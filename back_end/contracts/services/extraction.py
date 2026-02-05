@@ -62,7 +62,7 @@ Rules:
 - rfp_id: RFP number, solicitation ID, contract number, or similar reference (e.g. "RFP-2024-001", "GS-00F-12345")
 - issuing_agency: the government agency or entity that awarded the contract (required)
 - title: contract/project title
-- jurisdiction: state (default CA), county, city
+- jurisdiction: Extract state, county, and city from the document. Prefer explicit mentions (e.g. "County of Inyo", "State of California", "City of Sacramento"). When only a city is named, infer the county from California geography (e.g. Sacramento → Sacramento County, Los Angeles → Los Angeles County, Baker → Inyo County). Default state to "CA" when the document clearly refers to California. Use null only when not mentioned and cannot be inferred.
 - dates: ISO format YYYY-MM-DD when possible; award_date=when contract was awarded, start_date/end_date=period of performance
 - required_certifications: certifications the contract required of the contractor (indicates capabilities the user holds)
 - required_clearances: security clearances required (indicates clearances the user holds)

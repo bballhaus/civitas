@@ -11,5 +11,5 @@ class ContractAdmin(admin.ModelAdmin):
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ['id', 'user', 'total_contract_value', 'created_at']
+    list_display = ['id', 'user', 'name', 'contract_count', 'total_contract_value', 'created_at']
     search_fields = ['user__username']
