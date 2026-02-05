@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import type { ChangeEvent } from "react";
 import Link from "next/link";
+
+type SectionId = "company" | "certifications" | "naics" | "capabilities" | "contract" | "documents" | null;
 
 interface CompanyProfile {
   companyName: string;
@@ -28,35 +31,35 @@ interface CompanyProfile {
   }>;
 }
 
-function SummarySection({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="bg-white rounded-lg border border-slate-200 p-6">
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-        <div className="flex items-center gap-2 shrink-0">
-          <Link
-            href="/profile-setup"
-            className="px-3 py-1.5 text-sm text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors"
-          >
-            Edit
-          </Link>
-          <Link
-            href="/profile-setup"
-            className="px-3 py-1.5 text-sm bg-[#3C89C6] text-white font-medium rounded-md hover:bg-[#2d6fa0] transition-colors"
-          >
-            Save
-          </Link>
-        </div>
-      </div>
-      {children}
-    </section>
-  );
+const inputClass =
+  "w-full px-4 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent bg-white text-slate-700";
+const labelClass = "block text-sm font-medium text-slate-700 mb-2";
+const sectionTitleClass = "text-xl font-semibold text-slate-900 mb-4";
+const sectionClass = "bg-white rounded-lg border border-slate-200 p-6";
+const btnPrimary =
+  "px-3 py-1.5 text-sm bg-[#3C89C6] text-white font-medium rounded-md hover:bg-[#2d6fa0] transition-colors";
+const btnSecondary =
+  "px-3 py-1.5 text-sm text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors";
+
+const PROFILE_SECTIONS: { id: string; label: string }[] = [
+  { id: "section-company", label: "Company Information" },
+  { id: "section-certifications", label: "Certifications & Clearances" },
+  { id: "section-naics", label: "NAICS & Geography" },
+  { id: "section-capabilities", label: "Capabilities & Experience" },
+  { id: "section-contract", label: "Contract History" },
+  { id: "section-documents", label: "Uploaded Documents" },
+];
+
+function scrollToSection(id: string) {
+  const element = document.getElementById(id);
+  if (!element) return;
+  const sidebarTopOffset = 128; // Match sidebar top-32 position (32 * 4px = 128px)
+  const elementPosition = element.getBoundingClientRect().top;
+  const offsetPosition = elementPosition + window.pageYOffset - sidebarTopOffset;
+  window.scrollTo({
+    top: offsetPosition,
+    behavior: "smooth",
+  });
 }
 
 function ListOrEmpty({ items }: { items: string[] }) {
@@ -73,9 +76,10 @@ function ListOrEmpty({ items }: { items: string[] }) {
 export default function ProfilePage() {
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [isClient, setIsClient] = useState(false);
+  const [editingSection, setEditingSection] = useState<SectionId>(null);
+  const [sectionSaving, setSectionSaving] = useState(false);
 
-  useEffect(() => {
-    setIsClient(true);
+  const loadProfile = () => {
     const saved = localStorage.getItem("companyProfile");
     const extracted = localStorage.getItem("extractedProfileData");
     if (saved) {
@@ -92,16 +96,194 @@ export default function ProfilePage() {
         const parsed = JSON.parse(extracted);
         setProfile({
           ...parsed,
-          uploadedFiles: [],
+          uploadedFiles: parsed.uploadedFiles ?? [],
         });
       } catch (e) {
         console.error("Error loading extracted data:", e);
       }
     }
-    if (!saved && !extracted) {
-      setProfile(null);
-    }
+    if (!saved && !extracted) setProfile(null);
+  };
+
+  useEffect(() => {
+    setIsClient(true);
+    loadProfile();
   }, []);
+
+  const handleInputChange = (field: keyof CompanyProfile, value: unknown) => {
+    setProfile((prev) => (prev ? { ...prev, [field]: value } : null));
+  };
+
+  const handleMultiSelect = (
+    field:
+      | "industry"
+      | "sizeStatus"
+      | "certifications"
+      | "clearances"
+      | "naicsCodes"
+      | "workCities"
+      | "workCounties"
+      | "capabilities"
+      | "agencyExperience"
+      | "contractTypes",
+    value: string
+  ) => {
+    setProfile((prev) => {
+      if (!prev) return null;
+      const current = prev[field] ?? [];
+      const updated = current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value];
+      return { ...prev, [field]: updated };
+    });
+  };
+
+  const saveSection = () => {
+    if (!profile) return;
+    setSectionSaving(true);
+    try {
+      localStorage.setItem("companyProfile", JSON.stringify(profile));
+      setEditingSection(null);
+    } finally {
+      setSectionSaving(false);
+    }
+  };
+
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || !profile) return;
+    Array.from(files).forEach((file) => {
+      const fileInfo = {
+        name: file.name,
+        type: file.type || "application/octet-stream",
+        size: file.size,
+        uploadedAt: new Date().toISOString(),
+        parsed: false,
+      };
+      setProfile((prev) =>
+        prev
+          ? { ...prev, uploadedFiles: [...(prev.uploadedFiles ?? []), fileInfo] }
+          : null
+      );
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          const fileData = { ...fileInfo, content: event.target.result as string };
+          const existing = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
+          existing.push(fileData);
+          localStorage.setItem("uploadedFiles", JSON.stringify(existing));
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeFile = (index: number) => {
+    if (!profile?.uploadedFiles) return;
+    const next = profile.uploadedFiles.filter((_, i) => i !== index);
+    setProfile((prev) => (prev ? { ...prev, uploadedFiles: next } : null));
+    const existing = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
+    const name = profile.uploadedFiles[index]?.name;
+    const nextStored = name ? existing.filter((f: { name: string }) => f.name !== name) : existing;
+    localStorage.setItem("uploadedFiles", JSON.stringify(nextStored));
+  };
+
+  function SearchFirstDropdown({
+    field,
+    options,
+    selectedValues,
+    placeholder,
+  }: {
+    field: keyof Pick<
+      CompanyProfile,
+      | "industry"
+      | "sizeStatus"
+      | "certifications"
+      | "clearances"
+      | "naicsCodes"
+      | "workCities"
+      | "workCounties"
+      | "capabilities"
+      | "agencyExperience"
+      | "contractTypes"
+    >;
+    options: string[];
+    selectedValues: string[];
+    placeholder: string;
+  }) {
+    const [searchTerm, setSearchTerm] = useState("");
+    const [isFocused, setIsFocused] = useState(false);
+    const safeSelected = Array.isArray(selectedValues) ? selectedValues : [];
+    const filtered = options.filter((o) =>
+      o.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    return (
+      <div className="relative w-full">
+        <div className="relative">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <svg className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+          <input
+            type="text"
+            value={searchTerm}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setTimeout(() => setIsFocused(false), 200)}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder={placeholder}
+            className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent bg-white text-slate-700"
+          />
+        </div>
+        {isFocused && (
+          <div className="absolute z-20 w-full mt-1 bg-white border border-slate-300 rounded-md shadow-xl max-h-60 overflow-y-auto">
+            <div className="p-2 space-y-1">
+              {filtered.length > 0 ? (
+                filtered.map((option) => (
+                  <label
+                    key={option}
+                    className="flex items-center space-x-2 cursor-pointer p-2 rounded hover:bg-slate-50 transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={safeSelected.includes(option)}
+                      onChange={() => handleMultiSelect(field, option)}
+                      className="w-4 h-4 text-[#3C89C6] border-slate-300 rounded focus:ring-[#3C89C6]"
+                    />
+                    <span className="text-sm text-slate-700">{option}</span>
+                  </label>
+                ))
+              ) : (
+                <div className="p-3 text-sm text-slate-500 italic text-center">No matching results found</div>
+              )}
+            </div>
+          </div>
+        )}
+        {safeSelected.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {safeSelected.map((value) => (
+              <span
+                key={value}
+                className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-[#3C89C6]/10 text-[#3C89C6] border border-[#3C89C6]/20"
+              >
+                {value}
+                <button
+                  type="button"
+                  onClick={() => handleMultiSelect(field, value)}
+                  className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-[#3C89C6] hover:text-white transition-colors"
+                >
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (!isClient) {
     return (
@@ -120,25 +302,15 @@ export default function ProfilePage() {
               <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
               <span className="text-2xl font-bold text-slate-900">Civitas</span>
             </Link>
-            <div className="flex items-center gap-3">
-              <Link
-                href="/profile-setup"
-                className="px-4 py-2 bg-[#3C89C6] text-white font-medium rounded-md hover:bg-[#2d6fa0] transition-colors"
-              >
-                Save Profile
-              </Link>
-            </div>
+            <Link href="/profile-setup" className={btnPrimary}>
+              Save Profile
+            </Link>
           </div>
         </nav>
         <div className="max-w-3xl mx-auto px-6 py-16 text-center">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">No profile yet</h1>
-          <p className="text-slate-600 mb-6">
-            Create or save your company profile to see a summary here.
-          </p>
-          <Link
-            href="/profile-setup"
-            className="inline-flex px-6 py-3 bg-[#3C89C6] text-white font-medium rounded-md hover:bg-[#2d6fa0] transition-colors"
-          >
+          <p className="text-slate-600 mb-6">Create or save your company profile to see a summary here.</p>
+          <Link href="/profile-setup" className={"inline-flex px-6 py-3 " + btnPrimary}>
             Create profile
           </Link>
         </div>
@@ -147,7 +319,7 @@ export default function ProfilePage() {
   }
 
   const hasAnyData =
-    profile.companyName ||
+    !!profile.companyName ||
     (profile.industry?.length ?? 0) > 0 ||
     (profile.certifications?.length ?? 0) > 0 ||
     (profile.clearances?.length ?? 0) > 0 ||
@@ -158,11 +330,37 @@ export default function ProfilePage() {
     (profile.agencyExperience?.length ?? 0) > 0 ||
     (profile.contractTypes?.length ?? 0) > 0 ||
     (profile.sizeStatus?.length ?? 0) > 0 ||
-    profile.contractCount > 0 ||
-    profile.totalPastContractValue ||
-    profile.pastPerformance ||
-    profile.strategicGoals ||
+    (profile.contractCount ?? 0) > 0 ||
+    !!profile.totalPastContractValue ||
+    !!profile.pastPerformance ||
+    !!profile.strategicGoals ||
     (profile.uploadedFiles?.length ?? 0) > 0;
+
+  const SectionHeader = ({
+    title,
+    sectionId,
+  }: {
+    title: string;
+    sectionId: SectionId;
+  }) => (
+    <div className="flex items-start justify-between gap-4 mb-4">
+      <h2 className={sectionTitleClass.replace(" mb-4", "")}>{title}</h2>
+      {editingSection === sectionId ? (
+        <div className="flex items-center gap-2 shrink-0">
+          <button type="button" onClick={() => setEditingSection(null)} className={btnSecondary}>
+            Cancel
+          </button>
+          <button type="button" onClick={saveSection} disabled={sectionSaving} className={btnPrimary + " disabled:opacity-50"}>
+            {sectionSaving ? "Saving..." : "Save"}
+          </button>
+        </div>
+      ) : (
+        <button type="button" onClick={() => setEditingSection(sectionId)} className={btnSecondary}>
+          Edit
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -175,127 +373,362 @@ export default function ProfilePage() {
         </div>
       </nav>
 
-      <div className="max-w-4xl mx-auto px-6 py-10">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-slate-900 mb-2">Your profile</h1>
-          <p className="text-slate-600">
-            Summary of the data you have entered. Use Edit or Save in each section to update.
-          </p>
-        </div>
+      <div className="max-w-7xl mx-auto px-6 py-10 flex gap-10">
+        {hasAnyData && (
+          <aside className="hidden lg:block w-56 shrink-0">
+            <nav className="sticky top-32">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Sections</p>
+              <ul className="space-y-1">
+                {PROFILE_SECTIONS.map(({ id, label }) => (
+                  <li key={id}>
+                    <button
+                      type="button"
+                      onClick={() => scrollToSection(id)}
+                      className="w-full text-left px-3 py-2 text-sm text-slate-700 rounded-md hover:bg-slate-100 hover:text-slate-900 transition-colors"
+                    >
+                      {label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </aside>
+        )}
 
-        {!hasAnyData ? (
-          <div className="bg-white rounded-lg border border-slate-200 p-8 text-center text-slate-500">
-            No data entered yet.{" "}
-            <Link href="/profile-setup" className="text-[#3C89C6] hover:underline">
-              Create your profile
-            </Link>
-            .
+        <div className="min-w-0 flex-1 max-w-4xl">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-slate-900 mb-2">Your profile</h1>
+            <p className="text-slate-600">Click Edit on any section to change it here. Save updates your profile.</p>
           </div>
-        ) : (
-          <div className="space-y-6">
-            <SummarySection title="Company information">
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Company name</p>
-                  <p className="text-slate-900">{profile.companyName || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Industry</p>
-                  <ListOrEmpty items={profile.industry ?? []} />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Size / status</p>
-                  <ListOrEmpty items={profile.sizeStatus ?? []} />
-                </div>
-              </div>
-            </SummarySection>
 
-            <SummarySection title="Certifications & clearances">
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Certifications</p>
-                  <ListOrEmpty items={profile.certifications ?? []} />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Clearances</p>
-                  <ListOrEmpty items={profile.clearances ?? []} />
-                </div>
-              </div>
-            </SummarySection>
-
-            <SummarySection title="NAICS & geography">
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">NAICS codes</p>
-                  <ListOrEmpty items={profile.naicsCodes ?? []} />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Work cities</p>
-                  <ListOrEmpty items={profile.workCities ?? []} />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Work counties</p>
-                  <ListOrEmpty items={profile.workCounties ?? []} />
-                </div>
-              </div>
-            </SummarySection>
-
-            <SummarySection title="Capabilities & experience">
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Capabilities</p>
-                  <ListOrEmpty items={profile.capabilities ?? []} />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Agency experience</p>
-                  <ListOrEmpty items={profile.agencyExperience ?? []} />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Contract types</p>
-                  <ListOrEmpty items={profile.contractTypes ?? []} />
-                </div>
-              </div>
-            </SummarySection>
-
-            <SummarySection title="Contract history">
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Contract count</p>
-                  <p className="text-slate-900">{profile.contractCount ?? 0}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Total past contract value</p>
-                  <p className="text-slate-900">{profile.totalPastContractValue || "—"}</p>
-                </div>
-                {profile.pastPerformance && (
+          {!hasAnyData ? (
+            <div className={sectionClass + " text-center text-slate-500"}>
+              No data entered yet. <Link href="/profile-setup" className="text-[#3C89C6] hover:underline">Create your profile</Link>.
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Company Information */}
+              <section id="section-company" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
+              <SectionHeader title="Company Information" sectionId="company" />
+              {editingSection === "company" ? (
+                <div className="space-y-4">
                   <div>
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Past performance</p>
-                    <p className="text-slate-700 whitespace-pre-wrap">{profile.pastPerformance}</p>
+                    <label className={labelClass}>Company Name *</label>
+                    <input
+                      type="text"
+                      value={profile.companyName}
+                      onChange={(e) => handleInputChange("companyName", e.target.value)}
+                      className={inputClass}
+                      placeholder="Enter your company name"
+                    />
                   </div>
-                )}
-                {profile.strategicGoals && (
                   <div>
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Strategic goals</p>
-                    <p className="text-slate-700 whitespace-pre-wrap">{profile.strategicGoals}</p>
+                    <label className={labelClass}>Industry *</label>
+                    <SearchFirstDropdown
+                      field="industry"
+                      options={["Construction", "Consulting", "Education", "Engineering", "Healthcare", "IT Services", "Logistics", "Manufacturing", "Research & Development", "Security"]}
+                      selectedValues={profile.industry ?? []}
+                      placeholder="Type to search industries..."
+                    />
                   </div>
-                )}
-              </div>
-            </SummarySection>
+                  <div>
+                    <label className={labelClass}>Business Size Status *</label>
+                    <SearchFirstDropdown
+                      field="sizeStatus"
+                      options={["8(a) Business", "HUBZone", "Large Business", "Service-Disabled Veteran-Owned (SDVOSB)", "Small Business", "Small Disadvantaged Business (SDB)", "Veteran-Owned Small Business (VOSB)", "Women-Owned Small Business (WOSB)"]}
+                      selectedValues={profile.sizeStatus ?? []}
+                      placeholder="Type to search size status..."
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Company name</p>
+                    <p className="text-slate-900">{profile.companyName || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Industry</p>
+                    <ListOrEmpty items={profile.industry ?? []} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Size / status</p>
+                    <ListOrEmpty items={profile.sizeStatus ?? []} />
+                  </div>
+                </div>
+              )}
+            </section>
 
-            {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
-              <SummarySection title="Uploaded documents">
+            {/* Certifications & Clearances */}
+            <section id="section-certifications" className={sectionClass}>
+              <SectionHeader title="Certifications & Clearances" sectionId="certifications" />
+              {editingSection === "certifications" ? (
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-sm text-slate-600 mb-2">Click to select certifications</p>
+                    <SearchFirstDropdown
+                      field="certifications"
+                      options={["CMMI", "FedRAMP", "GSA Schedule", "HIPAA Compliance", "ISO 27001", "ISO 9001", "ITAR", "NAICS Codes", "NIST 800-53", "PCI DSS", "SOC 2"]}
+                      selectedValues={profile.certifications ?? []}
+                      placeholder="Type to search certifications..."
+                    />
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-600 mb-2">Select security clearances</p>
+                    <SearchFirstDropdown
+                      field="clearances"
+                      options={["Public Trust", "Secret", "Top Secret", "TS/SCI"]}
+                      selectedValues={profile.clearances ?? []}
+                      placeholder="Type to search clearances..."
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Certifications</p>
+                    <ListOrEmpty items={profile.certifications ?? []} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Clearances</p>
+                    <ListOrEmpty items={profile.clearances ?? []} />
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* NAICS & Geography */}
+            <section id="section-naics" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
+              <SectionHeader title="NAICS & Geography" sectionId="naics" />
+              {editingSection === "naics" ? (
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-sm text-slate-600 mb-2">NAICS codes</p>
+                    <SearchFirstDropdown
+                      field="naicsCodes"
+                      options={["236220", "541330", "541511", "541512", "541519", "541611", "541690"]}
+                      selectedValues={profile.naicsCodes ?? []}
+                      placeholder="Type to search NAICS codes..."
+                    />
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-600 mb-2">Work cities</p>
+                    <SearchFirstDropdown
+                      field="workCities"
+                      options={["Anaheim", "Bakersfield", "Fresno", "Long Beach", "Los Angeles", "Oakland", "Sacramento", "San Diego", "San Francisco", "San Jose"]}
+                      selectedValues={profile.workCities ?? []}
+                      placeholder="Type to search cities..."
+                    />
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-600 mb-2">Work counties</p>
+                    <SearchFirstDropdown
+                      field="workCounties"
+                      options={["Alameda", "Contra Costa", "Fresno", "Los Angeles", "Orange", "Riverside", "Sacramento", "San Bernardino", "San Diego", "San Francisco", "San Mateo", "Santa Clara", "Ventura"]}
+                      selectedValues={profile.workCounties ?? []}
+                      placeholder="Type to search counties..."
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">NAICS codes</p>
+                    <ListOrEmpty items={profile.naicsCodes ?? []} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Work cities</p>
+                    <ListOrEmpty items={profile.workCities ?? []} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Work counties</p>
+                    <ListOrEmpty items={profile.workCounties ?? []} />
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Capabilities & Experience */}
+            <section id="section-capabilities" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
+              <SectionHeader title="Capabilities & Experience" sectionId="capabilities" />
+              {editingSection === "capabilities" ? (
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-sm text-slate-600 mb-2">Core capabilities</p>
+                    <SearchFirstDropdown
+                      field="capabilities"
+                      options={["AI/ML Services", "Cloud Services", "Cybersecurity", "Data Analytics", "Database Management", "DevOps", "Mobile Development", "Network Infrastructure", "Project Management", "Quality Assurance", "Software Development", "System Integration", "Technical Writing", "Training & Support", "Web Development"]}
+                      selectedValues={profile.capabilities ?? []}
+                      placeholder="Type to search capabilities..."
+                    />
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-600 mb-2">Agency experience</p>
+                    <SearchFirstDropdown
+                      field="agencyExperience"
+                      options={["California Dept of Forestry", "California Department of General Services", "California Department of Transportation", "City of Los Angeles", "City of Sacramento", "City of San Francisco", "County of Inyo", "State of California"]}
+                      selectedValues={profile.agencyExperience ?? []}
+                      placeholder="Type to search agencies..."
+                    />
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-600 mb-2">Contract types</p>
+                    <SearchFirstDropdown
+                      field="contractTypes"
+                      options={["BPA (Blanket Purchase Agreement)", "Competitive", "Cost Plus", "Fixed Price", "GSA Schedule", "IDIQ (Indefinite Delivery)", "Multi-year", "Small Business Set-Aside", "Sole Source", "Time & Materials"]}
+                      selectedValues={profile.contractTypes ?? []}
+                      placeholder="Type to search contract types..."
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Capabilities</p>
+                    <ListOrEmpty items={profile.capabilities ?? []} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Agency experience</p>
+                    <ListOrEmpty items={profile.agencyExperience ?? []} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Contract types</p>
+                    <ListOrEmpty items={profile.contractTypes ?? []} />
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Contract History */}
+            <section id="section-contract" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
+              <SectionHeader title="Contract History" sectionId="contract" />
+              {editingSection === "contract" ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className={labelClass}>Contract Count</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={profile.contractCount ?? 0}
+                      onChange={(e) => handleInputChange("contractCount", parseInt(e.target.value) || 0)}
+                      className={inputClass}
+                      placeholder="0"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Total Past Contract Value</label>
+                    <input
+                      type="text"
+                      value={profile.totalPastContractValue ?? ""}
+                      onChange={(e) => handleInputChange("totalPastContractValue", e.target.value)}
+                      className={inputClass}
+                      placeholder="e.g., 1500000 or $1,500,000"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Past Performance</label>
+                    <textarea
+                      value={profile.pastPerformance ?? ""}
+                      onChange={(e) => handleInputChange("pastPerformance", e.target.value)}
+                      className={inputClass + " min-h-[100px]"}
+                      placeholder="Describe past performance..."
+                      rows={4}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Strategic Goals</label>
+                    <textarea
+                      value={profile.strategicGoals ?? ""}
+                      onChange={(e) => handleInputChange("strategicGoals", e.target.value)}
+                      className={inputClass + " min-h-[100px]"}
+                      placeholder="Describe strategic goals..."
+                      rows={4}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Contract count</p>
+                    <p className="text-slate-900">{profile.contractCount ?? 0}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Total past contract value</p>
+                    <p className="text-slate-900">{profile.totalPastContractValue || "—"}</p>
+                  </div>
+                  {(profile.pastPerformance || profile.strategicGoals) && (
+                    <>
+                      {profile.pastPerformance && (
+                        <div>
+                          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Past performance</p>
+                          <p className="text-slate-700 whitespace-pre-wrap">{profile.pastPerformance}</p>
+                        </div>
+                      )}
+                      {profile.strategicGoals && (
+                        <div>
+                          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Strategic goals</p>
+                          <p className="text-slate-700 whitespace-pre-wrap">{profile.strategicGoals}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </section>
+
+            {/* Uploaded Documents - always show so user can add files */}
+            <section id="section-documents" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
+              <SectionHeader title="Uploaded Documents" sectionId="documents" />
+              {editingSection === "documents" ? (
+                <div className="space-y-4">
+                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center hover:border-[#3C89C6] transition-colors">
+                    <input type="file" id="profile-file-upload" multiple accept=".pdf,.doc,.docx,.txt" onChange={handleFileUpload} className="hidden" />
+                    <label htmlFor="profile-file-upload" className="cursor-pointer flex flex-col items-center">
+                      <svg className="w-12 h-12 text-slate-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                      <span className="text-sm font-medium text-slate-700">Click to upload files</span>
+                      <span className="text-xs text-slate-500 mt-1">PDF, DOC, DOCX, TXT</span>
+                    </label>
+                  </div>
+                  {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
+                    <div className="mt-4 space-y-2">
+                      <h3 className="text-sm font-medium text-slate-700 mb-2">Uploaded Files ({profile.uploadedFiles.length})</h3>
+                      {profile.uploadedFiles.map((file, index) => (
+                        <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
+                          <div className="flex items-center space-x-3">
+                            <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <div>
+                              <p className="text-sm font-medium text-slate-900">{file.name}</p>
+                              <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(2)} KB</p>
+                            </div>
+                          </div>
+                          <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (profile.uploadedFiles?.length ?? 0) > 0 ? (
                 <ul className="space-y-2">
-                  {profile.uploadedFiles.map((file, i) => (
+                  {profile.uploadedFiles?.map((file, i) => (
                     <li key={i} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                       <span className="text-slate-700 font-medium">{file.name}</span>
                       <span className="text-slate-500 text-sm">{(file.size / 1024).toFixed(2)} KB</span>
                     </li>
                   ))}
                 </ul>
-              </SummarySection>
-            )}
+              ) : (
+                <p className="text-slate-500 italic text-sm">No documents uploaded. Click Edit to add files.</p>
+              )}
+            </section>
           </div>
         )}
+        </div>
       </div>
     </div>
   );
