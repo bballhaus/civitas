@@ -14,6 +14,7 @@ class Contract(models.Model):
     document = models.FileField(upload_to='contracts/%Y/%m/', blank=True, null=True)
 
     # Core fields
+    rfp_id = models.CharField(max_length=255, null=True, blank=True)
     issuing_agency = models.CharField(max_length=255)
     jurisdiction_state = models.CharField(max_length=2, default='CA')
     jurisdiction_county = models.CharField(max_length=255, null=True, blank=True)
@@ -29,6 +30,12 @@ class Contract(models.Model):
     min_past_performance = models.CharField(max_length=255, null=True, blank=True)
     contract_value_estimate = models.CharField(max_length=255, null=True, blank=True)
     timeline_duration = models.CharField(max_length=255, null=True, blank=True)
+    work_description = models.TextField(null=True, blank=True)
+
+    # Dates (stored as ISO strings for flexibility; e.g. "2020-01-15")
+    award_date = models.CharField(max_length=50, null=True, blank=True)
+    start_date = models.CharField(max_length=50, null=True, blank=True)
+    end_date = models.CharField(max_length=50, null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

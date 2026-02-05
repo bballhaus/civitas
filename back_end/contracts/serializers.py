@@ -6,6 +6,7 @@ from .services import extract_metadata_from_document, ExtractionError
 class ContractSerializer(serializers.ModelSerializer):
     jurisdiction = serializers.SerializerMethodField()
     features = serializers.SerializerMethodField()
+    dates = serializers.SerializerMethodField()
 
     class Meta:
         model = Contract
@@ -13,9 +14,11 @@ class ContractSerializer(serializers.ModelSerializer):
             'id',
             'title',
             'document',
+            'rfp_id',
             'issuing_agency',
             'jurisdiction',
             'features',
+            'dates',
             'created_at',
             'updated_at',
         ]
@@ -42,24 +45,35 @@ class ContractSerializer(serializers.ModelSerializer):
             'min_past_performance': obj.min_past_performance,
             'contract_value_estimate': obj.contract_value_estimate,
             'timeline_duration': obj.timeline_duration,
+            'work_description': obj.work_description,
+        }
+
+    def get_dates(self, obj):
+        return {
+            'award_date': obj.award_date,
+            'start_date': obj.start_date,
+            'end_date': obj.end_date,
         }
 
     def create(self, validated_data):
         jurisdiction = self.initial_data.get('jurisdiction') or {}
         features = self.initial_data.get('features') or {}
+        dates = self.initial_data.get('dates') or {}
 
         # Run LLM extraction if document uploaded and extract=true
         extract = self.initial_data.get('extract')
         if extract in (True, 'true', '1') and validated_data.get('document'):
             try:
                 extracted = extract_metadata_from_document(validated_data['document'])
-                # Merge: user-provided values override extracted
                 jurisdiction = {**extracted.get('jurisdiction', {}), **jurisdiction}
                 features = {**extracted.get('features', {}), **features}
+                dates = {**extracted.get('dates', {}), **dates}
                 if not validated_data.get('issuing_agency'):
                     validated_data['issuing_agency'] = extracted.get('issuing_agency', 'Unknown')
                 if not validated_data.get('title') and extracted.get('title'):
                     validated_data['title'] = extracted['title']
+                if not validated_data.get('rfp_id') and extracted.get('rfp_id'):
+                    validated_data['rfp_id'] = extracted['rfp_id']
             except ExtractionError as e:
                 raise serializers.ValidationError({'document': str(e)})
 
@@ -88,6 +102,10 @@ class ContractSerializer(serializers.ModelSerializer):
             'contract_value_estimate'
         )
         validated_data['timeline_duration'] = features.get('timeline_duration')
+        validated_data['work_description'] = features.get('work_description')
+        validated_data['award_date'] = dates.get('award_date')
+        validated_data['start_date'] = dates.get('start_date')
+        validated_data['end_date'] = dates.get('end_date')
 
         validated_data['user'] = self.context['request'].user
         instance = super().create(validated_data)
@@ -98,6 +116,7 @@ class ContractSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         jurisdiction = self.initial_data.get('jurisdiction')
         features = self.initial_data.get('features')
+        dates = self.initial_data.get('dates')
 
         if jurisdiction:
             instance.jurisdiction_state = jurisdiction.get(
@@ -126,9 +145,18 @@ class ContractSerializer(serializers.ModelSerializer):
                 ]
             if 'timeline_duration' in features:
                 instance.timeline_duration = features['timeline_duration']
+            if 'work_description' in features:
+                instance.work_description = features['work_description']
+        if dates:
+            if 'award_date' in dates:
+                instance.award_date = dates['award_date']
+            if 'start_date' in dates:
+                instance.start_date = dates['start_date']
+            if 'end_date' in dates:
+                instance.end_date = dates['end_date']
 
         for attr, value in validated_data.items():
-            if attr not in ('jurisdiction', 'features'):
+            if attr not in ('jurisdiction', 'features', 'dates'):
                 setattr(instance, attr, value)
         instance.save()
         profile, _ = UserProfile.objects.get_or_create(user=instance.user)

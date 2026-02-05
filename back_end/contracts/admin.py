@@ -4,9 +4,9 @@ from .models import Contract, UserProfile
 
 @admin.register(Contract)
 class ContractAdmin(admin.ModelAdmin):
-    list_display = ['id', 'title', 'user', 'issuing_agency', 'jurisdiction_state', 'created_at']
+    list_display = ['id', 'title', 'rfp_id', 'user', 'issuing_agency', 'jurisdiction_state', 'created_at']
     list_filter = ['jurisdiction_state', 'created_at']
-    search_fields = ['title', 'issuing_agency', 'user__username']
+    search_fields = ['title', 'rfp_id', 'issuing_agency', 'user__username']
 
 
 @admin.register(UserProfile)

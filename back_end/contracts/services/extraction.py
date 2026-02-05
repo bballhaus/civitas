@@ -23,12 +23,18 @@ class ExtractionError(Exception):
 
 # Expected output schema for LLM
 EXTRACTION_SCHEMA = {
+    "rfp_id": "string|null",
     "issuing_agency": "string",
     "title": "string|null",
     "jurisdiction": {
         "state": "CA",
         "county": "string|null",
         "city": "string|null",
+    },
+    "dates": {
+        "award_date": "string|null",
+        "start_date": "string|null",
+        "end_date": "string|null",
     },
     "features": {
         "required_certifications": ["string"],
@@ -40,22 +46,30 @@ EXTRACTION_SCHEMA = {
         "min_past_performance": "string|null",
         "contract_value_estimate": "string|null",
         "timeline_duration": "string|null",
+        "work_description": "string|null",
     },
 }
 
-EXTRACTION_PROMPT = f"""Extract metadata from this government/contract document. Return valid JSON only, no markdown or explanation.
+# Schema in prompt; braces escaped so .format(text=...) doesn't interpret them
+_SCHEMA_STR = json.dumps(EXTRACTION_SCHEMA, indent=2).replace("{", "{{").replace("}", "}}")
+
+EXTRACTION_PROMPT = f"""Extract metadata from this document. It is a PAST SUCCESSFUL PROPOSAL - a government contract that the contractor won. Extract details that describe their demonstrated capabilities and past performance. Return valid JSON only, no markdown or explanation.
 
 Expected schema:
-{json.dumps(EXTRACTION_SCHEMA, indent=2)}
+{_SCHEMA_STR}
 
 Rules:
-- issuing_agency: the government agency or entity issuing the contract (required)
-- title: contract title if evident, else null
-- jurisdiction: state (default CA), county, city - use null if not specified
-- features: extract arrays as lists; use null for unknown booleans/strings
-- contract_value_estimate: dollar amount as string (e.g. "500000" or "$500,000")
+- rfp_id: RFP number, solicitation ID, contract number, or similar reference (e.g. "RFP-2024-001", "GS-00F-12345")
+- issuing_agency: the government agency or entity that awarded the contract (required)
+- title: contract/project title
+- jurisdiction: state (default CA), county, city
+- dates: ISO format YYYY-MM-DD when possible; award_date=when contract was awarded, start_date/end_date=period of performance
+- required_certifications: certifications the contract required of the contractor (indicates capabilities the user holds)
+- required_clearances: security clearances required (indicates clearances the user holds)
+- contract_value_estimate: total contract value in dollars as string (e.g. "500000" or "$500,000")
+- work_description: 1-3 sentences describing the type of work, scope, or services performed (e.g. "Fire station design and construction", "IT support and maintenance")
+- industry_tags: relevant sectors (e.g. construction, IT, healthcare, facilities)
 - naics_codes: North American Industry Classification codes if mentioned
-- industry_tags: relevant sectors (e.g. IT, construction, healthcare)
 
 Document text:
 ---
@@ -168,14 +182,21 @@ def _parse_llm_json(raw: str) -> dict[str, Any]:
 def _normalize_result(data: dict[str, Any]) -> dict[str, Any]:
     """Ensure result matches expected structure with safe defaults."""
     jurisdiction = data.get("jurisdiction") or {}
+    dates = data.get("dates") or {}
     features = data.get("features") or {}
     return {
+        "rfp_id": data.get("rfp_id"),
         "issuing_agency": data.get("issuing_agency") or "Unknown",
         "title": data.get("title"),
         "jurisdiction": {
             "state": jurisdiction.get("state") or "CA",
             "county": jurisdiction.get("county"),
             "city": jurisdiction.get("city"),
+        },
+        "dates": {
+            "award_date": dates.get("award_date"),
+            "start_date": dates.get("start_date"),
+            "end_date": dates.get("end_date"),
         },
         "features": {
             "required_certifications": features.get("required_certifications") or [],
@@ -187,6 +208,7 @@ def _normalize_result(data: dict[str, Any]) -> dict[str, Any]:
             "min_past_performance": features.get("min_past_performance"),
             "contract_value_estimate": features.get("contract_value_estimate"),
             "timeline_duration": features.get("timeline_duration"),
+            "work_description": features.get("work_description"),
         },
     }
 
