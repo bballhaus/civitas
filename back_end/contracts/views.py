@@ -1,5 +1,5 @@
 from rest_framework import status, generics
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
@@ -27,6 +27,49 @@ class ContractExtractView(APIView):
             return Response(data)
         except ExtractionError as e:
             return Response({'document': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProfileExtractView(APIView):
+    """Accept document uploads and parse them (minimal version - just parse, no aggregation)."""
+
+    permission_classes = [AllowAny]  # No auth required for initial profile setup
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        documents = request.FILES.getlist('documents')
+        if not documents:
+            return Response(
+                {'error': 'No files provided. Send multipart form with "documents" field (multiple files).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        all_extracted = []
+        errors = []
+
+        # Process each document
+        for doc in documents:
+            try:
+                extracted = extract_metadata_from_document(doc)
+                all_extracted.append(extracted)
+            except ExtractionError as e:
+                errors.append({'file': doc.name, 'error': str(e)})
+
+        if not all_extracted:
+            error_message = 'Failed to extract data from any documents.'
+            if errors:
+                error_details = '; '.join([f"{e.get('file', 'Unknown')}: {e.get('error', 'Unknown error')}" for e in errors])
+                error_message += f' Details: {error_details}'
+            return Response(
+                {'error': error_message, 'details': errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Just return success - parsing is done
+        return Response({
+            'success': True,
+            'processed': len(all_extracted),
+            'errors': errors if errors else None
+        })
 
 
 class ContractListCreateView(generics.ListCreateAPIView):

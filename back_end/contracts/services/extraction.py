@@ -25,6 +25,7 @@ class ExtractionError(Exception):
 EXTRACTION_SCHEMA = {
     "rfp_id": "string|null",
     "issuing_agency": "string",
+    "contractor_name": "string|null",
     "title": "string|null",
     "jurisdiction": {
         "state": "CA",
@@ -61,6 +62,7 @@ Expected schema:
 Rules:
 - rfp_id: RFP number, solicitation ID, contract number, or similar reference (e.g. "RFP-2024-001", "GS-00F-12345")
 - issuing_agency: the government agency or entity that awarded the contract (required)
+- contractor_name: the name of the COMPANY/CONTRACTOR that won this contract (the business that performed the work, NOT the government agency). Look for phrases like "awarded to", "contractor", "vendor", "company name", or the business entity name in the document.
 - title: contract/project title
 - jurisdiction: Extract state, county, and city from the document. Prefer explicit mentions (e.g. "County of Inyo", "State of California", "City of Sacramento"). When only a city is named, infer the county from California geography (e.g. Sacramento → Sacramento County, Los Angeles → Los Angeles County, Baker → Inyo County). Default state to "CA" when the document clearly refers to California. Use null only when not mentioned and cannot be inferred.
 - dates: ISO format YYYY-MM-DD when possible; award_date=when contract was awarded, start_date/end_date=period of performance
@@ -187,6 +189,7 @@ def _normalize_result(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "rfp_id": data.get("rfp_id"),
         "issuing_agency": data.get("issuing_agency") or "Unknown",
+        "contractor_name": data.get("contractor_name"),
         "title": data.get("title"),
         "jurisdiction": {
             "state": jurisdiction.get("state") or "CA",
