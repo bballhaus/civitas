@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 interface ExtractedData {
   companyName: string;
@@ -145,10 +146,16 @@ export default function UploadPage() {
       {/* Navigation */}
       <nav className="sticky top-0 bg-white border-b border-slate-200 z-10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2">
             <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
             <span className="text-2xl font-bold text-slate-900">Civitas</span>
-          </div>
+          </Link>
+          <Link
+            href="/profile"
+            className="px-4 py-2 bg-[#3C89C6] text-white font-medium rounded-md hover:bg-[#2d6fa0] transition-colors"
+          >
+            Save Profile
+          </Link>
         </div>
       </nav>
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 
 interface CompanyProfile {
   companyName: string;
@@ -30,6 +30,7 @@ interface CompanyProfile {
 
 export default function ProfileSetup() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const isPrefilled = searchParams.get("prefilled") === "true";
 
   const [profile, setProfile] = useState<CompanyProfile>({
@@ -285,6 +286,7 @@ export default function ProfileSetup() {
 
       setIsSaved(true);
       setTimeout(() => setIsSaved(false), 3000);
+      router.push("/profile");
     } catch (error) {
       console.error("Error saving profile:", error);
       alert(`Error saving profile: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`);
@@ -474,12 +476,20 @@ export default function ProfileSetup() {
             />
             <span className="text-2xl font-bold text-slate-900">Civitas</span>
           </div>
-          <button
-            onClick={() => (window.location.href = "/")}
-            className="px-4 py-2 text-sm border rounded-md hover:bg-slate-50"
-          >
-            Back to Home
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => router.push("/profile")}
+              className="px-4 py-2 bg-[#3C89C6] text-white font-medium rounded-md hover:bg-[#2d6fa0] transition-colors"
+            >
+              Save Profile
+            </button>
+            <button
+              onClick={() => router.push("/")}
+              className="px-4 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50"
+            >
+              Back to Home
+            </button>
+          </div>
         </div>
       </nav>
 
