@@ -1,8 +1,13 @@
 python-dotenv==1.1.1
 requests==2.32.4
 tenacity==9.1.2
-tiktoken==0.11.0
 tqdm==4.67.1
 sqlparse==0.5.0
-asgiref3.11.0
+asgiref==3.11.0
 Django==6.0.1
+djangorestframework==3.15.2
+django-cors-headers==4.6.0
+Pillow==11.0.0
+pdfplumber==0.11.4
+groq==0.10.0
+httpx<0.28
