@@ -478,12 +478,6 @@ export default function ProfileSetup() {
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => router.push("/profile")}
-              className="px-4 py-2 bg-[#3C89C6] text-white font-medium rounded-md hover:bg-[#2d6fa0] transition-colors"
-            >
-              Save Profile
-            </button>
-            <button
               onClick={() => router.push("/")}
               className="px-4 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50"
             >
