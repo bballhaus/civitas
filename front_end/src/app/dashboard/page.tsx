@@ -49,227 +49,88 @@ const FALLBACK_RFPS: RFP[] = [
   { id: "fallback-1", title: "Sample RFP (API unavailable)", agency: "Sample Agency", location: "California", deadline: "TBD", estimatedValue: "TBD", industry: "Consulting", naicsCodes: [], capabilities: ["Consulting"], certifications: [], contractType: "RFx", description: "Connect to the webscraping data to see real Cal eProcure events." },
 ];
 
-function parseDeadline(deadline: string): Date | null {
-  const normalized = deadline?.trim();
-  if (!normalized || normalized.toUpperCase() === "TBD") return null;
-
-  const direct = Date.parse(normalized);
-  if (!Number.isNaN(direct)) return new Date(direct);
-
-  const cleaned = normalized
-    .replace(/\b(PST|PDT)\b/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const m = cleaned.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(AM|PM)$/i
-  );
-  if (!m) return null;
-
-  const mm = Number(m[1]);
-  const dd = Number(m[2]);
-  const yyyy = Number(m[3]);
-  let hh = Number(m[4]);
-  const min = Number(m[5]);
-  const ampm = m[6].toUpperCase();
-
-  if (ampm === "PM" && hh !== 12) hh += 12;
-  if (ampm === "AM" && hh === 12) hh = 0;
-
-  return new Date(yyyy, mm - 1, dd, hh, min, 0);
-}
-
-function clamp(n: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, n));
-}
-
-function normalizeText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function tokenize(value: string): string[] {
-  const normalized = normalizeText(value);
-  if (!normalized) return [];
-  return normalized.split(" ").filter((token) => token.length > 2);
-}
-
-function toTokenSet(values: string[]): Set<string> {
-  const tokens = values.flatMap((value) => tokenize(value));
-  return new Set(tokens);
-}
-
-function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 && b.size === 0) return 0;
-  let intersection = 0;
-  for (const item of a) if (b.has(item)) intersection += 1;
-  const union = a.size + b.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
-
-function countNaicsOverlap(rfpCodes: string[], profileCodes: string[]): string[] {
-  if (rfpCodes.length === 0 || profileCodes.length === 0) return [];
-  const normalizedProfile = profileCodes.map((code) => code.trim());
-  return rfpCodes.filter((code) =>
-    normalizedProfile.some((profileCode) =>
-      profileCode === code || profileCode.startsWith(code) || code.startsWith(profileCode)
-    )
-  );
-}
-
-function findTokenOverlap(values: string[], profileTokens: Set<string>): string[] {
-  return values.filter((value) => {
-    const tokens = tokenize(value);
-    return tokens.some((token) => profileTokens.has(token));
-  });
-}
-
-function scoreFromSimilarity(sim: number, maxPoints: number) {
-  const s = clamp(sim, 0, 1);
-  return maxPoints * (0.15 + 0.85 * s);
-}
-
 function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch {
   const positiveReasons: string[] = [];
   const negativeReasons: string[] = [];
-  let score = 40;
+  let score = 50;
 
   if (!profile) {
-    return {
-      score: 50,
-      reasons: ["Complete your profile for personalized match scores"],
-      positiveReasons: [],
-      negativeReasons: [],
-    };
+    return { score: 50, reasons: ["Complete your profile for personalized match scores"], positiveReasons: [], negativeReasons: [] };
   }
 
-  const profileIndustryTokens = toTokenSet(profile.industry ?? []);
+  const profileIndustry = (profile.industry ?? []).map((i) => i.toLowerCase());
   const profileNaics = profile.naicsCodes ?? [];
-  const profileCapsTokens = toTokenSet(profile.capabilities ?? []);
-  const profileCertTokens = toTokenSet(profile.certifications ?? []);
-  const profileAgencyTokens = toTokenSet(profile.agencyExperience ?? []);
-  const profileContractTokens = toTokenSet(profile.contractTypes ?? []);
-  const profileLocationTokens = toTokenSet([...(profile.workCities ?? []), ...(profile.workCounties ?? [])]);
+  const profileCaps = (profile.capabilities ?? []).map((c) => c.toLowerCase());
+  const profileCerts = (profile.certifications ?? []).map((c) => c.toLowerCase());
+  const profileContractTypes = (profile.contractTypes ?? []).map((t) => t.toLowerCase());
+  const profileAgencies = (profile.agencyExperience ?? []).map((a) => a.toLowerCase());
+  const profileCities = (profile.workCities ?? []).map((c) => c.toLowerCase());
+  const profileCounties = (profile.workCounties ?? []).map((c) => c.toLowerCase());
 
-  const rfpIndustryTokens = toTokenSet([rfp.industry ?? ""]);
-  const rfpCapTokens = toTokenSet(rfp.capabilities ?? []);
-  const rfpAgencyTokens = toTokenSet([rfp.agency ?? ""]);
-  const rfpContractTokens = toTokenSet([rfp.contractType ?? ""]);
-  const rfpLocationTokens = toTokenSet([rfp.location ?? ""]);
-  const rfpDescTokens = toTokenSet([rfp.description ?? "", rfp.title ?? ""]);
-
-  const due = parseDeadline(rfp.deadline);
-  if (due) {
-    const now = new Date();
-    if (now > due) {
-      score = 5;
-      negativeReasons.push("Deadline has passed.");
-      const reasons = [
-        ...positiveReasons.map((r) => `✓ ${r}`),
-        ...negativeReasons.map((r) => `✗ ${r}`),
-      ];
-      return { score, reasons, positiveReasons, negativeReasons };
-    }
-    positiveReasons.push("Deadline is still open.");
-    score += 6;
-  } else if (rfp.deadline?.toUpperCase() !== "TBD") {
-    negativeReasons.push("Could not parse deadline.");
+  if (profileIndustry.includes(rfp.industry.toLowerCase())) {
+    score += 15;
+    positiveReasons.push(`Matches your ${rfp.industry} industry`);
+  } else {
+    negativeReasons.push(`Industry (${rfp.industry}) not in your profile`);
   }
 
-  const certOverlap = findTokenOverlap(rfp.certifications ?? [], profileCertTokens);
-  if ((rfp.certifications ?? []).length > 0) {
-    if (certOverlap.length === 0) {
-      score -= 18;
-      negativeReasons.push("RFP lists certifications you may not have.");
-    } else {
-      score += 10;
-      positiveReasons.push(`Certification overlap: ${certOverlap.slice(0, 2).join(", ")}`);
-    }
+  const naicsOverlap = rfp.naicsCodes.filter((n) => profileNaics.includes(n));
+  if (naicsOverlap.length > 0) {
+    score += 12;
+    positiveReasons.push(`NAICS ${naicsOverlap.join(", ")} aligns with your experience`);
+  } else {
+    negativeReasons.push(`No NAICS overlap`);
   }
 
-  const locationSimilarity = jaccardSimilarity(rfpLocationTokens, profileLocationTokens);
-  if ((rfp.location ?? "").trim().length > 0) {
-    if (locationSimilarity === 0 && profileLocationTokens.size > 0) {
-      score -= 12;
-      negativeReasons.push("Location may be outside your service area.");
-    } else if (locationSimilarity > 0) {
-      score += 8;
-      positiveReasons.push("Location aligns with your service area.");
-    }
+  const capOverlap = rfp.capabilities.filter((c) => {
+    const cLower = c.toLowerCase();
+    return profileCaps.some((p) => p.includes(cLower) || cLower.includes(p));
+  });
+  if (capOverlap.length >= 2) {
+    score += 15;
+    positiveReasons.push(`Strong capability match: ${capOverlap.slice(0, 2).join(", ")}`);
+  } else if (capOverlap.length === 1) {
+    score += 8;
+    positiveReasons.push(`Capability match: ${capOverlap[0]}`);
+  } else {
+    negativeReasons.push(`Limited capability overlap`);
   }
 
-  const industrySimilarity = jaccardSimilarity(rfpIndustryTokens, profileIndustryTokens);
-  if (industrySimilarity > 0) {
-    score += scoreFromSimilarity(industrySimilarity, 18);
-    positiveReasons.push("Industry aligns with your profile.");
-  } else if ((rfp.industry ?? "").trim()) {
-    score -= 6;
-    negativeReasons.push(`Industry (${rfp.industry}) not reflected in your profile.`);
+  const certOverlap = rfp.certifications.filter((c) =>
+    profileCerts.some((p) => p.includes(c.toLowerCase()) || c.toLowerCase().includes(p))
+  );
+  if (certOverlap.length > 0) {
+    score += 10;
+    positiveReasons.push(`You have ${certOverlap.join(", ")}`);
+  } else if (rfp.certifications.length > 0) {
+    negativeReasons.push(`RFP requires certifications you may not have`);
   }
 
-  const naicsOverlap = countNaicsOverlap(rfp.naicsCodes ?? [], profileNaics);
-  if ((rfp.naicsCodes ?? []).length > 0) {
-    if (naicsOverlap.length > 0) {
-      const ratio = naicsOverlap.length / Math.max(1, rfp.naicsCodes.length);
-      score += 16 * ratio;
-      positiveReasons.push(`NAICS overlap: ${naicsOverlap.slice(0, 3).join(", ")}`);
-    } else {
-      score -= 6;
-      negativeReasons.push("No NAICS overlap.");
-    }
+  if (profileContractTypes.some((t) => rfp.contractType.toLowerCase().includes(t))) {
+    score += 5;
+    positiveReasons.push(`Contract type matches your preferences`);
   }
 
-  const capSimilarity = jaccardSimilarity(rfpCapTokens, profileCapsTokens);
-  const capOverlap = findTokenOverlap(rfp.capabilities ?? [], profileCapsTokens);
-  if ((rfp.capabilities ?? []).length > 0) {
-    if (capSimilarity > 0 || capOverlap.length > 0) {
-      score += scoreFromSimilarity(clamp(capSimilarity + capOverlap.length * 0.05, 0, 1), 26);
-      positiveReasons.push(
-        capOverlap.length > 0
-          ? `Capabilities align: ${capOverlap.slice(0, 3).join(", ")}`
-          : "Capabilities align with your profile."
-      );
-    } else {
-      score -= 8;
-      negativeReasons.push("Limited capability overlap.");
-    }
+  if (profileAgencies.some((a) => rfp.agency.toLowerCase().includes(a))) {
+    score += 8;
+    positiveReasons.push(`You have experience with this agency`);
   }
 
-  const profileTextTokens = new Set<string>([
-    ...profileIndustryTokens,
-    ...profileCapsTokens,
-    ...profileCertTokens,
-    ...profileAgencyTokens,
-  ]);
-  const descSimilarity = jaccardSimilarity(rfpDescTokens, profileTextTokens);
-  if (descSimilarity > 0.05) {
-    score += scoreFromSimilarity(descSimilarity, 12);
-    positiveReasons.push("Description language matches your profile keywords.");
+  const locationMatch = profileCities.some((c) => rfp.location.toLowerCase().includes(c)) ||
+    profileCounties.some((c) => rfp.location.toLowerCase().includes(c));
+  if (locationMatch) {
+    score += 5;
+    positiveReasons.push(`Location aligns with your service area`);
   }
 
-  const agencySimilarity = jaccardSimilarity(rfpAgencyTokens, profileAgencyTokens);
-  if (agencySimilarity > 0) {
-    score += scoreFromSimilarity(agencySimilarity, 8);
-    positiveReasons.push("You have experience with this agency.");
-  }
+  const reasons = [...positiveReasons.map((r) => `✓ ${r}`), ...negativeReasons.map((r) => `✗ ${r}`)];
 
-  const contractSimilarity = jaccardSimilarity(rfpContractTokens, profileContractTokens);
-  if (contractSimilarity > 0) {
-    score += scoreFromSimilarity(contractSimilarity, 5);
-    positiveReasons.push("Contract type matches your preferences.");
-  }
-
-  score = clamp(score, 5, 98);
-
-  const reasons = [
-    ...positiveReasons.slice(0, 3).map((r) => `✓ ${r}`),
-    ...negativeReasons.slice(0, 3).map((r) => `✗ ${r}`),
-  ];
-
-  return { score, reasons, positiveReasons, negativeReasons };
+  return {
+    score: Math.min(98, Math.max(12, score)),
+    reasons,
+    positiveReasons,
+    negativeReasons,
+  };
 }
 
 function generateMatchSummary(_rfp: RFP, match: RFPMatch): string {
@@ -421,7 +282,6 @@ export default function DashboardPage() {
               const { match } = rfp;
               const isSelected = rfp.id === selectedId;
               const isHighMatch = match.score >= 75;
-              const reasonSnippet = match.reasons.slice(0, 2).join(" • ");
 
               return (
                 <button
@@ -459,11 +319,6 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between">
                     <MatchBadge score={match.score} />
                   </div>
-                  {reasonSnippet && (
-                    <p className="text-xs text-slate-500 mt-2 line-clamp-2">
-                      {reasonSnippet}
-                    </p>
-                  )}
                 </button>
               );
             })}
