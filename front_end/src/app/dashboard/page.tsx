@@ -235,7 +235,7 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-[#f5f5f5]">
       <nav className="sticky top-0 bg-white border-b border-slate-200 z-10 shadow-sm">
         <div className="max-w-full mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/dashboard" className="flex items-center gap-2">
             <img src="/logo.png" alt="Civitas logo" className="h-10 w-10" />
             <span className="text-xl font-bold text-slate-900">Civitas</span>
           </Link>
@@ -243,9 +243,7 @@ export default function DashboardPage() {
             <Link href="/profile" className="text-slate-600 hover:text-slate-900 text-sm font-medium">
               Profile
             </Link>
-            <Link href="/upload" className="text-slate-600 hover:text-slate-900 text-sm font-medium">
-              Upload
-            </Link>
+           
           </div>
         </div>
       </nav>

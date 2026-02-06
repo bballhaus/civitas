@@ -115,23 +115,32 @@ export default function UploadPage() {
       const extractedData = await parseDocumentsWithBackend(files);
       setProgress(90);
 
-      // Store extracted data in local storage
-      localStorage.setItem("extractedProfileData", JSON.stringify(extractedData));
-
       // Store uploaded files info
       const fileInfo = files.map((file) => ({
         name: file.name,
         type: file.type || "application/octet-stream",
         size: file.size,
         uploadedAt: new Date().toISOString(),
+        parsed: true, // Mark as parsed since we just processed them
       }));
-      localStorage.setItem("uploadedFiles", JSON.stringify(fileInfo));
+
+      // Create complete profile with uploaded files
+      const profileData = {
+        ...extractedData,
+        uploadedFiles: fileInfo,
+      };
+
+      // Store as companyProfile so profile page can load it directly
+      localStorage.setItem("companyProfile", JSON.stringify(profileData));
+      
+      // Also store uploaded files separately for reference
+      localStorage.setItem("uploadedFiles", JSON.stringify(fileInfo.map(f => ({ ...f, content: "" }))));
 
       setProgress(100);
 
-      // Redirect to profile setup with pre-filled data
+      // Redirect to profile page with pre-filled data
       setTimeout(() => {
-        router.push("/profile-setup?prefilled=true");
+        router.push("/profile");
       }, 500);
     } catch (error) {
       console.error("Error processing files:", error);
@@ -146,10 +155,10 @@ export default function UploadPage() {
       {/* Navigation */}
       <nav className="sticky top-0 bg-white border-b border-slate-200 z-10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
-            <span className="text-2xl font-bold text-slate-900">Civitas</span>
-          </Link>
+            <Link href="/dashboard" className="flex items-center gap-2">
+              <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
+              <span className="text-2xl font-bold text-slate-900">Civitas</span>
+            </Link>
           <Link
             href="/profile"
             className="px-4 py-2 bg-[#3C89C6] text-white font-medium rounded-md hover:bg-[#2d6fa0] transition-colors"
