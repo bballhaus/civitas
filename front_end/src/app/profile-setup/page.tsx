@@ -202,6 +202,30 @@ export default function ProfileSetup() {
       return Array.from(new Set(combined.filter(item => item && item.trim() !== "")));
     };
 
+    // Helper to parse and sum contract values
+    const parseContractValue = (value: string | number | undefined): number => {
+      if (!value) return 0;
+      if (typeof value === 'number') return value;
+      // Remove currency symbols, commas, and whitespace, then parse
+      const cleaned = String(value).replace(/[$,\s]/g, '');
+      const parsed = parseFloat(cleaned);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    // Accumulate contract count (add together)
+    const existingCount = existing.contractCount || 0;
+    const extractedCount = extracted.contractCount || 0;
+    const totalContractCount = existingCount + extractedCount;
+
+    // Accumulate total past contract value (add together)
+    const existingValue = parseContractValue(existing.totalPastContractValue);
+    const extractedValue = parseContractValue(extracted.totalPastContractValue);
+    const totalValue = existingValue + extractedValue;
+    // Format as string (use numeric value if both exist, otherwise keep original format)
+    const formattedTotalValue = totalValue > 0 
+      ? totalValue.toString()
+      : (existing.totalPastContractValue || extracted.totalPastContractValue || "");
+
     return {
       ...existing,
       // Merge company name (use extracted if existing is empty, otherwise keep existing)
@@ -217,9 +241,9 @@ export default function ProfileSetup() {
       capabilities: mergeArrays(existing.capabilities, extracted.capabilities || []),
       agencyExperience: mergeArrays(existing.agencyExperience, extracted.agencyExperience || []),
       contractTypes: mergeArrays(existing.contractTypes, extracted.contractTypes || []),
-      // For numeric/string fields, use extracted if existing is empty/default
-      contractCount: existing.contractCount || extracted.contractCount || 0,
-      totalPastContractValue: existing.totalPastContractValue || extracted.totalPastContractValue || "",
+      // Accumulate contract count and value
+      contractCount: totalContractCount,
+      totalPastContractValue: formattedTotalValue,
       pastPerformance: existing.pastPerformance || extracted.pastPerformance || "",
       strategicGoals: existing.strategicGoals || extracted.strategicGoals || "",
     };
