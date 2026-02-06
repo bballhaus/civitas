@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 
 interface CompanyProfile {
@@ -17,7 +17,7 @@ interface CompanyProfile {
   contractTypes: string[];
 }
 
-interface MockRFP {
+interface RFP {
   id: string;
   title: string;
   agency: string;
@@ -30,20 +30,11 @@ interface MockRFP {
   certifications: string[];
   contractType: string;
   description: string;
+  eventUrl?: string;
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
 }
-
-const MOCK_RFPS: MockRFP[] = [
-  { id: "1", title: "Cybersecurity Infrastructure Modernization", agency: "California Department of Technology", location: "Sacramento, CA", deadline: "2025-03-15", estimatedValue: "$2.4M", industry: "IT Services", naicsCodes: ["541512", "541690"], capabilities: ["Cybersecurity", "Cloud Services", "Network Infrastructure"], certifications: ["FedRAMP", "ISO 27001"], contractType: "Fixed Price", description: "Modernization of statewide cybersecurity infrastructure including cloud migration and threat detection systems." },
-  { id: "2", title: "Healthcare Data Analytics Platform", agency: "California Department of Health Care Services", location: "Sacramento, CA", deadline: "2025-04-01", estimatedValue: "$1.8M", industry: "Healthcare", naicsCodes: ["541511", "541519"], capabilities: ["Data Analytics", "Software Development", "Cloud Services"], certifications: ["HIPAA Compliance", "SOC 2"], contractType: "Time & Materials", description: "Development of a comprehensive data analytics platform for healthcare service delivery metrics." },
-  { id: "3", title: "Transportation Management System", agency: "California Department of Transportation", location: "Sacramento, CA", deadline: "2025-03-28", estimatedValue: "$3.1M", industry: "IT Services", naicsCodes: ["541511", "541512"], capabilities: ["Software Development", "System Integration", "Database Management"], certifications: ["ISO 9001"], contractType: "IDIQ (Indefinite Delivery)", description: "Integrated transportation management system for traffic monitoring and incident response." },
-  { id: "4", title: "Construction Project Management Services", agency: "California Department of General Services", location: "Sacramento, CA", deadline: "2025-05-10", estimatedValue: "$950K", industry: "Construction", naicsCodes: ["236220"], capabilities: ["Project Management"], certifications: [], contractType: "Competitive", description: "Project management oversight for state facility construction and renovation projects." },
-  { id: "5", title: "Cloud Migration and DevOps Support", agency: "City of San Francisco", location: "San Francisco, CA", deadline: "2025-04-15", estimatedValue: "$1.2M", industry: "IT Services", naicsCodes: ["541511", "541512"], capabilities: ["Cloud Services", "DevOps", "System Integration"], certifications: ["GSA Schedule", "FedRAMP"], contractType: "BPA (Blanket Purchase Agreement)", description: "Cloud migration services and ongoing DevOps support for city enterprise applications." },
-  { id: "6", title: "AI/ML Research and Development", agency: "State of California", location: "Sacramento, CA", deadline: "2025-06-01", estimatedValue: "$4.2M", industry: "Research & Development", naicsCodes: ["541519", "541611"], capabilities: ["AI/ML Services", "Data Analytics", "Software Development"], certifications: ["CMMI"], contractType: "Cost Plus", description: "Research and development of AI/ML solutions for state government operations." },
-  { id: "7", title: "Small Business IT Support Services", agency: "City of Los Angeles", location: "Los Angeles, CA", deadline: "2025-04-20", estimatedValue: "$680K", industry: "IT Services", naicsCodes: ["541512", "541519"], capabilities: ["Technical Writing", "Training & Support", "Software Development"], certifications: [], contractType: "Small Business Set-Aside", description: "IT support and training services for city department staff." },
-  { id: "8", title: "Emergency Response System Upgrade", agency: "County of Los Angeles", location: "Los Angeles, CA", deadline: "2025-03-30", estimatedValue: "$1.5M", industry: "IT Services", naicsCodes: ["541511"], capabilities: ["Software Development", "System Integration", "Cybersecurity"], certifications: ["NIST 800-53"], contractType: "Fixed Price", description: "Upgrade of county emergency response and 911 dispatch systems." },
-  { id: "9", title: "Consulting Services for Education Technology", agency: "California Department of Education", location: "Sacramento, CA", deadline: "2025-05-25", estimatedValue: "$520K", industry: "Education", naicsCodes: ["541611"], capabilities: ["Consulting", "Training & Support"], certifications: [], contractType: "Sole Source", description: "Strategic consulting for statewide education technology initiatives." },
-  { id: "10", title: "Logistics and Supply Chain Optimization", agency: "California Department of Forestry", location: "Sacramento, CA", deadline: "2025-04-08", estimatedValue: "$890K", industry: "Logistics", naicsCodes: ["541690"], capabilities: ["Data Analytics", "Project Management"], certifications: ["ISO 9001"], contractType: "Competitive", description: "Supply chain optimization and logistics planning for wildfire response operations." },
-];
 
 interface RFPMatch {
   score: number;
@@ -52,9 +43,13 @@ interface RFPMatch {
   negativeReasons: string[];
 }
 
-type RFPWithMatch = MockRFP & { match: RFPMatch };
+type RFPWithMatch = RFP & { match: RFPMatch };
 
-function computeMatch(rfp: MockRFP, profile: CompanyProfile | null): RFPMatch {
+const FALLBACK_RFPS: RFP[] = [
+  { id: "fallback-1", title: "Sample RFP (API unavailable)", agency: "Sample Agency", location: "California", deadline: "TBD", estimatedValue: "TBD", industry: "Consulting", naicsCodes: [], capabilities: ["Consulting"], certifications: [], contractType: "RFx", description: "Connect to the webscraping data to see real Cal eProcure events." },
+];
+
+function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch {
   const positiveReasons: string[] = [];
   const negativeReasons: string[] = [];
   let score = 50;
@@ -138,7 +133,7 @@ function computeMatch(rfp: MockRFP, profile: CompanyProfile | null): RFPMatch {
   };
 }
 
-function generateMatchSummary(_rfp: MockRFP, match: RFPMatch): string {
+function generateMatchSummary(_rfp: RFP, match: RFPMatch): string {
   const { positiveReasons, negativeReasons, score } = match;
   if (score >= 75 && positiveReasons.length > 0) {
     const topReasons = positiveReasons.slice(0, 3);
@@ -182,6 +177,9 @@ function MatchBadge({ score }: { score: number }) {
 export default function DashboardPage() {
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [selectedRfpId, setSelectedRfpId] = useState<string | null>(null);
+  const [rfps, setRfps] = useState<RFP[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem("companyProfile");
@@ -203,7 +201,26 @@ export default function DashboardPage() {
     }
   }, []);
 
-  const rfpsWithMatch: RFPWithMatch[] = MOCK_RFPS.map((rfp) => ({
+  useEffect(() => {
+    async function fetchEvents() {
+      try {
+        setLoading(true);
+        setError(null);
+        const res = await fetch("/api/events");
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        setRfps(data.events ?? []);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load events");
+        setRfps(FALLBACK_RFPS);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchEvents();
+  }, []);
+
+  const rfpsWithMatch: RFPWithMatch[] = (rfps.length > 0 ? rfps : FALLBACK_RFPS).map((rfp) => ({
     ...rfp,
     match: computeMatch(rfp, profile),
   }));
@@ -256,6 +273,13 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#2563eb]"></div>
+              </div>
+            ) : error ? (
+              <p className="text-sm text-amber-600 py-4 px-4 bg-amber-50 rounded-lg">{error}. Showing sample data.</p>
+            ) : null}
             {rfpsWithMatch.map((rfp) => {
               const { match } = rfp;
               const isSelected = rfp.id === selectedId;
@@ -286,7 +310,7 @@ export default function DashboardPage() {
                       {rfp.industry}
                     </span>
                     <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-amber-50 text-amber-600">
-                      {rfp.capabilities[0] || "Contract"}
+                      {rfp.capabilities[0] || rfp.contractType || "Contract"}
                     </span>
                     {isHighMatch && (
                       <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
@@ -324,8 +348,8 @@ function RFPDetailPanel({
   MatchBadge,
 }: {
   rfp: RFPWithMatch;
-  generateSummary: (rfp: MockRFP, match: RFPMatch) => string;
-  MatchBadge: ({ score }: { score: number }) => JSX.Element;
+  generateSummary: (rfp: RFP, match: RFPMatch) => string;
+  MatchBadge: React.ComponentType<{ score: number }>;
 }) {
   const { match } = rfp;
   const isHighMatch = match.score >= 75;
@@ -375,7 +399,7 @@ function RFPDetailPanel({
               {rfp.industry}
             </span>
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-amber-50 text-amber-600">
-              {rfp.capabilities[0] || rfp.contractType}
+              {rfp.capabilities[0] || rfp.contractType || "Contract"}
             </span>
             {isHighMatch && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-50 text-emerald-600">
@@ -415,12 +439,17 @@ function RFPDetailPanel({
               <p className="font-bold text-slate-900">{rfp.agency}</p>
               <p className="text-sm text-slate-500">{rfp.industry}</p>
             </div>
-            <Link href="#" className="text-sm font-medium text-[#2563eb] hover:underline flex items-center gap-1">
-              View Agency
+            <a
+              href={rfp.eventUrl || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm font-medium text-[#2563eb] hover:underline flex items-center gap-1"
+            >
+              View on Cal eProcure
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
               </svg>
-            </Link>
+            </a>
           </div>
         </div>
 
@@ -462,17 +491,29 @@ function RFPDetailPanel({
         <div className="p-6 md:p-8 border-t border-slate-100">
           <h4 className="text-sm font-bold text-slate-900 mb-3">Details</h4>
           <div className="flex flex-wrap gap-2">
-            {rfp.naicsCodes.map((n) => (
+            {rfp.naicsCodes?.map((n) => (
               <span key={n} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600">
                 NAICS {n}
               </span>
             ))}
-            {rfp.capabilities.map((c) => (
+            {rfp.capabilities?.map((c) => (
               <span key={c} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-600">
                 {c}
               </span>
             ))}
+            {(!rfp.naicsCodes?.length && !rfp.capabilities?.length) && (
+              <span className="text-sm text-slate-500">See description for full details</span>
+            )}
           </div>
+          {(rfp.contactEmail || rfp.contactName) && (
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Contact</h5>
+              {rfp.contactName && <p className="text-sm text-slate-700">{rfp.contactName}</p>}
+              {rfp.contactEmail && (
+                <a href={`mailto:${rfp.contactEmail}`} className="text-sm text-[#2563eb] hover:underline">{rfp.contactEmail}</a>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </article>
