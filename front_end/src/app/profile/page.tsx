@@ -396,9 +396,30 @@ export default function ProfilePage() {
         )}
 
         <div className="min-w-0 flex-1 max-w-4xl">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-slate-900 mb-2">Your profile</h1>
-            <p className="text-slate-600">Click Edit on any section to change it here. Save updates your profile.</p>
+          <div className="mb-8 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
+            <div>
+              <h1 className="text-3xl font-bold text-slate-900 mb-2">Your profile</h1>
+              <p className="text-slate-600">Click Edit on any section to change it here. Save updates your profile.</p>
+            </div>
+            {hasAnyData && (
+              <Link
+                href="/dashboard"
+                className="shrink-0 w-full lg:w-auto flex items-center gap-3 p-4 rounded-lg border border-slate-200 bg-white hover:border-[#3C89C6]/40 hover:bg-slate-50/50 transition-colors group"
+              >
+                <div className="flex-shrink-0 w-10 h-10 rounded-md bg-[#3C89C6]/10 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-[#3C89C6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900">Your personalized RFP matches</p>
+                  <p className="text-sm text-slate-600">RFPs tailored to your profile</p>
+                </div>
+                <svg className="w-4 h-4 text-slate-400 group-hover:text-[#3C89C6] shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
+            )}
           </div>
 
           {!hasAnyData ? (

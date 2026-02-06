@@ -7,8 +7,8 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
-    // Redirect to upload page first
-    router.push("/upload");
+    // Redirect to dashboard (For You page)
+    router.push("/dashboard");
   }, [router]);
 
   return (
