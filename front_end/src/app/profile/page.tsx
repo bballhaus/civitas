@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import type { ChangeEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 type SectionId = "company" | "certifications" | "naics" | "capabilities" | "contract" | "documents" | null;
 
@@ -74,10 +75,116 @@ function ListOrEmpty({ items }: { items: string[] }) {
 }
 
 export default function ProfilePage() {
+  const router = useRouter();
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [isClient, setIsClient] = useState(false);
   const [editingSection, setEditingSection] = useState<SectionId>(null);
   const [sectionSaving, setSectionSaving] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
+
+  // Parse documents with backend API
+  const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append("documents", file);
+    });
+
+    try {
+      const response = await fetch("http://localhost:8000/api/profile/extract/", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          if (errorData.details && Array.isArray(errorData.details)) {
+            const details = errorData.details.map((e: any) => 
+              `${e.file || 'Unknown file'}: ${e.error || 'Unknown error'}`
+            ).join('; ');
+            errorMessage = errorData.error || errorMessage;
+            if (details) {
+              errorMessage += ` (${details})`;
+            }
+          } else {
+            errorMessage = errorData.error || errorData.document || errorMessage;
+          }
+        } catch (e) {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      if (!data.profile) {
+        throw new Error("Invalid response from server: missing profile data");
+      }
+      return data.profile;
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes("fetch")) {
+        throw new Error(
+          "Cannot connect to backend server. Please make sure the Django server is running on http://localhost:8000"
+        );
+      }
+      throw error;
+    }
+  };
+
+  // Merge extracted data with existing profile
+  const mergeProfileData = (existing: CompanyProfile, extracted: any): CompanyProfile => {
+    // Helper to merge arrays (add unique values)
+    const mergeArrays = (existing: string[], extracted: string[]): string[] => {
+      const combined = [...existing, ...(extracted || [])];
+      return Array.from(new Set(combined.filter(item => item && item.trim() !== "")));
+    };
+
+    // Helper to parse and sum contract values
+    const parseContractValue = (value: string | number | undefined): number => {
+      if (!value) return 0;
+      if (typeof value === 'number') return value;
+      // Remove currency symbols, commas, and whitespace, then parse
+      const cleaned = String(value).replace(/[$,\s]/g, '');
+      const parsed = parseFloat(cleaned);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    // Accumulate contract count (add together)
+    const existingCount = existing.contractCount || 0;
+    const extractedCount = extracted.contractCount || 0;
+    const totalContractCount = existingCount + extractedCount;
+
+    // Accumulate total past contract value (add together)
+    const existingValue = parseContractValue(existing.totalPastContractValue);
+    const extractedValue = parseContractValue(extracted.totalPastContractValue);
+    const totalValue = existingValue + extractedValue;
+    // Format as string (use numeric value if both exist, otherwise keep original format)
+    const formattedTotalValue = totalValue > 0 
+      ? totalValue.toString()
+      : (existing.totalPastContractValue || extracted.totalPastContractValue || "");
+
+    return {
+      ...existing,
+      // Merge company name (use extracted if existing is empty, otherwise keep existing)
+      companyName: existing.companyName || extracted.companyName || "",
+      // Merge arrays (add unique values)
+      industry: mergeArrays(existing.industry, extracted.industry || []),
+      sizeStatus: mergeArrays(existing.sizeStatus, extracted.sizeStatus || []),
+      certifications: mergeArrays(existing.certifications, extracted.certifications || []),
+      clearances: mergeArrays(existing.clearances, extracted.clearances || []),
+      naicsCodes: mergeArrays(existing.naicsCodes, extracted.naicsCodes || []),
+      workCities: mergeArrays(existing.workCities, extracted.workCities || []),
+      workCounties: mergeArrays(existing.workCounties, extracted.workCounties || []),
+      capabilities: mergeArrays(existing.capabilities, extracted.capabilities || []),
+      agencyExperience: mergeArrays(existing.agencyExperience, extracted.agencyExperience || []),
+      contractTypes: mergeArrays(existing.contractTypes, extracted.contractTypes || []),
+      // Accumulate contract count and value
+      contractCount: totalContractCount,
+      totalPastContractValue: formattedTotalValue,
+      pastPerformance: existing.pastPerformance || extracted.pastPerformance || "",
+      strategicGoals: existing.strategicGoals || extracted.strategicGoals || "",
+    };
+  };
 
   const loadProfile = () => {
     const saved = localStorage.getItem("companyProfile");
@@ -103,6 +210,73 @@ export default function ProfilePage() {
       }
     }
     if (!saved && !extracted) setProfile(null);
+  };
+
+  // Parse and merge documents
+  const parseAndMergeDocuments = async () => {
+    if (!profile) return;
+
+    const unparsedFiles = profile.uploadedFiles?.filter(file => !file.parsed) || [];
+    
+    if (unparsedFiles.length === 0) {
+      alert("No new documents to parse. All uploaded files have already been processed.");
+      return;
+    }
+
+    setIsParsing(true);
+    try {
+      // Get file objects from local storage
+      const storedFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
+      const filesToParse: File[] = [];
+      
+      // Convert base64 files back to File objects
+      for (const unparsedFile of unparsedFiles) {
+        const storedFile = storedFiles.find((f: any) => f.name === unparsedFile.name);
+        if (storedFile && storedFile.content) {
+          // Convert base64 to blob then to File
+          const base64Data = storedFile.content.split(',')[1];
+          const byteCharacters = atob(base64Data);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: storedFile.type });
+          const file = new File([blob], storedFile.name, { type: storedFile.type });
+          filesToParse.push(file);
+        }
+      }
+
+      if (filesToParse.length > 0) {
+        // Parse the documents
+        const extractedData = await parseDocumentsWithBackend(filesToParse);
+        
+        // Merge extracted data with existing profile
+        const mergedProfile = mergeProfileData(profile, extractedData);
+        
+        // Mark files as parsed
+        mergedProfile.uploadedFiles = mergedProfile.uploadedFiles.map(file => 
+          unparsedFiles.some(uf => uf.name === file.name) 
+            ? { ...file, parsed: true }
+            : file
+        );
+        
+        // Update profile state
+        setProfile(mergedProfile);
+        
+        // Save merged profile
+        localStorage.setItem("companyProfile", JSON.stringify(mergedProfile));
+        
+        alert(`Successfully parsed ${filesToParse.length} document(s) and updated your profile!`);
+      } else {
+        alert("Could not find file data to parse. Please try uploading the files again.");
+      }
+    } catch (error) {
+      console.error("Error parsing documents:", error);
+      alert(`Error parsing documents: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`);
+    } finally {
+      setIsParsing(false);
+    }
   };
 
   useEffect(() => {
@@ -138,11 +312,75 @@ export default function ProfilePage() {
     });
   };
 
-  const saveSection = () => {
+  const saveSection = async () => {
     if (!profile) return;
     setSectionSaving(true);
     try {
-      localStorage.setItem("companyProfile", JSON.stringify(profile));
+      // If saving documents section, check for unparsed files and parse them
+      if (editingSection === "documents") {
+        const unparsedFiles = profile.uploadedFiles?.filter(file => !file.parsed) || [];
+        
+        if (unparsedFiles.length > 0) {
+          try {
+            // Get file objects from local storage
+            const storedFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
+            const filesToParse: File[] = [];
+            
+            // Convert base64 files back to File objects
+            for (const unparsedFile of unparsedFiles) {
+              const storedFile = storedFiles.find((f: any) => f.name === unparsedFile.name);
+              if (storedFile && storedFile.content) {
+                // Convert base64 to blob then to File
+                const base64Data = storedFile.content.split(',')[1];
+                const byteCharacters = atob(base64Data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                  byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: storedFile.type });
+                const file = new File([blob], storedFile.name, { type: storedFile.type });
+                filesToParse.push(file);
+              }
+            }
+
+            if (filesToParse.length > 0) {
+              // Parse the documents
+              const extractedData = await parseDocumentsWithBackend(filesToParse);
+              
+              // Merge extracted data with existing profile
+              const mergedProfile = mergeProfileData(profile, extractedData);
+              
+              // Mark files as parsed
+              mergedProfile.uploadedFiles = mergedProfile.uploadedFiles.map(file => 
+                unparsedFiles.some(uf => uf.name === file.name) 
+                  ? { ...file, parsed: true }
+                  : file
+              );
+              
+              // Update profile state
+              setProfile(mergedProfile);
+              
+              // Save merged profile
+              localStorage.setItem("companyProfile", JSON.stringify(mergedProfile));
+            } else {
+              // No files to parse, just save
+              localStorage.setItem("companyProfile", JSON.stringify(profile));
+            }
+          } catch (error) {
+            console.error("Error parsing documents:", error);
+            // Still save the profile even if parsing fails
+            localStorage.setItem("companyProfile", JSON.stringify(profile));
+            alert(`Warning: Could not parse some documents. Profile saved without updates from those files.`);
+          }
+        } else {
+          // No unparsed files, just save
+          localStorage.setItem("companyProfile", JSON.stringify(profile));
+        }
+      } else {
+        // For other sections, just save normally
+        localStorage.setItem("companyProfile", JSON.stringify(profile));
+      }
       setEditingSection(null);
     } finally {
       setSectionSaving(false);
@@ -298,7 +536,7 @@ export default function ProfilePage() {
       <div className="min-h-screen bg-slate-50">
         <nav className="sticky top-0 bg-white border-b border-slate-200 z-10">
           <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-2">
+            <Link href="/dashboard" className="flex items-center gap-2">
               <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
               <span className="text-2xl font-bold text-slate-900">Civitas</span>
             </Link>
@@ -351,7 +589,7 @@ export default function ProfilePage() {
             Cancel
           </button>
           <button type="button" onClick={saveSection} disabled={sectionSaving} className={btnPrimary + " disabled:opacity-50"}>
-            {sectionSaving ? "Saving..." : "Save"}
+            {sectionSaving ? (sectionId === "documents" ? "Parsing & Saving..." : "Saving...") : "Save"}
           </button>
         </div>
       ) : (
@@ -366,7 +604,7 @@ export default function ProfilePage() {
     <div className="min-h-screen bg-slate-50">
       <nav className="sticky top-0 bg-white border-b border-slate-200 z-10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/dashboard" className="flex items-center gap-2">
             <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
             <span className="text-2xl font-bold text-slate-900">Civitas</span>
           </Link>
@@ -412,7 +650,7 @@ export default function ProfilePage() {
                   </svg>
                 </div>
                 <div className="min-w-0">
-                  <p className="font-semibold text-slate-900">Your personalized RFP matches</p>
+                  <p className="font-semibold text-slate-900">View Matches</p>
                   <p className="text-sm text-slate-600">RFPs tailored to your profile</p>
                 </div>
                 <svg className="w-4 h-4 text-slate-400 group-hover:text-[#3C89C6] shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -722,7 +960,15 @@ export default function ProfilePage() {
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
                             <div>
-                              <p className="text-sm font-medium text-slate-900">{file.name}</p>
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-medium text-slate-900">{file.name}</p>
+                                {file.parsed && (
+                                  <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Parsed</span>
+                                )}
+                                {!file.parsed && (
+                                  <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
+                                )}
+                              </div>
                               <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(2)} KB</p>
                             </div>
                           </div>

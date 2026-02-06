@@ -309,8 +309,10 @@ export default function ProfileSetup() {
       }
 
       setIsSaved(true);
-      setTimeout(() => setIsSaved(false), 3000);
-      router.push("/profile");
+      // Redirect to profile page after showing success message
+      setTimeout(() => {
+        router.push("/profile");
+      }, 1500);
     } catch (error) {
       console.error("Error saving profile:", error);
       alert(`Error saving profile: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`);
@@ -492,14 +494,14 @@ export default function ProfileSetup() {
       {/* Navigation */}
       <nav className="sticky top-0 bg-white border-b border-slate-200 z-10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <Link href="/dashboard" className="flex items-center gap-2">
             <img
               src="/logo.png"
               alt="Civitas logo"
               className="h-12 w-12"
             />
             <span className="text-2xl font-bold text-slate-900">Civitas</span>
-          </div>
+          </Link>
           <div className="flex items-center gap-3">
             <button
               onClick={() => router.push("/")}
