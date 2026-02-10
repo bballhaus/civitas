@@ -49,6 +49,27 @@ const FALLBACK_RFPS: RFP[] = [
   { id: "fallback-1", title: "Sample RFP (API unavailable)", agency: "Sample Agency", location: "California", deadline: "TBD", estimatedValue: "TBD", industry: "Consulting", naicsCodes: [], capabilities: ["Consulting"], certifications: [], contractType: "RFx", description: "Connect to the webscraping data to see real Cal eProcure events." },
 ];
 
+const STORAGE_KEYS = {
+  SAVED: "civitas_saved_rfps",
+  NOT_INTERESTED: "civitas_not_interested_rfps",
+  EXPRESSED_INTEREST: "civitas_expressed_interest_rfps",
+};
+
+function loadSet(key: string): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSet(key: string, set: Set<string>) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(key, JSON.stringify([...set]));
 function parseDeadline(deadline: string): Date | null {
   const normalized = deadline?.trim();
   if (!normalized || normalized.toUpperCase() === "TBD") return null;
@@ -319,6 +340,60 @@ export default function DashboardPage() {
   const [rfps, setRfps] = useState<RFP[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.SAVED));
+  const [notInterestedRfpIds, setNotInterestedRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.NOT_INTERESTED));
+  const [expressedInterestRfpIds, setExpressedInterestRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    setTimeout(() => setToast(null), 2500);
+  };
+
+  const handleSaveRfp = (rfpId: string) => {
+    setSavedRfpIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rfpId)) next.delete(rfpId);
+      else next.add(rfpId);
+      saveSet(STORAGE_KEYS.SAVED, next);
+      showToast(next.has(rfpId) ? "Saved to your list" : "Removed from saved");
+      return next;
+    });
+  };
+
+  const handleNotInterested = (rfpId: string) => {
+    setNotInterestedRfpIds((prev) => {
+      const next = new Set(prev);
+      next.add(rfpId);
+      saveSet(STORAGE_KEYS.NOT_INTERESTED, next);
+      return next;
+    });
+    setSelectedRfpId((current) => (current === rfpId ? null : current));
+    showToast("Marked as not interested");
+  };
+
+  const handleExpressInterest = (rfpId: string) => {
+    setExpressedInterestRfpIds((prev) => {
+      const next = new Set(prev);
+      next.add(rfpId);
+      saveSet(STORAGE_KEYS.EXPRESSED_INTEREST, next);
+      return next;
+    });
+    showToast("Interest expressed — we'll use this to improve your matches");
+  };
+
+  const handleRemoveFromNotInterested = (rfpId: string) => {
+    setNotInterestedRfpIds((prev) => {
+      const next = new Set(prev);
+      next.delete(rfpId);
+      saveSet(STORAGE_KEYS.NOT_INTERESTED, next);
+      return next;
+    });
+    showToast("RFP restored to your list");
+  };
+
+  const [showNotInterestedList, setShowNotInterestedList] = useState(false);
+  const [listFilter, setListFilter] = useState<"all" | "saved">("all");
 
   useEffect(() => {
     const saved = localStorage.getItem("companyProfile");
@@ -359,16 +434,24 @@ export default function DashboardPage() {
     fetchEvents();
   }, []);
 
-  const rfpsWithMatch: RFPWithMatch[] = (rfps.length > 0 ? rfps : FALLBACK_RFPS).map((rfp) => ({
+  const allRfpsWithMatch: RFPWithMatch[] = (rfps.length > 0 ? rfps : FALLBACK_RFPS).map((rfp) => ({
     ...rfp,
     match: computeMatch(rfp, profile),
   }));
-  rfpsWithMatch.sort((a, b) => b.match.score - a.match.score);
+  allRfpsWithMatch.sort((a, b) => b.match.score - a.match.score);
+
+  const rfpsWithMatch = allRfpsWithMatch.filter((r) => !notInterestedRfpIds.has(r.id));
+  const hiddenRfps = allRfpsWithMatch.filter((r) => notInterestedRfpIds.has(r.id));
+  const hiddenCount = hiddenRfps.length;
+
+  const displayedRfps = listFilter === "saved"
+    ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
+    : rfpsWithMatch;
 
   const displayName = profile?.companyName?.trim() || "there";
-  const matchCount = rfpsWithMatch.length;
-  const selectedId = selectedRfpId ?? rfpsWithMatch[0]?.id ?? null;
-  const selectedRfp = rfpsWithMatch.find((r) => r.id === selectedId);
+  const matchCount = displayedRfps.length;
+  const selectedId = selectedRfpId ?? displayedRfps[0]?.id ?? null;
+  const selectedRfp = displayedRfps.find((r) => r.id === selectedId);
 
   return (
     <div className="min-h-screen bg-[#f5f5f5]">
@@ -392,10 +475,37 @@ export default function DashboardPage() {
         {/* Left: RFP list */}
         <aside className="w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-hidden">
           <div className="p-6 border-b border-slate-200 bg-white">
-            <h1 className="text-lg font-bold text-slate-800 mb-4">
+            <h1 className="text-lg font-bold text-slate-800 mb-3">
               Hi{displayName !== "there" ? ` ${displayName}` : " there"}! You have{" "}
-              <span className="text-[#2563eb]">{matchCount}</span> matches to review.
+              <span className="text-[#2563eb]">{matchCount}</span> {listFilter === "saved" ? "saved" : ""} match{matchCount !== 1 ? "es" : ""} to review.
             </h1>
+            <div className="flex gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => setListFilter("all")}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  listFilter === "all"
+                    ? "bg-[#2563eb] text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                onClick={() => setListFilter("saved")}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                  listFilter === "saved"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" clipRule="evenodd" />
+                </svg>
+                Saved ({savedRfpIds.size})
+              </button>
+            </div>
             <div className="flex gap-3">
               <Link
                 href="/profile"
@@ -417,11 +527,48 @@ export default function DashboardPage() {
             ) : error ? (
               <p className="text-sm text-amber-600 py-4 px-4 bg-amber-50 rounded-lg">{error}. Showing sample data.</p>
             ) : null}
-            {rfpsWithMatch.map((rfp) => {
+            {hiddenCount > 0 && (
+              <div className="px-4 py-2 border-b border-slate-200 bg-slate-50/50">
+                <button
+                  type="button"
+                  onClick={() => setShowNotInterestedList((prev) => !prev)}
+                  className="text-xs text-slate-600 hover:text-slate-900 hover:underline w-full text-left flex items-center justify-between gap-2"
+                >
+                  <span>
+                    {hiddenCount} RFP{hiddenCount !== 1 ? "s" : ""} marked not interested (hidden)
+                  </span>
+                  <span className="text-slate-400 shrink-0">
+                    {showNotInterestedList ? "▼" : "▶"}
+                  </span>
+                </button>
+                {showNotInterestedList && (
+                  <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
+                    {hiddenRfps.map((rfp) => (
+                      <div
+                        key={rfp.id}
+                        className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white border border-slate-200"
+                      >
+                        <p className="text-xs font-medium text-slate-800 truncate flex-1 min-w-0" title={rfp.title}>
+                          {rfp.title}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveFromNotInterested(rfp.id)}
+                          className="shrink-0 text-xs font-medium text-[#2563eb] hover:underline px-2 py-1"
+                        >
+                          Show again
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {displayedRfps.map((rfp) => {
               const { match } = rfp;
               const isSelected = rfp.id === selectedId;
               const isHighMatch = match.score >= 75;
-              const reasonSnippet = match.reasons.slice(0, 2).join(" • ");
+              const isSaved = savedRfpIds.has(rfp.id);
 
               return (
                 <button
@@ -455,6 +602,14 @@ export default function DashboardPage() {
                         <span className="text-emerald-500">✓</span> High Match
                       </span>
                     )}
+                    {isSaved && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" clipRule="evenodd" />
+                        </svg>
+                        Saved
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between">
                     <MatchBadge score={match.score} />
@@ -471,9 +626,23 @@ export default function DashboardPage() {
         </aside>
 
         {/* Right: RFP detail */}
-        <main className="flex-1 min-w-0 overflow-y-auto bg-[#f5f5f5]">
+        <main className="flex-1 min-w-0 overflow-y-auto bg-[#f5f5f5] relative">
+          {toast && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-lg">
+              {toast}
+            </div>
+          )}
           {selectedRfp ? (
-            <RFPDetailPanel rfp={selectedRfp} generateSummary={generateMatchSummary} MatchBadge={MatchBadge} />
+            <RFPDetailPanel
+              rfp={selectedRfp}
+              generateSummary={generateMatchSummary}
+              MatchBadge={MatchBadge}
+              isSaved={savedRfpIds.has(selectedRfp.id)}
+              hasExpressedInterest={expressedInterestRfpIds.has(selectedRfp.id)}
+              onSave={() => handleSaveRfp(selectedRfp.id)}
+              onNotInterested={() => handleNotInterested(selectedRfp.id)}
+              onExpressInterest={() => handleExpressInterest(selectedRfp.id)}
+            />
           ) : (
             <div className="flex items-center justify-center h-full text-slate-500">
               <p>Select an RFP to view details</p>
@@ -489,10 +658,20 @@ function RFPDetailPanel({
   rfp,
   generateSummary,
   MatchBadge,
+  isSaved,
+  hasExpressedInterest,
+  onSave,
+  onNotInterested,
+  onExpressInterest,
 }: {
   rfp: RFPWithMatch;
   generateSummary: (rfp: RFP, match: RFPMatch) => string;
   MatchBadge: React.ComponentType<{ score: number }>;
+  isSaved: boolean;
+  hasExpressedInterest: boolean;
+  onSave: () => void;
+  onNotInterested: () => void;
+  onExpressInterest: () => void;
 }) {
   const { match } = rfp;
   const isHighMatch = match.score >= 75;
@@ -505,24 +684,45 @@ function RFPDetailPanel({
         <div className="p-6 md:p-8 border-b border-slate-100">
           <div className="flex items-start justify-between gap-4 mb-4">
             <h2 className="text-xl font-bold text-slate-900">RFP Match</h2>
-            <div className="flex items-center gap-3 shrink-0">
-              <button type="button" className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="flex items-center gap-3 shrink-0 flex-wrap">
+              <button
+                type="button"
+                onClick={onSave}
+                className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
+                  isSaved
+                    ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100"
+                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                <svg className={`w-4 h-4 ${isSaved ? "fill-current" : ""}`} fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
                 </svg>
-                Save
+                {isSaved ? "Saved" : "Save"}
               </button>
-              <button type="button" className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={onNotInterested}
+                className="text-sm text-slate-500 hover:text-slate-700 hover:bg-slate-100 flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
                 Not Interested
               </button>
               <button
                 type="button"
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#2563eb] text-white text-sm font-semibold hover:bg-[#1d4ed8] transition-colors"
+                onClick={onExpressInterest}
+                disabled={hasExpressedInterest}
+                className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+                  hasExpressedInterest
+                    ? "bg-emerald-100 text-emerald-800 cursor-default"
+                    : "bg-[#2563eb] text-white hover:bg-[#1d4ed8]"
+                }`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
-                Express Interest
+                {hasExpressedInterest ? "Interest expressed" : "Express Interest"}
               </button>
             </div>
           </div>
