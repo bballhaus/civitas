@@ -70,6 +70,8 @@ function loadSet(key: string): Set<string> {
 function saveSet(key: string, set: Set<string>) {
   if (typeof window === "undefined") return;
   localStorage.setItem(key, JSON.stringify([...set]));
+}
+
 function parseDeadline(deadline: string): Date | null {
   const normalized = deadline?.trim();
   if (!normalized || normalized.toUpperCase() === "TBD") return null;
@@ -569,6 +571,7 @@ export default function DashboardPage() {
               const isSelected = rfp.id === selectedId;
               const isHighMatch = match.score >= 75;
               const isSaved = savedRfpIds.has(rfp.id);
+              const reasonSnippet = generateMatchSummary(rfp, match);
 
               return (
                 <button
