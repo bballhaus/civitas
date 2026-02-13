@@ -3,6 +3,14 @@ from .models import Contract, UserProfile
 from .services import extract_metadata_from_document, ExtractionError
 
 
+class UserWithProfileSerializer(serializers.Serializer):
+    """Combined user (id, username) and profile for /api/auth/me/."""
+
+    user_id = serializers.IntegerField(source='user.id')
+    username = serializers.CharField(source='user.username')
+    profile = UserProfileSerializer(source='profile')
+
+
 class ContractSerializer(serializers.ModelSerializer):
     jurisdiction = serializers.SerializerMethodField()
     features = serializers.SerializerMethodField()
