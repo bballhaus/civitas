@@ -1,4 +1,5 @@
 from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.middleware.csrf import get_token
 from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
@@ -8,6 +9,16 @@ from rest_framework.views import APIView
 from .models import Contract, UserProfile
 from .serializers import ContractSerializer, UserProfileSerializer, UserWithProfileSerializer
 from .services import extract_metadata_from_document, ExtractionError
+
+
+class CsrfView(APIView):
+    """Return CSRF token for cross-origin requests. Call before login/signup."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        token = get_token(request)
+        return Response({'csrfToken': token})
 
 
 class SignupView(APIView):
