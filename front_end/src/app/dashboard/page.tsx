@@ -286,6 +286,7 @@ function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch {
   }
 
   score = clamp(score, 5, 98);
+  score = Math.round(score);
 
   const reasons = [
     ...positiveReasons.slice(0, 3).map((r) => `✓ ${r}`),
