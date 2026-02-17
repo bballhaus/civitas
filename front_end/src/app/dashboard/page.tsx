@@ -639,6 +639,7 @@ export default function DashboardPage() {
           {selectedRfp ? (
             <RFPDetailPanel
               rfp={selectedRfp}
+              profile={profile}
               generateSummary={generateMatchSummary}
               MatchBadge={MatchBadge}
               isSaved={savedRfpIds.has(selectedRfp.id)}
@@ -660,6 +661,7 @@ export default function DashboardPage() {
 
 function RFPDetailPanel({
   rfp,
+  profile,
   generateSummary,
   MatchBadge,
   isSaved,
@@ -669,6 +671,7 @@ function RFPDetailPanel({
   onExpressInterest,
 }: {
   rfp: RFPWithMatch;
+  profile: CompanyProfile | null;
   generateSummary: (rfp: RFP, match: RFPMatch) => string;
   MatchBadge: React.ComponentType<{ score: number }>;
   isSaved: boolean;
@@ -679,7 +682,66 @@ function RFPDetailPanel({
 }) {
   const { match } = rfp;
   const isHighMatch = match.score >= 75;
-  const summary = generateSummary(rfp, match);
+  const initialSummary = generateSummary(rfp, match);
+  const [llmSummary, setLlmSummary] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState(false);
+
+  useEffect(() => {
+    setLlmSummary(null);
+    setSummaryError(false);
+    let cancelled = false;
+
+    async function fetchSummary() {
+      try {
+        const res = await fetch("/api/match-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rfp: {
+              title: rfp.title,
+              agency: rfp.agency,
+              industry: rfp.industry,
+              location: rfp.location,
+              deadline: rfp.deadline,
+              capabilities: rfp.capabilities,
+              certifications: rfp.certifications,
+              contractType: rfp.contractType,
+              description: (rfp.description || "").slice(0, 1500),
+            },
+            profile: profile ? {
+              companyName: profile.companyName,
+              industry: profile.industry,
+              capabilities: profile.capabilities,
+              certifications: profile.certifications,
+              workCities: profile.workCities,
+              workCounties: profile.workCounties,
+              agencyExperience: profile.agencyExperience,
+              contractTypes: profile.contractTypes,
+            } : null,
+            currentSummary: initialSummary,
+          }),
+        });
+        if (cancelled) return;
+        if (!res.ok) {
+          const errText = await res.text();
+          console.error("[match-summary] API error:", res.status, errText);
+          throw new Error(errText);
+        }
+        const data = await res.json();
+        if (cancelled) return;
+        setLlmSummary(data.summary ?? initialSummary);
+      } catch (err) {
+        console.error("[match-summary] Fetch failed:", err);
+        if (!cancelled) setSummaryError(true);
+      }
+    }
+
+    fetchSummary();
+    return () => { cancelled = true; };
+  }, [rfp.id, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.capabilities, rfp.certifications, rfp.contractType, rfp.description, profile, initialSummary]);
+
+  const summary = llmSummary ?? initialSummary;
+  const isLoadingSummary = llmSummary === null && !summaryError;
 
   return (
     <article className="w-full p-6 md:p-8">
@@ -820,11 +882,18 @@ function RFPDetailPanel({
           <div className="rounded-xl border-2 border-blue-200 bg-white p-5">
             <div className="flex items-start justify-between gap-2 mb-3">
               <h4 className="text-sm font-bold text-slate-900">Why this is a good match</h4>
-              <svg className="w-5 h-5 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+              {isLoadingSummary ? (
+                <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
+              ) : (
+                <svg className="w-5 h-5 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              )}
             </div>
             <p className="text-slate-700 leading-relaxed">{summary}</p>
+            {summaryError && (
+              <p className="mt-2 text-xs text-amber-600">AI summary unavailable (check console). Using rule-based summary.</p>
+            )}
           </div>
         </div>
 
