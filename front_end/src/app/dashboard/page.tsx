@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 
 interface CompanyProfile {
@@ -347,6 +347,11 @@ export default function DashboardPage() {
   const [notInterestedRfpIds, setNotInterestedRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.NOT_INTERESTED));
   const [expressedInterestRfpIds, setExpressedInterestRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
   const [toast, setToast] = useState<string | null>(null);
+  const [summaryCache, setSummaryCache] = useState<Record<string, string>>({});
+
+  const handleSummaryReady = useCallback((rfpId: string, summary: string) => {
+    setSummaryCache((prev) => ({ ...prev, [rfpId]: summary }));
+  }, []);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -647,6 +652,8 @@ export default function DashboardPage() {
               onSave={() => handleSaveRfp(selectedRfp.id)}
               onNotInterested={() => handleNotInterested(selectedRfp.id)}
               onExpressInterest={() => handleExpressInterest(selectedRfp.id)}
+              cachedSummary={summaryCache[selectedRfp.id]}
+              onSummaryReady={handleSummaryReady}
             />
           ) : (
             <div className="flex items-center justify-center h-full text-slate-500">
@@ -669,6 +676,8 @@ function RFPDetailPanel({
   onSave,
   onNotInterested,
   onExpressInterest,
+  cachedSummary,
+  onSummaryReady,
 }: {
   rfp: RFPWithMatch;
   profile: CompanyProfile | null;
@@ -679,14 +688,22 @@ function RFPDetailPanel({
   onSave: () => void;
   onNotInterested: () => void;
   onExpressInterest: () => void;
+  cachedSummary?: string;
+  onSummaryReady: (rfpId: string, summary: string) => void;
 }) {
   const { match } = rfp;
   const isHighMatch = match.score >= 75;
   const initialSummary = generateSummary(rfp, match);
-  const [llmSummary, setLlmSummary] = useState<string | null>(null);
+  const [llmSummary, setLlmSummary] = useState<string | null>(cachedSummary ?? null);
   const [summaryError, setSummaryError] = useState(false);
 
   useEffect(() => {
+    if (cachedSummary) {
+      setLlmSummary(cachedSummary);
+      setSummaryError(false);
+      return;
+    }
+
     setLlmSummary(null);
     setSummaryError(false);
     let cancelled = false;
@@ -729,7 +746,9 @@ function RFPDetailPanel({
         }
         const data = await res.json();
         if (cancelled) return;
-        setLlmSummary(data.summary ?? initialSummary);
+        const summary = data.summary ?? initialSummary;
+        setLlmSummary(summary);
+        onSummaryReady(rfp.id, summary);
       } catch (err) {
         console.error("[match-summary] Fetch failed:", err);
         if (!cancelled) setSummaryError(true);
@@ -738,7 +757,7 @@ function RFPDetailPanel({
 
     fetchSummary();
     return () => { cancelled = true; };
-  }, [rfp.id, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.capabilities, rfp.certifications, rfp.contractType, rfp.description, profile, initialSummary]);
+  }, [rfp.id, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.capabilities, rfp.certifications, rfp.contractType, rfp.description, profile, initialSummary, cachedSummary, onSummaryReady]);
 
   const summary = llmSummary ?? initialSummary;
   const isLoadingSummary = llmSummary === null && !summaryError;
