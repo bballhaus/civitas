@@ -46,6 +46,7 @@ const FILTER_OPTIONS = {
     "Small Business", "Small Disadvantaged Business (SDB)", "Veteran-Owned Small Business (VOSB)",
     "Women-Owned Small Business (WOSB)",
   ],
+  deadlineStatus: ["Still open", "Deadline passed", "Unknown/TBD"],
 } as const;
 
 interface RFPFilters {
@@ -60,6 +61,7 @@ interface RFPFilters {
   capabilities: string[];
   contractTypes: string[];
   sizeStatus: string[];
+  deadlineStatus: string[];
 }
 
 const EMPTY_FILTERS: RFPFilters = {
@@ -74,6 +76,7 @@ const EMPTY_FILTERS: RFPFilters = {
   capabilities: [],
   contractTypes: [],
   sizeStatus: [],
+  deadlineStatus: [],
 };
 
 // Primary filters (top 4 most-used) - shown as individual buttons
@@ -86,10 +89,11 @@ const PRIMARY_FILTERS: { key: keyof RFPFilters; label: string }[] = [
 
 // Secondary filters - inside "More filters" dropdown
 const SECONDARY_FILTERS: { key: keyof RFPFilters; label: string }[] = [
+  { key: "contractTypes", label: "Contract type" },
+  { key: "deadlineStatus", label: "Deadline" },
+  { key: "sizeStatus", label: "Size" },
   { key: "workCities", label: "Cities" },
   { key: "workCounties", label: "Counties" },
-  { key: "contractTypes", label: "Contract type" },
-  { key: "sizeStatus", label: "Size" },
   { key: "certifications", label: "Certifications" },
   { key: "clearances", label: "Clearances" },
   { key: "naicsCodes", label: "NAICS" },
@@ -107,6 +111,7 @@ const FILTER_OPTIONS_MAP: Record<keyof RFPFilters, readonly string[]> = {
   certifications: FILTER_OPTIONS.certifications,
   clearances: FILTER_OPTIONS.clearances,
   naicsCodes: FILTER_OPTIONS.naicsCodes,
+  deadlineStatus: FILTER_OPTIONS.deadlineStatus,
 };
 
 interface CompanyProfile {
@@ -256,6 +261,12 @@ function findTokenOverlap(values: string[], profileTokens: Set<string>): string[
   });
 }
 
+function getDeadlineStatus(deadline: string): "Still open" | "Deadline passed" | "Unknown/TBD" {
+  const due = parseDeadline(deadline);
+  if (!due) return "Unknown/TBD";
+  return new Date() > due ? "Deadline passed" : "Still open";
+}
+
 function getContractValueRange(estimatedValue: string): string {
   const v = (estimatedValue || "").trim();
   if (!v || v.toUpperCase() === "TBD") return "TBD/Unknown";
@@ -306,6 +317,10 @@ function rfpMatchesFilters(rfp: RFP, f: RFPFilters): boolean {
     if (!f.capabilities.some((c) => rfpCaps.some((rc) => rc.includes(c.toLowerCase()) || c.toLowerCase().includes(rc)))) return false;
   }
   if (f.contractTypes.length > 0 && !f.contractTypes.some((t) => (rfp.contractType || "").toLowerCase().includes(t.toLowerCase()))) return false;
+  if (f.deadlineStatus.length > 0) {
+    const status = getDeadlineStatus(rfp.deadline);
+    if (!f.deadlineStatus.includes(status)) return false;
+  }
   return true;
 }
 
@@ -313,7 +328,7 @@ function countActiveFilters(f: RFPFilters): number {
   return (
     f.industry.length + f.certifications.length + f.clearances.length + f.naicsCodes.length +
     f.workCities.length + f.workCounties.length + f.agencies.length + f.contractValueRanges.length +
-    f.capabilities.length + f.contractTypes.length + f.sizeStatus.length
+    f.capabilities.length + f.contractTypes.length + f.sizeStatus.length + f.deadlineStatus.length
   );
 }
 
