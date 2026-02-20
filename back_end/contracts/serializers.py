@@ -198,3 +198,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
         if obj.contract_count == 0:
             return 0
         return round(float(obj.total_contract_value) / obj.contract_count, 2)
+
+
+class UserWithProfileSerializer(serializers.Serializer):
+    """Combined user (id, username) and profile for /api/auth/me/."""
+
+    user_id = serializers.IntegerField(source='user.id')
+    username = serializers.CharField(source='user.username')
+    profile = UserProfileSerializer(source='profile')
