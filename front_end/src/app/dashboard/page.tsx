@@ -1,7 +1,118 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+
+// Filter options - same as profile-setup page
+const FILTER_OPTIONS = {
+  industry: [
+    "Construction", "Consulting", "Education", "Engineering", "Healthcare",
+    "IT Services", "Logistics", "Manufacturing", "Research & Development", "Security",
+  ],
+  certifications: [
+    "CMMI", "FedRAMP", "GSA Schedule", "HIPAA Compliance", "ISO 27001", "ISO 9001",
+    "ITAR", "NAICS Codes", "NIST 800-53", "PCI DSS", "SOC 2",
+  ],
+  clearances: ["Public Trust", "Secret", "Top Secret", "TS/SCI"],
+  naicsCodes: ["236220", "541330", "541511", "541512", "541519", "541611", "541690"],
+  workCities: [
+    "Anaheim", "Bakersfield", "Fresno", "Long Beach", "Los Angeles", "Oakland",
+    "Sacramento", "San Diego", "San Francisco", "San Jose",
+  ],
+  workCounties: [
+    "Alameda", "Contra Costa", "Fresno", "Los Angeles", "Orange", "Riverside",
+    "Sacramento", "San Bernardino", "San Diego", "San Francisco", "San Mateo",
+    "Santa Clara", "Ventura",
+  ],
+  agencies: [
+    "California Dept of Forestry", "California Department of General Services",
+    "California Department of Transportation", "City of Los Angeles",
+    "City of Sacramento", "City of San Francisco", "County of Inyo", "State of California",
+  ],
+  contractValueRanges: ["Under $100K", "$100K–$500K", "$500K–$1M", "$1M–$5M", "$5M+", "TBD/Unknown"],
+  capabilities: [
+    "AI/ML Services", "Cloud Services", "Cybersecurity", "Data Analytics", "Database Management",
+    "DevOps", "Mobile Development", "Network Infrastructure", "Project Management",
+    "Quality Assurance", "Software Development", "System Integration", "Technical Writing",
+    "Training & Support", "Web Development",
+  ],
+  contractTypes: [
+    "BPA (Blanket Purchase Agreement)", "Competitive", "Cost Plus", "Fixed Price",
+    "GSA Schedule", "IDIQ (Indefinite Delivery)", "Multi-year", "Small Business Set-Aside",
+    "Sole Source", "Time & Materials",
+  ],
+  sizeStatus: [
+    "8(a) Business", "HUBZone", "Large Business", "Service-Disabled Veteran-Owned (SDVOSB)",
+    "Small Business", "Small Disadvantaged Business (SDB)", "Veteran-Owned Small Business (VOSB)",
+    "Women-Owned Small Business (WOSB)",
+  ],
+  deadlineStatus: ["Still open", "Deadline passed", "Unknown/TBD"],
+} as const;
+
+interface RFPFilters {
+  industry: string[];
+  certifications: string[];
+  clearances: string[];
+  naicsCodes: string[];
+  workCities: string[];
+  workCounties: string[];
+  agencies: string[];
+  contractValueRanges: string[];
+  capabilities: string[];
+  contractTypes: string[];
+  sizeStatus: string[];
+  deadlineStatus: string[];
+}
+
+const EMPTY_FILTERS: RFPFilters = {
+  industry: [],
+  certifications: [],
+  clearances: [],
+  naicsCodes: [],
+  workCities: [],
+  workCounties: [],
+  agencies: [],
+  contractValueRanges: [],
+  capabilities: [],
+  contractTypes: [],
+  sizeStatus: [],
+  deadlineStatus: [],
+};
+
+// Primary filters (top 4 most-used) - shown as individual buttons
+const PRIMARY_FILTERS: { key: keyof RFPFilters; label: string }[] = [
+  { key: "industry", label: "Industry" },
+  { key: "agencies", label: "Agencies" },
+  { key: "contractValueRanges", label: "Value" },
+  { key: "capabilities", label: "Services" },
+];
+
+// Secondary filters - inside "More filters" dropdown
+const SECONDARY_FILTERS: { key: keyof RFPFilters; label: string }[] = [
+  { key: "contractTypes", label: "Contract type" },
+  { key: "deadlineStatus", label: "Deadline" },
+  { key: "sizeStatus", label: "Size" },
+  { key: "workCities", label: "Cities" },
+  { key: "workCounties", label: "Counties" },
+  { key: "certifications", label: "Certifications" },
+  { key: "clearances", label: "Clearances" },
+  { key: "naicsCodes", label: "NAICS" },
+];
+
+const FILTER_OPTIONS_MAP: Record<keyof RFPFilters, readonly string[]> = {
+  industry: FILTER_OPTIONS.industry,
+  agencies: FILTER_OPTIONS.agencies,
+  contractValueRanges: FILTER_OPTIONS.contractValueRanges,
+  capabilities: FILTER_OPTIONS.capabilities,
+  workCities: FILTER_OPTIONS.workCities,
+  workCounties: FILTER_OPTIONS.workCounties,
+  contractTypes: FILTER_OPTIONS.contractTypes,
+  sizeStatus: FILTER_OPTIONS.sizeStatus,
+  certifications: FILTER_OPTIONS.certifications,
+  clearances: FILTER_OPTIONS.clearances,
+  naicsCodes: FILTER_OPTIONS.naicsCodes,
+  deadlineStatus: FILTER_OPTIONS.deadlineStatus,
+};
 
 interface CompanyProfile {
   companyName: string;
@@ -148,6 +259,81 @@ function findTokenOverlap(values: string[], profileTokens: Set<string>): string[
     const tokens = tokenize(value);
     return tokens.some((token) => profileTokens.has(token));
   });
+}
+
+function getDeadlineStatus(deadline: string): "Still open" | "Deadline passed" | "Unknown/TBD" {
+  const due = parseDeadline(deadline);
+  if (!due) return "Unknown/TBD";
+  return new Date() > due ? "Deadline passed" : "Still open";
+}
+
+function getContractValueRange(estimatedValue: string): string {
+  const v = (estimatedValue || "").trim();
+  if (!v || v.toUpperCase() === "TBD") return "TBD/Unknown";
+  const cleaned = v.replace(/[$,\s]/g, "").toLowerCase();
+  const match = cleaned.match(/(\d+(?:\.\d+)?)\s*(k|m)?/);
+  if (!match) return "TBD/Unknown";
+  let num = parseFloat(match[1]);
+  const suffix = match[2];
+  if (suffix === "k") num *= 1000;
+  else if (suffix === "m") num *= 1000000;
+  if (num < 100000) return "Under $100K";
+  if (num < 500000) return "$100K–$500K";
+  if (num < 1000000) return "$500K–$1M";
+  if (num < 5000000) return "$1M–$5M";
+  return "$5M+";
+}
+
+function rfpMatchesFilters(rfp: RFP, f: RFPFilters): boolean {
+  const loc = (rfp.location || "").toLowerCase();
+  const desc = ((rfp.description || "") + " " + (rfp.title || "")).toLowerCase();
+
+  if (f.industry.length > 0 && !f.industry.some((i) => (rfp.industry || "").toLowerCase() === i.toLowerCase() || (rfp.industry || "").toLowerCase().includes(i.toLowerCase()))) return false;
+  if (f.sizeStatus.length > 0 && !f.sizeStatus.some((s) => desc.includes(s.toLowerCase().replace(/[()]/g, "")) || desc.includes(s.toLowerCase()))) return false;
+  if (f.certifications.length > 0) {
+    const rfpCerts = (rfp.certifications || []).map((c) => c.toLowerCase());
+    if (!f.certifications.some((c) => rfpCerts.some((rc) => rc.includes(c.toLowerCase()) || c.toLowerCase().includes(rc)))) return false;
+  }
+  if (f.clearances.length > 0 && !f.clearances.some((c) => desc.includes(c.toLowerCase()))) return false;
+  if (f.naicsCodes.length > 0) {
+    const rfpNaics = (rfp.naicsCodes || []).map((n) => n.trim());
+    if (!f.naicsCodes.some((n) => rfpNaics.some((rn) => rn === n || rn.startsWith(n) || n.startsWith(rn)))) return false;
+  }
+  if (f.workCities.length > 0 && !f.workCities.some((c) => loc.includes(c.toLowerCase()))) return false;
+  if (f.workCounties.length > 0 && !f.workCounties.some((c) => loc.includes(c.toLowerCase()))) return false;
+  if (f.agencies.length > 0) {
+    const rfpAgency = (rfp.agency || "").toLowerCase();
+    if (!f.agencies.some((a) => {
+      const filterAgency = a.toLowerCase();
+      return rfpAgency.includes(filterAgency) || filterAgency.includes(rfpAgency);
+    })) return false;
+  }
+  if (f.contractValueRanges.length > 0) {
+    const range = getContractValueRange(rfp.estimatedValue);
+    if (!f.contractValueRanges.includes(range)) return false;
+  }
+  if (f.capabilities.length > 0) {
+    const rfpCaps = (rfp.capabilities || []).map((c) => c.toLowerCase());
+    if (!f.capabilities.some((c) => rfpCaps.some((rc) => rc.includes(c.toLowerCase()) || c.toLowerCase().includes(rc)))) return false;
+  }
+  if (f.contractTypes.length > 0 && !f.contractTypes.some((t) => (rfp.contractType || "").toLowerCase().includes(t.toLowerCase()))) return false;
+  if (f.deadlineStatus.length > 0) {
+    const status = getDeadlineStatus(rfp.deadline);
+    if (!f.deadlineStatus.includes(status)) return false;
+  }
+  return true;
+}
+
+function countActiveFilters(f: RFPFilters): number {
+  return (
+    f.industry.length + f.certifications.length + f.clearances.length + f.naicsCodes.length +
+    f.workCities.length + f.workCounties.length + f.agencies.length + f.contractValueRanges.length +
+    f.capabilities.length + f.contractTypes.length + f.sizeStatus.length + f.deadlineStatus.length
+  );
+}
+
+function countSecondaryFilters(f: RFPFilters): number {
+  return SECONDARY_FILTERS.reduce((sum, { key }) => sum + f[key].length, 0);
 }
 
 function scoreFromSimilarity(sim: number, maxPoints: number) {
@@ -337,6 +523,222 @@ function MatchBadge({ score }: { score: number }) {
   );
 }
 
+const SEARCHABLE_FILTER_THRESHOLD = 8;
+
+function FilterDropdown({
+  keyName,
+  label,
+  options,
+  filters,
+  onFiltersChange,
+  onClose,
+  containerRef,
+}: {
+  keyName: keyof RFPFilters;
+  label: string;
+  options: readonly string[];
+  filters: RFPFilters;
+  onFiltersChange: (f: RFPFilters) => void;
+  onClose: () => void;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef?.current && !containerRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [onClose, containerRef]);
+
+  const toggle = (value: string) => {
+    const arr = filters[keyName];
+    const next = arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value];
+    onFiltersChange({ ...filters, [keyName]: next });
+  };
+
+  const searchLower = search.trim().toLowerCase();
+  const selected = filters[keyName];
+  const filteredOptions = searchLower
+    ? options.filter((o) => o.toLowerCase().includes(searchLower))
+    : options;
+  const showOptions = options.length >= SEARCHABLE_FILTER_THRESHOLD
+    ? [...new Set([...selected.filter((s) => options.includes(s)), ...filteredOptions])]
+    : options;
+  const hasSearch = options.length >= SEARCHABLE_FILTER_THRESHOLD;
+
+  return (
+    <div
+      className="absolute left-0 top-full mt-1 z-[100] w-[240px] max-h-72 overflow-y-auto overscroll-contain bg-white border border-slate-200 rounded-lg shadow-xl"
+      onWheel={(e) => e.stopPropagation()}
+    >
+      <div className="sticky top-0 bg-white border-b border-slate-200 px-3 py-2 flex flex-col gap-2 z-10">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-semibold text-slate-800">Filter by {label}</span>
+          {filters[keyName].length > 0 && (
+            <button
+              type="button"
+              onClick={() => onFiltersChange({ ...filters, [keyName]: [] })}
+              className="text-xs text-[#2563eb] hover:underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        {hasSearch && (
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Type to filter..."
+            className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-[#2563eb] focus:border-[#2563eb] placeholder:text-slate-400"
+          />
+        )}
+      </div>
+      <div className="p-2 max-h-52 overflow-y-auto space-y-0.5">
+        {showOptions.length > 0 ? (
+          showOptions.map((opt) => (
+            <label key={opt} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded px-2 py-1.5">
+              <input
+                type="checkbox"
+                checked={selected.includes(opt)}
+                onChange={() => toggle(opt)}
+                className="w-3.5 h-3.5 text-[#2563eb] border-slate-300 rounded shrink-0"
+              />
+              <span className="text-xs text-slate-700 truncate">{opt}</span>
+            </label>
+          ))
+        ) : (
+          <p className="text-xs text-slate-500 italic py-2 px-2">No matches</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SearchableFilterSection({
+  label,
+  keyName,
+  options,
+  filters,
+  onToggle,
+}: {
+  label: string;
+  keyName: keyof RFPFilters;
+  options: readonly string[];
+  filters: RFPFilters;
+  onToggle: (keyName: keyof RFPFilters, value: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const searchLower = search.trim().toLowerCase();
+  const selected = filters[keyName];
+  const filteredOptions = searchLower
+    ? options.filter((o) => o.toLowerCase().includes(searchLower))
+    : options;
+  const showOptions = [...new Set([...selected.filter((s) => options.includes(s)), ...filteredOptions])];
+
+  return (
+    <div className="border-b border-slate-100 last:border-0 pb-3 last:pb-0">
+      <p className="text-xs font-semibold text-slate-600 mb-1.5">{label}</p>
+      <input
+        type="text"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Type to filter..."
+        className="w-full px-2.5 py-1.5 mb-2 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-[#2563eb] focus:border-[#2563eb] placeholder:text-slate-400"
+      />
+      <div className="max-h-40 overflow-y-auto space-y-0.5">
+        {showOptions.length > 0 ? (
+          showOptions.map((opt) => (
+            <label key={opt} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded px-2 py-1">
+              <input
+                type="checkbox"
+                checked={selected.includes(opt)}
+                onChange={() => onToggle(keyName, opt)}
+                className="w-3.5 h-3.5 text-[#2563eb] border-slate-300 rounded shrink-0"
+              />
+              <span className="text-xs text-slate-700 truncate">{opt}</span>
+            </label>
+          ))
+        ) : (
+          <p className="text-xs text-slate-500 italic py-2 px-2">No matches</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MoreFiltersDropdown({
+  filters,
+  onFiltersChange,
+  onClose,
+  containerRef,
+}: {
+  filters: RFPFilters;
+  onFiltersChange: (f: RFPFilters) => void;
+  onClose: () => void;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef?.current && !containerRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [onClose, containerRef]);
+
+  const toggle = (keyName: keyof RFPFilters, value: string) => {
+    const arr = filters[keyName];
+    const next = arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value];
+    onFiltersChange({ ...filters, [keyName]: next });
+  };
+
+  const secondaryCount = countSecondaryFilters(filters);
+
+  return (
+    <div
+      className="absolute left-0 top-full mt-1 z-[100] w-[340px] max-h-[75vh] overflow-y-auto overscroll-contain bg-white border border-slate-200 rounded-lg shadow-xl"
+      onWheel={(e) => e.stopPropagation()}
+    >
+      <div className="sticky top-0 bg-white border-b border-slate-200 px-3 py-2 flex items-center justify-between z-10">
+        <span className="text-sm font-semibold text-slate-800">More filters</span>
+        {secondaryCount > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              const cleared = { ...filters };
+              SECONDARY_FILTERS.forEach(({ key }) => { cleared[key] = []; });
+              onFiltersChange(cleared);
+            }}
+            className="text-xs text-[#2563eb] hover:underline"
+          >
+            Clear all
+          </button>
+        )}
+      </div>
+      <div className="p-3 flex flex-col gap-3">
+        {SECONDARY_FILTERS.map(({ key, label }) => {
+          const options = FILTER_OPTIONS_MAP[key];
+          return (
+            <SearchableFilterSection
+              key={key}
+              label={label}
+              keyName={key}
+              options={options}
+              filters={filters}
+              onToggle={toggle}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [selectedRfpId, setSelectedRfpId] = useState<string | null>(null);
@@ -397,6 +799,34 @@ export default function DashboardPage() {
 
   const [showNotInterestedList, setShowNotInterestedList] = useState(false);
   const [listFilter, setListFilter] = useState<"all" | "saved">("all");
+  const [filters, setFilters] = useState<RFPFilters>(EMPTY_FILTERS);
+  const [openFilterKey, setOpenFilterKey] = useState<keyof RFPFilters | "more" | null>(null);
+  const filtersContainerRef = useRef<HTMLDivElement>(null);
+  const scrollLockYRef = useRef(0);
+
+  useEffect(() => {
+    if (openFilterKey) {
+      scrollLockYRef.current = window.scrollY;
+      const scrollBarWidth = window.innerWidth - document.documentElement.clientWidth;
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${scrollLockYRef.current}px`;
+      document.body.style.left = "0";
+      document.body.style.right = "0";
+      document.body.style.width = "100%";
+      if (scrollBarWidth > 0) {
+        document.body.style.paddingRight = `${scrollBarWidth}px`;
+      }
+      return () => {
+        document.body.style.position = "";
+        document.body.style.top = "";
+        document.body.style.left = "";
+        document.body.style.right = "";
+        document.body.style.width = "";
+        document.body.style.paddingRight = "";
+        window.scrollTo(0, scrollLockYRef.current);
+      };
+    }
+  }, [openFilterKey]);
 
   useEffect(() => {
     const saved = localStorage.getItem("companyProfile");
@@ -447,14 +877,26 @@ export default function DashboardPage() {
   const hiddenRfps = allRfpsWithMatch.filter((r) => notInterestedRfpIds.has(r.id));
   const hiddenCount = hiddenRfps.length;
 
-  const displayedRfps = listFilter === "saved"
+  const baseDisplayedRfps = listFilter === "saved"
     ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
     : rfpsWithMatch;
+  const displayedRfps = countActiveFilters(filters) > 0
+    ? baseDisplayedRfps.filter((r) => rfpMatchesFilters(r, filters))
+    : baseDisplayedRfps;
 
   const displayName = profile?.companyName?.trim() || "there";
   const matchCount = displayedRfps.length;
-  const selectedId = selectedRfpId ?? displayedRfps[0]?.id ?? null;
+  const selectedId =
+    (selectedRfpId && displayedRfps.some((r) => r.id === selectedRfpId))
+      ? selectedRfpId
+      : displayedRfps[0]?.id ?? null;
   const selectedRfp = displayedRfps.find((r) => r.id === selectedId);
+
+  useEffect(() => {
+    if (selectedRfpId && !displayedRfps.some((r) => r.id === selectedRfpId)) {
+      setSelectedRfpId(displayedRfps[0]?.id ?? null);
+    }
+  }, [displayedRfps, selectedRfpId]);
 
   return (
     <div className="min-h-screen bg-[#f5f5f5]">
@@ -476,24 +918,112 @@ export default function DashboardPage() {
       {/* Split view */}
       <div className="flex flex-col lg:flex-row h-[calc(100vh-65px)]">
         {/* Left: RFP list */}
-        <aside className="w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-hidden">
+        <aside className="w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-visible">
           <div className="p-6 border-b border-slate-200 bg-white">
             <h1 className="text-lg font-bold text-slate-800 mb-3">
               Hi{displayName !== "there" ? ` ${displayName}` : " there"}! You have{" "}
               <span className="text-[#2563eb]">{matchCount}</span> {listFilter === "saved" ? "saved" : ""} match{matchCount !== 1 ? "es" : ""} to review.
             </h1>
-            <div className="flex gap-2 mb-3">
-              <button
-                type="button"
-                onClick={() => setListFilter("all")}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  listFilter === "all"
-                    ? "bg-[#2563eb] text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                All
-              </button>
+            <div ref={filtersContainerRef} className="flex flex-wrap gap-2 mb-3 items-center">
+              <span className="text-xs font-medium text-slate-500 mr-1 shrink-0">Filter by:</span>
+              {PRIMARY_FILTERS.map(({ key, label }) => {
+                const count = filters[key].length;
+                const isOpen = openFilterKey === key;
+                return (
+                  <div key={key} className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setOpenFilterKey((prev) => (prev === key ? null : key))}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                        count > 0
+                          ? "bg-[#2563eb] text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {label}
+                      {count > 0 && (
+                        <span className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-white/20 text-xs font-bold">
+                          {count}
+                        </span>
+                      )}
+                      <svg
+                        className={`w-3.5 h-3.5 shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {isOpen && (
+                      <FilterDropdown
+                        keyName={key}
+                        label={label}
+                        options={FILTER_OPTIONS_MAP[key]}
+                        filters={filters}
+                        onFiltersChange={setFilters}
+                        onClose={() => setOpenFilterKey(null)}
+                        containerRef={filtersContainerRef}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setOpenFilterKey((prev) => (prev === "more" ? null : "more"))}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                    countSecondaryFilters(filters) > 0
+                      ? "bg-[#2563eb] text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  More filters
+                  {countSecondaryFilters(filters) > 0 && (
+                    <span className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-white/20 text-xs font-bold">
+                      {countSecondaryFilters(filters)}
+                    </span>
+                  )}
+                  <svg
+                    className={`w-3.5 h-3.5 shrink-0 transition-transform ${openFilterKey === "more" ? "rotate-180" : ""}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {openFilterKey === "more" && (
+                  <MoreFiltersDropdown
+                    filters={filters}
+                    onFiltersChange={setFilters}
+                    onClose={() => setOpenFilterKey(null)}
+                    containerRef={filtersContainerRef}
+                  />
+                )}
+              </div>
+              {countActiveFilters(filters) > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFilters(EMPTY_FILTERS)}
+                  className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-700 hover:underline shrink-0"
+                >
+                  Clear all
+                </button>
+              )}
+              <div className="flex items-center gap-2 border-l border-slate-200 pl-2 ml-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setListFilter("all")}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                    listFilter === "all" && countActiveFilters(filters) === 0
+                      ? "bg-[#2563eb] text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  All
+                </button>
               <button
                 type="button"
                 onClick={() => setListFilter("saved")}
@@ -508,6 +1038,7 @@ export default function DashboardPage() {
                 </svg>
                 Saved ({savedRfpIds.size})
               </button>
+              </div>
             </div>
             <div className="flex gap-3">
               <Link
@@ -522,7 +1053,9 @@ export default function DashboardPage() {
               </Link>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          <div
+            className={`flex-1 min-h-0 p-3 space-y-3 ${openFilterKey ? "overflow-hidden" : "overflow-y-auto"}`}
+          >
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#2563eb]"></div>
@@ -630,7 +1163,9 @@ export default function DashboardPage() {
         </aside>
 
         {/* Right: RFP detail */}
-        <main className="flex-1 min-w-0 overflow-y-auto bg-[#f5f5f5] relative">
+        <main
+          className={`flex-1 min-w-0 bg-[#f5f5f5] relative ${openFilterKey ? "overflow-hidden" : "overflow-y-auto"}`}
+        >
           {toast && (
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-lg">
               {toast}
