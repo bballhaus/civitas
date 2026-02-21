@@ -114,6 +114,36 @@ const FILTER_OPTIONS_MAP: Record<keyof RFPFilters, readonly string[]> = {
   deadlineStatus: FILTER_OPTIONS.deadlineStatus,
 };
 
+function deriveFilterOptionsFromRfps(rfps: RFP[]): Record<keyof RFPFilters, string[]> {
+  const merge = (staticList: readonly string[], dynamic: string[]) => {
+    const set = new Set([...staticList, ...dynamic.map((s) => s.trim()).filter(Boolean)]);
+    return [...set].sort();
+  };
+  const locations = rfps.flatMap((r) =>
+    (r.location || "")
+      .split(/[,;]/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 2)
+  );
+  return {
+    industry: merge(FILTER_OPTIONS.industry, rfps.map((r) => r.industry || "").filter(Boolean)),
+    agencies: merge(FILTER_OPTIONS.agencies, rfps.map((r) => r.agency || "").filter(Boolean)),
+    contractValueRanges: [...FILTER_OPTIONS.contractValueRanges],
+    capabilities: merge(FILTER_OPTIONS.capabilities, rfps.flatMap((r) => r.capabilities || [])),
+    workCities: merge(FILTER_OPTIONS.workCities, locations),
+    workCounties: merge(FILTER_OPTIONS.workCounties, locations),
+    contractTypes: merge(FILTER_OPTIONS.contractTypes, rfps.map((r) => r.contractType || "").filter(Boolean)),
+    sizeStatus: [...FILTER_OPTIONS.sizeStatus],
+    certifications: merge(FILTER_OPTIONS.certifications, rfps.flatMap((r) => r.certifications || [])),
+    clearances: [...FILTER_OPTIONS.clearances],
+    naicsCodes: merge(
+      FILTER_OPTIONS.naicsCodes,
+      rfps.flatMap((r) => (r.naicsCodes || []).map(String))
+    ),
+    deadlineStatus: [...FILTER_OPTIONS.deadlineStatus],
+  };
+}
+
 interface CompanyProfile {
   companyName: string;
   industry: string[];
@@ -282,6 +312,35 @@ function getContractValueRange(estimatedValue: string): string {
   if (num < 1000000) return "$500K–$1M";
   if (num < 5000000) return "$1M–$5M";
   return "$5M+";
+}
+
+function getContractValueNumeric(estimatedValue: string): number {
+  const v = (estimatedValue || "").trim();
+  if (!v || v.toUpperCase() === "TBD") return 0;
+  const cleaned = v.replace(/[$,\s]/g, "").toLowerCase();
+  const match = cleaned.match(/(\d+(?:\.\d+)?)\s*(k|m)?/);
+  if (!match) return 0;
+  let num = parseFloat(match[1]);
+  const suffix = match[2];
+  if (suffix === "k") num *= 1000;
+  else if (suffix === "m") num *= 1000000;
+  return num;
+}
+
+function rfpMatchesSearch(rfp: RFP, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const searchable = [
+    rfp.title,
+    rfp.agency,
+    rfp.industry,
+    rfp.location,
+    rfp.contractType,
+    rfp.description,
+    (rfp.capabilities || []).join(" "),
+    (rfp.certifications || []).join(" "),
+  ].join(" ").toLowerCase();
+  return searchable.includes(q);
 }
 
 function rfpMatchesFilters(rfp: RFP, f: RFPFilters): boolean {
@@ -671,11 +730,13 @@ function SearchableFilterSection({
 }
 
 function MoreFiltersDropdown({
+  filterOptions,
   filters,
   onFiltersChange,
   onClose,
   containerRef,
 }: {
+  filterOptions: Record<keyof RFPFilters, string[]>;
   filters: RFPFilters;
   onFiltersChange: (f: RFPFilters) => void;
   onClose: () => void;
@@ -722,7 +783,7 @@ function MoreFiltersDropdown({
       </div>
       <div className="p-3 flex flex-col gap-3">
         {SECONDARY_FILTERS.map(({ key, label }) => {
-          const options = FILTER_OPTIONS_MAP[key];
+          const options = filterOptions[key];
           return (
             <SearchableFilterSection
               key={key}
@@ -806,6 +867,9 @@ export default function DashboardPage() {
   const [listFilter, setListFilter] = useState<"all" | "saved">("all");
   const [filters, setFilters] = useState<RFPFilters>(EMPTY_FILTERS);
   const [openFilterKey, setOpenFilterKey] = useState<keyof RFPFilters | "more" | null>(null);
+  const [minScore, setMinScore] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState<"score" | "deadline" | "value">("score");
   const filtersContainerRef = useRef<HTMLDivElement>(null);
   const scrollLockYRef = useRef(0);
 
@@ -885,9 +949,32 @@ export default function DashboardPage() {
   const baseDisplayedRfps = listFilter === "saved"
     ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
     : rfpsWithMatch;
-  const displayedRfps = countActiveFilters(filters) > 0
+  let displayedRfps = countActiveFilters(filters) > 0
     ? baseDisplayedRfps.filter((r) => rfpMatchesFilters(r, filters))
     : baseDisplayedRfps;
+  displayedRfps = displayedRfps.filter((r) => rfpMatchesSearch(r, searchQuery));
+  if (minScore != null) {
+    displayedRfps = displayedRfps.filter((r) => r.match.score >= minScore);
+  }
+  displayedRfps = [...displayedRfps].sort((a, b) => {
+    if (sortBy === "score") return b.match.score - a.match.score;
+    if (sortBy === "deadline") {
+      const dueA = parseDeadline(a.deadline)?.getTime() ?? Infinity;
+      const dueB = parseDeadline(b.deadline)?.getTime() ?? Infinity;
+      return dueA - dueB;
+    }
+    if (sortBy === "value") {
+      const valA = getContractValueNumeric(a.estimatedValue);
+      const valB = getContractValueNumeric(b.estimatedValue);
+      return valB - valA;
+    }
+    return 0;
+  });
+
+  const dynamicFilterOptions = React.useMemo(
+    () => deriveFilterOptionsFromRfps(rfpsWithMatch),
+    [rfpsWithMatch]
+  );
 
   const displayName = profile?.companyName?.trim() || "there";
   const matchCount = displayedRfps.length;
@@ -929,6 +1016,40 @@ export default function DashboardPage() {
               Hi{displayName !== "there" ? ` ${displayName}` : " there"}! You have{" "}
               <span className="text-[#2563eb]">{matchCount}</span> {listFilter === "saved" ? "saved" : ""} match{matchCount !== 1 ? "es" : ""} to review.
             </h1>
+            <div className="mb-3">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search RFPs by title, agency, location..."
+                className="w-full px-3 py-2 text-sm text-slate-800 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563eb] focus:border-transparent placeholder:text-slate-600"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2 mb-2 items-center">
+              <span className="text-xs font-medium text-slate-500 shrink-0">Min score:</span>
+              {([null, 25, 55, 75] as const).map((s) => (
+                <button
+                  key={s ?? "all"}
+                  type="button"
+                  onClick={() => setMinScore(s)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                    minScore === s ? "bg-[#2563eb] text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {s == null ? "All" : `${s}%+`}
+                </button>
+              ))}
+              <span className="text-xs font-medium text-slate-700 shrink-0 ml-1">Sort:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as "score" | "deadline" | "value")}
+                className="px-2.5 py-1 text-xs text-slate-800 border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-[#2563eb]"
+              >
+                <option value="score">Best match</option>
+                <option value="deadline">Soonest deadline</option>
+                <option value="value">Highest value</option>
+              </select>
+            </div>
             <div ref={filtersContainerRef} className="flex flex-wrap gap-2 mb-3 items-center">
               <span className="text-xs font-medium text-slate-500 mr-1 shrink-0">Filter by:</span>
               {PRIMARY_FILTERS.map(({ key, label }) => {
@@ -964,7 +1085,7 @@ export default function DashboardPage() {
                       <FilterDropdown
                         keyName={key}
                         label={label}
-                        options={FILTER_OPTIONS_MAP[key]}
+                        options={dynamicFilterOptions[key]}
                         filters={filters}
                         onFiltersChange={setFilters}
                         onClose={() => setOpenFilterKey(null)}
@@ -1001,6 +1122,7 @@ export default function DashboardPage() {
                 </button>
                 {openFilterKey === "more" && (
                   <MoreFiltersDropdown
+                    filterOptions={dynamicFilterOptions}
                     filters={filters}
                     onFiltersChange={setFilters}
                     onClose={() => setOpenFilterKey(null)}
