@@ -1235,11 +1235,10 @@ export default function DashboardPage() {
               const reasonSnippet = generateMatchSummary(rfp, match);
 
               return (
-                <button
+                <Link
                   key={rfp.id}
-                  type="button"
-                  onClick={() => setSelectedRfpId(rfp.id)}
-                  className={`w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md ${
+                  href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
+                  className={`block w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md ${
                     isSelected ? "border-[#2563eb] shadow-md" : "border-transparent hover:border-slate-200"
                   }`}
                 >
@@ -1283,7 +1282,7 @@ export default function DashboardPage() {
                       {reasonSnippet}
                     </p>
                   )}
-                </button>
+                </Link>
               );
             })}
           </div>
