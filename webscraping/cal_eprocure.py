@@ -23,6 +23,16 @@ BASE_DOWNLOAD_DIR = os.path.abspath('downloads')
 
 
 def scrape_event_page(driver, wait):
+    # Wait until the URL is the real event page, not a loading placeholder
+    def url_is_ready(driver):
+        return 'page_loading' not in driver.current_url and '/event/' in driver.current_url
+    
+    try:
+        wait.until(url_is_ready)
+    except:
+        print(f"  ✗ URL never resolved: {driver.current_url}")
+
+
     """Scrape data from event detail page"""
     event_data = {
         'event_url': driver.current_url,
