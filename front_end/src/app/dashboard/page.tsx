@@ -87,7 +87,7 @@ const PRIMARY_FILTERS: { key: keyof RFPFilters; label: string }[] = [
   { key: "capabilities", label: "Services" },
 ];
 
-// Secondary filters - inside "More filters" dropdown
+// Secondary filters - inside Filter panel
 const SECONDARY_FILTERS: { key: keyof RFPFilters; label: string }[] = [
   { key: "contractTypes", label: "Contract type" },
   { key: "deadlineStatus", label: "Deadline" },
@@ -97,6 +97,24 @@ const SECONDARY_FILTERS: { key: keyof RFPFilters; label: string }[] = [
   { key: "certifications", label: "Certifications" },
   { key: "clearances", label: "Clearances" },
   { key: "naicsCodes", label: "NAICS" },
+];
+
+// All filter sections for the single Filter panel (collapsible, start minimized)
+const ALL_FILTER_SECTIONS: { key: keyof RFPFilters; label: string }[] = [
+  ...PRIMARY_FILTERS,
+  ...SECONDARY_FILTERS,
+];
+
+type SortByField = "score" | "deadline" | "value";
+type SortDir = "asc" | "desc";
+
+const SORT_OPTIONS: { sortBy: SortByField; direction: SortDir; label: string }[] = [
+  { sortBy: "score", direction: "desc", label: "Best match first" },
+  { sortBy: "score", direction: "asc", label: "Lowest match first" },
+  { sortBy: "deadline", direction: "asc", label: "Soonest deadline first" },
+  { sortBy: "deadline", direction: "desc", label: "Latest deadline first" },
+  { sortBy: "value", direction: "desc", label: "Highest value first" },
+  { sortBy: "value", direction: "asc", label: "Lowest value first" },
 ];
 
 const FILTER_OPTIONS_MAP: Record<keyof RFPFilters, readonly string[]> = {
@@ -800,6 +818,228 @@ function MoreFiltersDropdown({
   );
 }
 
+const MATCH_SCORE_OPTIONS = [
+  { value: null as number | null, label: "All" },
+  { value: 75, label: "Best" },
+  { value: 55, label: "Strong" },
+  { value: 25, label: "Good" },
+] as const;
+
+function FilterPanel({
+  filterOptions,
+  filters,
+  onFiltersChange,
+  onClose,
+  expandedSections,
+  onToggleSection,
+  itemCount,
+  minScore,
+  onMinScoreChange,
+}: {
+  filterOptions: Record<keyof RFPFilters, string[]>;
+  filters: RFPFilters;
+  onFiltersChange: (f: RFPFilters) => void;
+  onClose: () => void;
+  expandedSections: Set<keyof RFPFilters>;
+  onToggleSection: (key: keyof RFPFilters) => void;
+  itemCount: number;
+  minScore: number | null;
+  onMinScoreChange: (v: number | null) => void;
+}) {
+  const [matchExpanded, setMatchExpanded] = useState(false);
+
+  const toggle = (keyName: keyof RFPFilters, value: string) => {
+    const arr = filters[keyName];
+    const next = arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value];
+    onFiltersChange({ ...filters, [keyName]: next });
+  };
+
+  const handleClear = () => {
+    onFiltersChange(EMPTY_FILTERS);
+    onMinScoreChange(null);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex items-start justify-center bg-black/20 md:bg-transparent md:relative md:inset-auto"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="w-[min(100vw-2rem,22rem)] min-w-[18rem] max-h-[85vh] flex flex-col bg-white border border-slate-200 rounded-lg shadow-xl md:absolute md:left-0 md:top-full md:mt-1 md:w-[22rem] md:min-w-[22rem] md:max-h-[75vh]"
+        onWheel={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 shrink-0">
+          <span className="text-sm font-semibold text-slate-800">Filter</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors"
+            aria-label="Close filter"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto min-h-0 p-2">
+          {/* Match score section */}
+          <div className="border-b border-slate-100">
+            <button
+              type="button"
+              onClick={() => setMatchExpanded((e) => !e)}
+              className="w-full flex items-center justify-between px-3 py-2.5 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 rounded"
+            >
+              <span>Match</span>
+              <span className="text-slate-400 text-lg leading-none select-none">{matchExpanded ? "−" : "+"}</span>
+            </button>
+            {matchExpanded && (
+              <div className="px-2 pb-2 pt-0 max-h-52 overflow-y-auto space-y-0.5">
+                {MATCH_SCORE_OPTIONS.map(({ value, label }) => (
+                  <label key={value ?? "all"} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded px-2 py-1.5">
+                    <input
+                      type="checkbox"
+                      checked={minScore === value}
+                      onChange={() => onMinScoreChange(value)}
+                      className="w-3.5 h-3.5 text-[#2563eb] border-slate-300 rounded shrink-0"
+                    />
+                    <span className="text-xs text-slate-700 truncate">{label}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          {ALL_FILTER_SECTIONS.map(({ key, label }) => {
+            const isExpanded = expandedSections.has(key);
+            const options = filterOptions[key] || [];
+            const selected = filters[key] || [];
+            return (
+              <div key={key} className="border-b border-slate-100 last:border-b-0">
+                <button
+                  type="button"
+                  onClick={() => onToggleSection(key)}
+                  className="w-full flex items-center justify-between px-3 py-2.5 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 rounded"
+                >
+                  <span>{label}</span>
+                  <span className="text-slate-400 text-lg leading-none select-none">{isExpanded ? "−" : "+"}</span>
+                </button>
+                {isExpanded && (
+                  <div className="px-2 pb-2 pt-0 max-h-52 overflow-y-auto space-y-0.5">
+                    {options.length > 0 ? (
+                      options.map((opt) => (
+                        <label key={opt} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded px-2 py-1.5">
+                          <input
+                            type="checkbox"
+                            checked={selected.includes(opt)}
+                            onChange={() => toggle(key, opt)}
+                            className="w-3.5 h-3.5 text-[#2563eb] border-slate-300 rounded shrink-0"
+                          />
+                          <span className="text-xs text-slate-700 truncate">{opt}</span>
+                        </label>
+                      ))
+                    ) : (
+                      <p className="text-xs text-slate-500 italic py-2 px-2">No options</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex gap-2 p-3 border-t border-slate-200 shrink-0">
+          <button
+            type="button"
+            onClick={handleClear}
+            className="flex-1 py-2 rounded-lg text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg text-sm font-medium text-white bg-[#2563eb] hover:bg-[#1d4ed8] transition-colors"
+          >
+            View {itemCount} item{itemCount !== 1 ? "s" : ""}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SortByDropdown({
+  sortBy,
+  sortDirection,
+  onSortChange,
+  isOpen,
+  onClose,
+  onToggle,
+  containerRef,
+}: {
+  sortBy: SortByField;
+  sortDirection: SortDir;
+  onSortChange: (sortBy: SortByField, direction: SortDir) => void;
+  isOpen: boolean;
+  onClose: () => void;
+  onToggle: () => void;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef?.current && !containerRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [onClose, containerRef]);
+
+  const current = SORT_OPTIONS.find((o) => o.sortBy === sortBy && o.direction === sortDirection);
+  const buttonLabel = current?.label ?? "Sort by";
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="inline-flex items-center justify-between gap-2 min-w-0 max-w-[14rem] px-3 py-2 text-sm text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#2563eb] focus:border-[#2563eb]"
+      >
+        <span className="truncate">{buttonLabel}</span>
+        <svg className="w-4 h-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {isOpen && (
+        <div className="absolute left-0 top-full mt-1 z-[100] w-full min-w-[14rem] py-1 bg-white border border-slate-200 rounded-md shadow-lg">
+          {SORT_OPTIONS.map((option) => {
+            const isSelected = sortBy === option.sortBy && sortDirection === option.direction;
+            return (
+              <button
+                key={`${option.sortBy}-${option.direction}`}
+                type="button"
+                onClick={() => {
+                  onSortChange(option.sortBy, option.direction);
+                  onClose();
+                }}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm ${
+                  isSelected ? "bg-slate-50 text-slate-900 font-medium" : "text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                {isSelected ? (
+                  <span className="text-[#2563eb]" aria-hidden>✓</span>
+                ) : (
+                  <span className="w-4" aria-hidden />
+                )}
+                <span>{option.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [selectedRfpId, setSelectedRfpId] = useState<string | null>(null);
@@ -866,15 +1106,28 @@ export default function DashboardPage() {
   const [showNotInterestedList, setShowNotInterestedList] = useState(false);
   const [listFilter, setListFilter] = useState<"all" | "saved">("all");
   const [filters, setFilters] = useState<RFPFilters>(EMPTY_FILTERS);
-  const [openFilterKey, setOpenFilterKey] = useState<keyof RFPFilters | "more" | null>(null);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
+  const [expandedFilterSections, setExpandedFilterSections] = useState<Set<keyof RFPFilters>>(new Set());
   const [minScore, setMinScore] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"score" | "deadline" | "value">("score");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const filtersContainerRef = useRef<HTMLDivElement>(null);
+  const sortDropdownRef = useRef<HTMLDivElement>(null);
   const scrollLockYRef = useRef(0);
 
+  const toggleFilterSection = (key: keyof RFPFilters) => {
+    setExpandedFilterSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   useEffect(() => {
-    if (openFilterKey) {
+    if (filterPanelOpen) {
       scrollLockYRef.current = window.scrollY;
       const scrollBarWidth = window.innerWidth - document.documentElement.clientWidth;
       document.body.style.position = "fixed";
@@ -895,7 +1148,7 @@ export default function DashboardPage() {
         window.scrollTo(0, scrollLockYRef.current);
       };
     }
-  }, [openFilterKey]);
+  }, [filterPanelOpen]);
 
   useEffect(() => {
     const saved = localStorage.getItem("companyProfile");
@@ -957,18 +1210,19 @@ export default function DashboardPage() {
     displayedRfps = displayedRfps.filter((r) => r.match.score >= minScore);
   }
   displayedRfps = [...displayedRfps].sort((a, b) => {
-    if (sortBy === "score") return b.match.score - a.match.score;
-    if (sortBy === "deadline") {
+    let cmp = 0;
+    if (sortBy === "score") {
+      cmp = a.match.score - b.match.score;
+    } else if (sortBy === "deadline") {
       const dueA = parseDeadline(a.deadline)?.getTime() ?? Infinity;
       const dueB = parseDeadline(b.deadline)?.getTime() ?? Infinity;
-      return dueA - dueB;
-    }
-    if (sortBy === "value") {
+      cmp = dueA - dueB;
+    } else if (sortBy === "value") {
       const valA = getContractValueNumeric(a.estimatedValue);
       const valB = getContractValueNumeric(b.estimatedValue);
-      return valB - valA;
+      cmp = valA - valB;
     }
-    return 0;
+    return sortDirection === "desc" ? -cmp : cmp;
   });
 
   const dynamicFilterOptions = React.useMemo(
@@ -1011,106 +1265,37 @@ export default function DashboardPage() {
       <div className="flex flex-col lg:flex-row h-[calc(100vh-65px)]">
         {/* Left: RFP list */}
         <aside className="w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-visible">
-          <div className="p-6 border-b border-slate-200 bg-white">
-            <h1 className="text-lg font-bold text-slate-800 mb-3">
-              Hi{displayName !== "there" ? ` ${displayName}` : " there"}! You have{" "}
+          <div ref={filtersContainerRef} className="p-4 border-b border-slate-200 bg-white space-y-3">
+            <h1 className="text-base font-bold text-slate-800">
+              Hi{displayName !== "there" ? ` ${displayName}` : " there"}!{" "}
               <span className="text-[#2563eb]">{matchCount}</span> {listFilter === "saved" ? "saved" : ""} match{matchCount !== 1 ? "es" : ""} to review.
             </h1>
-            <div className="mb-3">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search RFPs by title, agency, location..."
-                className="w-full px-3 py-2 text-sm text-slate-800 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563eb] focus:border-transparent placeholder:text-slate-600"
-              />
-            </div>
-            <div className="mb-3">
-              <p className="text-xs font-medium text-slate-500 mb-1.5">Match</p>
-              <div className="flex flex-wrap gap-2">
-                {([
-                  { value: 75, label: "Best" },
-                  { value: 55, label: "Strong" },
-                  { value: 25, label: "Good" },
-                  { value: null, label: "All" },
-                ] as const).map(({ value: s, label }) => (
-                  <button
-                    key={s ?? "all"}
-                    type="button"
-                    onClick={() => setMinScore(s)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                      minScore === s ? "bg-[#2563eb] text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div ref={filtersContainerRef} className="mb-3">
-              <p className="text-xs font-medium text-slate-500 mb-1.5">Filter by</p>
-              <div className="flex flex-wrap gap-2 items-center">
-              {PRIMARY_FILTERS.map(({ key, label }) => {
-                const count = filters[key].length;
-                const isOpen = openFilterKey === key;
-                return (
-                  <div key={key} className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setOpenFilterKey((prev) => (prev === key ? null : key))}
-                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                        count > 0
-                          ? "bg-[#2563eb] text-white"
-                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                      }`}
-                    >
-                      {label}
-                      {count > 0 && (
-                        <span className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-white/20 text-xs font-bold">
-                          {count}
-                        </span>
-                      )}
-                      <svg
-                        className={`w-3.5 h-3.5 shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                    {isOpen && (
-                      <FilterDropdown
-                        keyName={key}
-                        label={label}
-                        options={dynamicFilterOptions[key]}
-                        filters={filters}
-                        onFiltersChange={setFilters}
-                        onClose={() => setOpenFilterKey(null)}
-                        containerRef={filtersContainerRef}
-                      />
-                    )}
-                  </div>
-                );
-              })}
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search RFPs by title, agency, location..."
+              className="w-full px-3 py-2 text-sm text-slate-800 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563eb] focus:border-transparent placeholder:text-slate-500"
+            />
+            <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setOpenFilterKey((prev) => (prev === "more" ? null : "more"))}
+                  onClick={() => setFilterPanelOpen((prev) => !prev)}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                    countSecondaryFilters(filters) > 0
+                    countActiveFilters(filters) > 0 || minScore != null
                       ? "bg-[#2563eb] text-white"
                       : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
                 >
-                  More filters
-                  {countSecondaryFilters(filters) > 0 && (
+                  Filter
+                  {(countActiveFilters(filters) > 0 || minScore != null) && (
                     <span className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-white/20 text-xs font-bold">
-                      {countSecondaryFilters(filters)}
+                      {countActiveFilters(filters) + (minScore != null ? 1 : 0)}
                     </span>
                   )}
                   <svg
-                    className={`w-3.5 h-3.5 shrink-0 transition-transform ${openFilterKey === "more" ? "rotate-180" : ""}`}
+                    className={`w-3.5 h-3.5 shrink-0 transition-transform ${filterPanelOpen ? "rotate-180" : ""}`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -1118,31 +1303,38 @@ export default function DashboardPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                   </svg>
                 </button>
-                {openFilterKey === "more" && (
-                  <MoreFiltersDropdown
+                {filterPanelOpen && (
+                  <FilterPanel
                     filterOptions={dynamicFilterOptions}
                     filters={filters}
                     onFiltersChange={setFilters}
-                    onClose={() => setOpenFilterKey(null)}
-                    containerRef={filtersContainerRef}
+                    onClose={() => setFilterPanelOpen(false)}
+                    expandedSections={expandedFilterSections}
+                    onToggleSection={toggleFilterSection}
+                    itemCount={displayedRfps.length}
+                    minScore={minScore}
+                    onMinScoreChange={setMinScore}
                   />
                 )}
               </div>
-              {countActiveFilters(filters) > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setFilters(EMPTY_FILTERS)}
-                  className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors shrink-0"
-                >
-                  Clear all
-                </button>
-              )}
+              <SortByDropdown
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSortChange={(by, dir) => {
+                  setSortBy(by);
+                  setSortDirection(dir);
+                }}
+                isOpen={sortDropdownOpen}
+                onClose={() => setSortDropdownOpen(false)}
+                onToggle={() => setSortDropdownOpen((prev) => !prev)}
+                containerRef={sortDropdownRef}
+              />
               <div className="flex items-center gap-2 border-l border-slate-200 pl-2 ml-1 shrink-0">
                 <button
                   type="button"
                   onClick={() => setListFilter("all")}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                    listFilter === "all" && countActiveFilters(filters) === 0
+                    listFilter === "all" && countActiveFilters(filters) === 0 && minScore == null
                       ? "bg-[#2563eb] text-white"
                       : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
@@ -1164,37 +1356,20 @@ export default function DashboardPage() {
                   Saved ({savedRfpIds.size})
                 </button>
               </div>
-              </div>
             </div>
-            <div className="pt-3 mt-3 border-t border-slate-100 pb-3">
-              <p className="text-xs font-medium text-slate-500 mb-1.5">Sort by</p>
-              <div className="flex flex-wrap gap-2">
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as "score" | "deadline" | "value")}
-                  className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-700 bg-slate-100 border border-slate-200 hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-[#2563eb] focus:ring-offset-0 focus:border-transparent cursor-pointer"
-                >
-                  <option value="score">Match score</option>
-                  <option value="deadline">Submission deadline</option>
-                  <option value="value">Contract value</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex gap-3 pt-3 border-t border-slate-100">
-              <Link
-                href="/profile"
-                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 bg-white text-[#2563eb] text-sm font-medium hover:bg-slate-50 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                Update Match Preferences
-              </Link>
-            </div>
+            <Link
+              href="/profile"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-[#2563eb] text-sm font-medium hover:bg-slate-50 transition-colors w-fit"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              Update Match Preferences
+            </Link>
           </div>
           <div
-            className={`flex-1 min-h-0 p-3 space-y-3 ${openFilterKey ? "overflow-hidden" : "overflow-y-auto"}`}
+            className={`flex-1 min-h-0 p-3 space-y-3 ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
           >
             {loading ? (
               <div className="flex items-center justify-center py-12">
@@ -1304,7 +1479,7 @@ export default function DashboardPage() {
 
         {/* Right: RFP detail */}
         <main
-          className={`flex-1 min-w-0 bg-[#f5f5f5] relative ${openFilterKey ? "overflow-hidden" : "overflow-y-auto"}`}
+          className={`flex-1 min-w-0 bg-[#f5f5f5] relative ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
         >
           {toast && (
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-lg">
