@@ -2,6 +2,12 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { AppHeader } from "@/components/AppHeader";
+import {
+  getCurrentUser,
+  mapBackendProfileToCompanyProfile,
+  getEmptyCompanyProfile,
+} from "@/lib/api";
 
 // Filter options - same as profile-setup page
 const FILTER_OPTIONS = {
@@ -741,15 +747,23 @@ function MoreFiltersDropdown({
 
 export default function DashboardPage() {
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ user_id: number; username: string } | null>(null);
   const [selectedRfpId, setSelectedRfpId] = useState<string | null>(null);
   const [rfps, setRfps] = useState<RFP[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.SAVED));
-  const [notInterestedRfpIds, setNotInterestedRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.NOT_INTERESTED));
-  const [expressedInterestRfpIds, setExpressedInterestRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
+  const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(new Set());
+  const [notInterestedRfpIds, setNotInterestedRfpIds] = useState<Set<string>>(new Set());
+  const [expressedInterestRfpIds, setExpressedInterestRfpIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [summaryCache, setSummaryCache] = useState<Record<string, string>>({});
+
+  // Load RFP lists from localStorage after mount to avoid hydration mismatch (server has no localStorage)
+  useEffect(() => {
+    setSavedRfpIds(loadSet(STORAGE_KEYS.SAVED));
+    setNotInterestedRfpIds(loadSet(STORAGE_KEYS.NOT_INTERESTED));
+    setExpressedInterestRfpIds(loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
+  }, []);
 
   const handleSummaryReady = useCallback((rfpId: string, summary: string) => {
     setSummaryCache((prev) => ({ ...prev, [rfpId]: summary }));
@@ -833,24 +847,37 @@ export default function DashboardPage() {
     }
   }, [openFilterKey]);
 
+  // Load current user and profile from API when logged in; only use cache when not authenticated
   useEffect(() => {
-    const saved = localStorage.getItem("companyProfile");
-    const extracted = localStorage.getItem("extractedProfileData");
-    if (saved) {
-      try {
-        setProfile(JSON.parse(saved));
+    let cancelled = false;
+    getCurrentUser().then((data) => {
+      if (cancelled) return;
+      if (data) {
+        setCurrentUser({ user_id: data.user_id, username: data.username });
+        const apiProfile = mapBackendProfileToCompanyProfile(data.profile ?? null);
+        setProfile(apiProfile ?? getEmptyCompanyProfile());
         return;
-      } catch {
-        // ignore
       }
-    }
-    if (extracted) {
-      try {
-        setProfile(JSON.parse(extracted));
-      } catch {
-        // ignore
+      setCurrentUser(null);
+      const saved = localStorage.getItem("companyProfile");
+      const extracted = localStorage.getItem("extractedProfileData");
+      if (saved) {
+        try {
+          setProfile(JSON.parse(saved));
+          return;
+        } catch {
+          // ignore
+        }
       }
-    }
+      if (extracted) {
+        try {
+          setProfile(JSON.parse(extracted));
+        } catch {
+          // ignore
+        }
+      }
+    });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -889,7 +916,7 @@ export default function DashboardPage() {
     ? baseDisplayedRfps.filter((r) => rfpMatchesFilters(r, filters))
     : baseDisplayedRfps;
 
-  const displayName = profile?.companyName?.trim() || "there";
+  const displayName = profile?.companyName?.trim() || currentUser?.username || "there";
   const matchCount = displayedRfps.length;
   const selectedId =
     (selectedRfpId && displayedRfps.some((r) => r.id === selectedRfpId))
@@ -905,20 +932,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f5]">
-      <nav className="sticky top-0 bg-white border-b border-slate-200 z-10 shadow-sm">
-        <div className="max-w-full mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <img src="/logo.png" alt="Civitas logo" className="h-10 w-10" />
-            <span className="text-xl font-bold text-slate-900">Civitas</span>
-          </Link>
-          <div className="flex items-center gap-4">
-            <Link href="/profile" className="text-slate-600 hover:text-slate-900 text-sm font-medium">
-              Profile
-            </Link>
-           
-          </div>
-        </div>
-      </nav>
+      <AppHeader variant="dashboard" rightContent={<Link href="/profile" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Profile</Link>} />
 
       {/* Split view */}
       <div className="flex flex-col lg:flex-row h-[calc(100vh-65px)]">

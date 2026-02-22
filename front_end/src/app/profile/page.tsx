@@ -4,6 +4,18 @@ import { useState, useEffect } from "react";
 import type { ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { AppHeader } from "@/components/AppHeader";
+import {
+  getCurrentUser,
+  clearCachedUser,
+  saveProfileToBackend,
+  uploadContractDocument,
+  deleteContractDocument,
+  getAuthToken,
+  mapBackendProfileToCompanyProfile,
+  getEmptyCompanyProfile,
+  type CurrentUser,
+} from "@/lib/api";
 
 type SectionId = "company" | "certifications" | "naics" | "capabilities" | "contract" | "documents" | null;
 
@@ -29,6 +41,8 @@ interface CompanyProfile {
     size: number;
     uploadedAt: string;
     parsed?: boolean;
+    uploadedToBackend?: boolean;
+    contractId?: string;
   }>;
 }
 
@@ -81,6 +95,7 @@ export default function ProfilePage() {
   const [editingSection, setEditingSection] = useState<SectionId>(null);
   const [sectionSaving, setSectionSaving] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -186,13 +201,13 @@ export default function ProfilePage() {
     };
   };
 
-  const loadProfile = () => {
+  /** Load profile from localStorage only when not logged in (fallback). When logged in we only trust backend/AWS. */
+  const loadProfileFromStorage = () => {
     const saved = localStorage.getItem("companyProfile");
     const extracted = localStorage.getItem("extractedProfileData");
     if (saved) {
       try {
-        const parsed = JSON.parse(saved);
-        setProfile(parsed);
+        setProfile(JSON.parse(saved));
         return;
       } catch (e) {
         console.error("Error loading profile:", e);
@@ -255,8 +270,8 @@ export default function ProfilePage() {
         const mergedProfile = mergeProfileData(profile, extractedData);
         
         // Mark files as parsed
-        mergedProfile.uploadedFiles = mergedProfile.uploadedFiles.map(file => 
-          unparsedFiles.some(uf => uf.name === file.name) 
+        mergedProfile.uploadedFiles = (mergedProfile.uploadedFiles ?? []).map(file =>
+          unparsedFiles.some(uf => uf.name === file.name)
             ? { ...file, parsed: true }
             : file
         );
@@ -281,8 +296,26 @@ export default function ProfilePage() {
 
   useEffect(() => {
     setIsClient(true);
-    loadProfile();
   }, []);
+
+  // Profile only from API (GET /api/auth/me/). No fallback to localStorage.
+  useEffect(() => {
+    if (!isClient) return;
+    console.log("[Civitas] Profile page: loading user + profile from API (auth/me)...");
+    clearCachedUser();
+    getCurrentUser().then((data) => {
+      if (data) {
+        console.log("[Civitas] Profile page: got user from API —", data.user_id, data.username, "profile:", data.profile ? "yes" : "no");
+        setCurrentUser(data);
+        const mapped = mapBackendProfileToCompanyProfile(data.profile);
+        setProfile(mapped ?? getEmptyCompanyProfile());
+      } else {
+        console.log("[Civitas] Profile page: API returned 401/error — not authenticated. Log in to see your profile.");
+        setCurrentUser(null);
+        setProfile(null);
+      }
+    });
+  }, [isClient]);
 
   const handleInputChange = (field: keyof CompanyProfile, value: unknown) => {
     setProfile((prev) => (prev ? { ...prev, [field]: value } : null));
@@ -312,76 +345,123 @@ export default function ProfilePage() {
     });
   };
 
+  const profileToBackendPayload = (p: CompanyProfile) => ({
+    name: p.companyName,
+    contract_count: p.contractCount,
+    certifications: p.certifications ?? [],
+    clearances: p.clearances ?? [],
+    naics_codes: p.naicsCodes ?? [],
+    industry_tags: p.industry ?? [],
+    work_cities: p.workCities ?? [],
+    work_counties: p.workCounties ?? [],
+    capabilities: p.capabilities ?? [],
+    agency_experience: p.agencyExperience ?? [],
+  });
+
   const saveSection = async () => {
     if (!profile) return;
     setSectionSaving(true);
+    let profileToSave = profile;
     try {
-      // If saving documents section, check for unparsed files and parse them
       if (editingSection === "documents") {
-        const unparsedFiles = profile.uploadedFiles?.filter(file => !file.parsed) || [];
-        
-        if (unparsedFiles.length > 0) {
-          try {
-            // Get file objects from local storage
-            const storedFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-            const filesToParse: File[] = [];
-            
-            // Convert base64 files back to File objects
-            for (const unparsedFile of unparsedFiles) {
-              const storedFile = storedFiles.find((f: any) => f.name === unparsedFile.name);
-              if (storedFile && storedFile.content) {
-                // Convert base64 to blob then to File
-                const base64Data = storedFile.content.split(',')[1];
+        const storedFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
+        const filesToUpload: File[] = [];
+        const namesToMarkUploaded: string[] = [];
+
+        if (currentUser && getAuthToken()) {
+          for (const fileInfo of profile.uploadedFiles ?? []) {
+            if (fileInfo.uploadedToBackend) continue;
+            const stored = storedFiles.find((f: { name: string }) => f.name === fileInfo.name);
+            if (stored?.content) {
+              const base64Data = stored.content.split(",")[1];
+              if (base64Data) {
                 const byteCharacters = atob(base64Data);
                 const byteNumbers = new Array(byteCharacters.length);
                 for (let i = 0; i < byteCharacters.length; i++) {
                   byteNumbers[i] = byteCharacters.charCodeAt(i);
                 }
-                const byteArray = new Uint8Array(byteNumbers);
-                const blob = new Blob([byteArray], { type: storedFile.type });
-                const file = new File([blob], storedFile.name, { type: storedFile.type });
-                filesToParse.push(file);
+                const blob = new Blob([new Uint8Array(byteNumbers)], { type: stored.type });
+                filesToUpload.push(new File([blob], stored.name, { type: stored.type }));
+                namesToMarkUploaded.push(fileInfo.name);
               }
             }
+          }
+          const nameToContractId: Record<string, string> = {};
+          for (const file of filesToUpload) {
+            const result = await uploadContractDocument(file, file.name);
+            if (result?.id) nameToContractId[file.name] = result.id;
+          }
+          if (namesToMarkUploaded.length > 0) {
+            setProfile((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    uploadedFiles: (prev.uploadedFiles ?? []).map((f) =>
+                      namesToMarkUploaded.includes(f.name)
+                        ? { ...f, uploadedToBackend: true, contractId: nameToContractId[f.name] ?? f.contractId }
+                        : f
+                    ),
+                  }
+                : null
+            );
+            profileToSave = {
+              ...profileToSave,
+              uploadedFiles: (profileToSave.uploadedFiles ?? []).map((f) =>
+                namesToMarkUploaded.includes(f.name)
+                  ? { ...f, uploadedToBackend: true, contractId: nameToContractId[f.name] ?? f.contractId }
+                  : f
+              ),
+            };
+          }
+        }
 
+        const unparsedFiles = profileToSave.uploadedFiles?.filter((file) => !file.parsed) || [];
+        if (unparsedFiles.length > 0) {
+          try {
+            const filesToParse: File[] = [];
+            for (const unparsedFile of unparsedFiles) {
+              const storedFile = storedFiles.find((f: { name: string }) => f.name === unparsedFile.name);
+              if (storedFile?.content) {
+                const base64Data = storedFile.content.split(",")[1];
+                if (base64Data) {
+                  const byteCharacters = atob(base64Data);
+                  const byteNumbers = new Array(byteCharacters.length);
+                  for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                  }
+                  const byteArray = new Uint8Array(byteNumbers);
+                  const blob = new Blob([byteArray], { type: storedFile.type });
+                  filesToParse.push(new File([blob], storedFile.name, { type: storedFile.type }));
+                }
+              }
+            }
             if (filesToParse.length > 0) {
-              // Parse the documents
               const extractedData = await parseDocumentsWithBackend(filesToParse);
-              
-              // Merge extracted data with existing profile
-              const mergedProfile = mergeProfileData(profile, extractedData);
-              
-              // Mark files as parsed
-              mergedProfile.uploadedFiles = mergedProfile.uploadedFiles.map(file => 
-                unparsedFiles.some(uf => uf.name === file.name) 
-                  ? { ...file, parsed: true }
-                  : file
+              const mergedProfile = mergeProfileData(profileToSave, extractedData);
+              mergedProfile.uploadedFiles = (mergedProfile.uploadedFiles ?? []).map((file) =>
+                unparsedFiles.some((uf) => uf.name === file.name) ? { ...file, parsed: true } : file
               );
-              
-              // Update profile state
               setProfile(mergedProfile);
-              
-              // Save merged profile
-              localStorage.setItem("companyProfile", JSON.stringify(mergedProfile));
-            } else {
-              // No files to parse, just save
-              localStorage.setItem("companyProfile", JSON.stringify(profile));
+              profileToSave = mergedProfile;
             }
           } catch (error) {
             console.error("Error parsing documents:", error);
-            // Still save the profile even if parsing fails
-            localStorage.setItem("companyProfile", JSON.stringify(profile));
             alert(`Warning: Could not parse some documents. Profile saved without updates from those files.`);
           }
-        } else {
-          // No unparsed files, just save
-          localStorage.setItem("companyProfile", JSON.stringify(profile));
         }
       } else {
-        // For other sections, just save normally
-        localStorage.setItem("companyProfile", JSON.stringify(profile));
+        profileToSave = profile;
+      }
+
+      if (currentUser) {
+        await saveProfileToBackend(profileToBackendPayload(profileToSave));
+      } else {
+        localStorage.setItem("companyProfile", JSON.stringify(profileToSave));
       }
       setEditingSection(null);
+    } catch (error) {
+      console.error("Error saving profile:", error);
+      alert(`Failed to save: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setSectionSaving(false);
     }
@@ -416,12 +496,22 @@ export default function ProfilePage() {
     });
   };
 
-  const removeFile = (index: number) => {
+  const removeFile = async (index: number) => {
     if (!profile?.uploadedFiles) return;
+    const file = profile.uploadedFiles[index];
+    if (file?.uploadedToBackend && file?.contractId) {
+      try {
+        await deleteContractDocument(file.contractId);
+      } catch (e) {
+        console.error("Delete contract failed:", e);
+        alert(`Could not remove document: ${e instanceof Error ? e.message : "Unknown error"}`);
+        return;
+      }
+    }
     const next = profile.uploadedFiles.filter((_, i) => i !== index);
     setProfile((prev) => (prev ? { ...prev, uploadedFiles: next } : null));
     const existing = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-    const name = profile.uploadedFiles[index]?.name;
+    const name = file?.name;
     const nextStored = name ? existing.filter((f: { name: string }) => f.name !== name) : existing;
     localStorage.setItem("uploadedFiles", JSON.stringify(nextStored));
   };
@@ -534,17 +624,7 @@ export default function ProfilePage() {
   if (profile === null) {
     return (
       <div className="min-h-screen bg-slate-50">
-        <nav className="sticky top-0 bg-white border-b border-slate-200 z-10">
-          <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
-              <span className="text-2xl font-bold text-slate-900">Civitas</span>
-            </Link>
-            <Link href="/profile-setup" className={btnPrimary}>
-              Save Profile
-            </Link>
-          </div>
-        </nav>
+        <AppHeader rightContent={<Link href="/profile-setup" className={btnPrimary}>Save Profile</Link>} />
         <div className="max-w-3xl mx-auto px-6 py-16 text-center">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">No profile yet</h1>
           <p className="text-slate-600 mb-6">Create or save your company profile to see a summary here.</p>
@@ -602,14 +682,7 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <nav className="sticky top-0 bg-white border-b border-slate-200 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
-            <span className="text-2xl font-bold text-slate-900">Civitas</span>
-          </Link>
-        </div>
-      </nav>
+      <AppHeader />
 
       <div className="max-w-7xl mx-auto px-6 py-10 flex gap-10">
         {hasAnyData && (
@@ -661,9 +734,34 @@ export default function ProfilePage() {
           </div>
 
           {!hasAnyData ? (
-            <div className={sectionClass + " text-center text-slate-500"}>
-              No data entered yet. <Link href="/profile-setup" className="text-[#3C89C6] hover:underline">Create your profile</Link>.
-            </div>
+            <>
+              <div className={sectionClass + " text-center text-slate-500"}>
+                No data entered yet. <Link href="/profile-setup" className="text-[#3C89C6] hover:underline">Create your profile</Link>.
+              </div>
+              <section id="section-account" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
+                <h2 className={sectionTitleClass}>Account</h2>
+                {currentUser ? (
+                  <dl className="grid gap-4 sm:grid-cols-1 max-w-md">
+                    <div>
+                      <dt className="text-sm font-medium text-slate-500">Username</dt>
+                      <dd className="mt-0.5 text-slate-900 font-medium">{currentUser.username}</dd>
+                    </div>
+                    {currentUser.email && (
+                      <div>
+                        <dt className="text-sm font-medium text-slate-500">Email</dt>
+                        <dd className="mt-0.5 text-slate-700">{currentUser.email}</dd>
+                      </div>
+                    )}
+                    <div>
+                      <dt className="text-sm font-medium text-slate-500">Account ID</dt>
+                      <dd className="mt-0.5 text-slate-600 text-sm">{currentUser.user_id}</dd>
+                    </div>
+                  </dl>
+                ) : (
+                  <p className="text-slate-500 text-sm">Log in to see your account information.</p>
+                )}
+              </section>
+            </>
           ) : (
             <div className="space-y-6">
               {/* Company Information */}
@@ -991,6 +1089,31 @@ export default function ProfilePage() {
                 </ul>
               ) : (
                 <p className="text-slate-500 italic text-sm">No documents uploaded. Click Edit to add files.</p>
+              )}
+            </section>
+
+            {/* Account information (from logged-in session) */}
+            <section id="section-account" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
+              <h2 className={sectionTitleClass}>Account</h2>
+              {currentUser ? (
+                <dl className="grid gap-4 sm:grid-cols-1 max-w-md">
+                  <div>
+                    <dt className="text-sm font-medium text-slate-500">Username</dt>
+                    <dd className="mt-0.5 text-slate-900 font-medium">{currentUser.username}</dd>
+                  </div>
+                  {currentUser.email && (
+                    <div>
+                      <dt className="text-sm font-medium text-slate-500">Email</dt>
+                      <dd className="mt-0.5 text-slate-700">{currentUser.email}</dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt className="text-sm font-medium text-slate-500">Account ID</dt>
+                    <dd className="mt-0.5 text-slate-600 text-sm">{currentUser.user_id}</dd>
+                  </div>
+                </dl>
+              ) : (
+                <p className="text-slate-500 text-sm">Log in to see your account information.</p>
               )}
             </section>
           </div>
