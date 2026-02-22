@@ -306,7 +306,7 @@ export default function UploadPage() {
         {!isProcessing && (
           <div className="text-center mt-4">
             <button
-              onClick={() => router.push("/profile-setup")}
+              onClick={() => router.push("/profile")}
               className="text-sm text-slate-600 hover:text-slate-900 underline"
             >
               Skip and fill out manually

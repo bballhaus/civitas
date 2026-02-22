@@ -540,7 +540,7 @@ export default function ProfilePage() {
               <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
               <span className="text-2xl font-bold text-slate-900">Civitas</span>
             </Link>
-            <Link href="/profile-setup" className={btnPrimary}>
+            <Link href="/profile" className={btnPrimary}>
               Save Profile
             </Link>
           </div>
@@ -548,7 +548,7 @@ export default function ProfilePage() {
         <div className="max-w-3xl mx-auto px-6 py-16 text-center">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">No profile yet</h1>
           <p className="text-slate-600 mb-6">Create or save your company profile to see a summary here.</p>
-          <Link href="/profile-setup" className={"inline-flex px-6 py-3 " + btnPrimary}>
+          <Link href="/profile" className={"inline-flex px-6 py-3 " + btnPrimary}>
             Create profile
           </Link>
         </div>
@@ -662,7 +662,7 @@ export default function ProfilePage() {
 
           {!hasAnyData ? (
             <div className={sectionClass + " text-center text-slate-500"}>
-              No data entered yet. <Link href="/profile-setup" className="text-[#3C89C6] hover:underline">Create your profile</Link>.
+              No data entered yet. <Link href="/profile" className="text-[#3C89C6] hover:underline">Create your profile</Link>.
             </div>
           ) : (
             <div className="space-y-6">
