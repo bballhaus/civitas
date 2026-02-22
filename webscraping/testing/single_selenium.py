@@ -269,10 +269,18 @@ def download_attachments(driver, wait, download_dir='downloads'):
                 'button[data-if-label^="ViewAttachmentsView"]'
             )
 
+        total = len(download_buttons)
+        print(f"✓ Found {total} download button(s)")
+
         print(f"✓ Found {len(download_buttons)} download button(s)")
         
-        for i, btn in enumerate(download_buttons):
+        for i in range(total):
             try:
+                download_buttons = driver.find_elements(
+                    By.CSS_SELECTOR, 'button[data-if-label^="ViewAttachmentsView"]'
+                )
+                btn = download_buttons[i]
+                
                 # Scroll into view and click the attachment row button
                 driver.execute_script("arguments[0].scrollIntoView(true);", btn)
                 time.sleep(0.5)
