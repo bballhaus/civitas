@@ -1,9 +1,14 @@
 from rest_framework import serializers
 from .models import Contract, UserProfile
-from .services import extract_metadata_from_document, ExtractionError
+from .services import (
+    extract_metadata_from_document,
+    ExtractionError,
+    refresh_profile_from_contracts,
+)
 
 
 class ContractSerializer(serializers.ModelSerializer):
+    id = serializers.CharField(read_only=True)  # S3 storage uses string UUIDs, not integer PKs
     jurisdiction = serializers.SerializerMethodField()
     features = serializers.SerializerMethodField()
     dates = serializers.SerializerMethodField()
@@ -109,8 +114,7 @@ class ContractSerializer(serializers.ModelSerializer):
 
         validated_data['user'] = self.context['request'].user
         instance = super().create(validated_data)
-        profile, _ = UserProfile.objects.get_or_create(user=instance.user)
-        profile.refresh_from_contracts()
+        refresh_profile_from_contracts(instance.user)
         return instance
 
     def update(self, instance, validated_data):
@@ -159,8 +163,7 @@ class ContractSerializer(serializers.ModelSerializer):
             if attr not in ('jurisdiction', 'features', 'dates'):
                 setattr(instance, attr, value)
         instance.save()
-        profile, _ = UserProfile.objects.get_or_create(user=instance.user)
-        profile.refresh_from_contracts()
+        refresh_profile_from_contracts(instance.user)
         return instance
 
 
@@ -172,6 +175,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
         read_only=True
     )
     average_contract_value = serializers.SerializerMethodField()
+    uploaded_documents = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        default=list,
+        read_only=True,
+    )
 
     class Meta:
         model = UserProfile
@@ -189,10 +198,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'work_counties',
             'capabilities',
             'agency_experience',
+            'uploaded_documents',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'average_contract_value', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'average_contract_value', 'uploaded_documents', 'created_at', 'updated_at']
 
     def get_average_contract_value(self, obj):
         if obj.contract_count == 0:
@@ -205,4 +215,4 @@ class UserWithProfileSerializer(serializers.Serializer):
 
     user_id = serializers.IntegerField(source='user.id')
     username = serializers.CharField(source='user.username')
-    profile = UserProfileSerializer(source='profile')
+    profile = UserProfileSerializer()

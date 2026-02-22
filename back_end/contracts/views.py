@@ -1,3 +1,6 @@
+import logging
+
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.middleware.csrf import get_token
 from rest_framework import status, generics
@@ -8,7 +11,24 @@ from rest_framework.views import APIView
 
 from .models import Contract, UserProfile
 from .serializers import ContractSerializer, UserProfileSerializer, UserWithProfileSerializer
-from .services import extract_metadata_from_document, ExtractionError
+from .services import (
+    extract_metadata_from_document,
+    ExtractionError,
+    get_profile,
+    save_profile,
+    get_or_create_profile,
+    refresh_profile_from_contracts,
+    profile_dict_to_object,
+    list_contracts,
+    get_contract,
+    create_contract,
+    update_contract,
+    delete_contract,
+    contract_dict_to_object,
+)
+from .services.token_storage import create_token, delete_token
+
+logger = logging.getLogger(__name__)
 
 
 class CsrfView(APIView):
@@ -49,13 +69,16 @@ class SignupView(APIView):
             password=password,
             email=email or '',
         )
-        UserProfile.objects.get_or_create(user=user)
+        logger.info("Signup: creating profile in AWS for user_id=%s username=%s", user.id, user.username)
+        get_or_create_profile(user.id)
         login(request, user)
+        auth_token = create_token(user.id)
+        logger.info("Signup successful: user_id=%s username=%s", user.id, user.username)
 
-        return Response({
-            'user_id': user.id,
-            'username': user.username,
-        }, status=status.HTTP_201_CREATED)
+        data = {'user_id': user.id, 'username': user.username}
+        if auth_token:
+            data['token'] = auth_token
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class LoginView(APIView):
@@ -73,39 +96,51 @@ class LoginView(APIView):
             )
         user = authenticate(request, username=username, password=password)
         if user is None:
+            logger.info("Login failed: invalid credentials for username=%s", username)
             return Response(
                 {'error': 'Invalid credentials'},
                 status=status.HTTP_401_UNAUTHORIZED
             )
         login(request, user)
-        return Response({
-            'user_id': user.id,
-            'username': user.username,
-        })
+        auth_token = create_token(user.id)
+        logger.info("Login successful: user_id=%s username=%s", user.id, user.username)
+
+        data = {'user_id': user.id, 'username': user.username}
+        if auth_token:
+            data['token'] = auth_token
+        return Response(data)
 
 
 class LogoutView(APIView):
-    """Log out the current user."""
+    """Log out: invalidate Bearer token in AWS (if sent) and flush session."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def post(self, request):
+        if getattr(request, 'auth', None) and isinstance(request.auth, str):
+            delete_token(request.auth)
+            logger.info("Logout: Bearer token deleted from AWS")
+        if request.user.is_authenticated:
+            logger.info("Logout: removing session key for user_id=%s", request.user.id)
         logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class CurrentUserView(APIView):
-    """Return current user (user_id, username) and their profile."""
+    """Return current user (user_id, username) and their profile. Profile from S3 user JSON."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
-        profile, _ = UserProfile.objects.get_or_create(user=user)
+        logger.info("Auth/me: fetching account info from AWS for user_id=%s username=%s", user.id, user.username)
+        profile_dict = get_or_create_profile(user.id)
+        profile = profile_dict_to_object(profile_dict)
         serializer = UserWithProfileSerializer({
             'user': user,
             'profile': profile,
         })
+        logger.info("Auth/me: returning user + profile for user_id=%s", user.id)
         return Response(serializer.data)
 
 
@@ -377,52 +412,187 @@ class ProfileExtractView(APIView):
 
 
 class ContractListCreateView(generics.ListCreateAPIView):
-    """List and create user contracts."""
+    """List and create user contracts. Stored in S3 (files + user JSON)."""
     serializer_class = ContractSerializer
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
-        return Contract.objects.filter(user=self.request.user)
+        return []  # list() reads from S3 user JSON
+
+    def list(self, request, *args, **kwargs):
+        contracts = list_contracts(request.user.id)
+        objs = [contract_dict_to_object(c) for c in contracts]
+        serializer = self.get_serializer(objs, many=True)
+        return Response(serializer.data)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data.copy()
+        raw = getattr(request.data, 'data', request.data) or {}
+        def _dict(key):
+            v = raw.get(key) if isinstance(raw, dict) else getattr(raw, key, None)
+            if isinstance(v, dict):
+                return v
+            if isinstance(v, str):
+                try:
+                    import json
+                    return json.loads(v) or {}
+                except Exception:
+                    return {}
+            return {}
+        jur = _dict('jurisdiction')
+        feats = _dict('features')
+        dts = _dict('dates')
+        doc = data.get('document')
+        # When a file is uploaded, always parse it to extract metadata, then save contract and update user JSON
+        extract = raw.get('extract') if isinstance(raw, dict) else getattr(raw, 'extract', None)
+        skip_extract = extract in (False, 'false', '0')
+        if doc and not skip_extract:
+            try:
+                extracted = extract_metadata_from_document(doc)
+                ej = extracted.get('jurisdiction') or {}
+                ef = extracted.get('features') or {}
+                ed = extracted.get('dates') or {}
+                jur = {**ej, **jur}
+                feats = {**ef, **feats}
+                dts = {**ed, **dts}
+                if not data.get('issuing_agency'):
+                    data['issuing_agency'] = extracted.get('issuing_agency', 'Unknown')
+                if not data.get('title') and extracted.get('title'):
+                    data['title'] = extracted['title']
+                if not data.get('rfp_id') and extracted.get('rfp_id'):
+                    data['rfp_id'] = extracted['rfp_id']
+            except ExtractionError:
+                pass
+        metadata = {
+            'title': data.get('title', ''),
+            'rfp_id': data.get('rfp_id', ''),
+            'issuing_agency': data.get('issuing_agency', 'Unknown'),
+            'jurisdiction_state': jur.get('state', 'CA'),
+            'jurisdiction_county': jur.get('county', ''),
+            'jurisdiction_city': jur.get('city', ''),
+            'required_certifications': feats.get('required_certifications', []),
+            'required_clearances': feats.get('required_clearances', []),
+            'onsite_required': feats.get('onsite_required'),
+            'work_locations': feats.get('work_locations', []),
+            'naics_codes': feats.get('naics_codes', []),
+            'industry_tags': feats.get('industry_tags', []),
+            'min_past_performance': feats.get('min_past_performance', ''),
+            'contract_value_estimate': feats.get('contract_value_estimate', ''),
+            'timeline_duration': feats.get('timeline_duration', ''),
+            'work_description': feats.get('work_description', ''),
+            'award_date': dts.get('award_date', ''),
+            'start_date': dts.get('start_date', ''),
+            'end_date': dts.get('end_date', ''),
+        }
+        contract_dict = create_contract(request.user.id, metadata, file=data.get('document'))
+        if not contract_dict:
+            logger.warning(
+                "Contract create failed for user_id=%s: create_contract returned None (check AWS credentials, bucket, and server log above)",
+                request.user.id,
+            )
+            return Response(
+                {
+                    'error': 'Contract storage unavailable',
+                    'detail': 'Check AWS credentials and S3 bucket (AWS_STORAGE_BUCKET_NAME) in back_end/.env. See server logs for the exact error.',
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        refresh_profile_from_contracts(request.user)
+        obj = contract_dict_to_object(contract_dict)
+        return Response(ContractSerializer(obj).data, status=status.HTTP_201_CREATED)
 
 
 class ContractDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """Retrieve, update, or delete a contract."""
+    """Retrieve, update, or delete a contract. Stored in AWS."""
     serializer_class = ContractSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Contract.objects.filter(user=self.request.user)
+        return []
+
+    def get_object(self):
+        pk = self.kwargs.get('pk')
+        c = get_contract(self.request.user.id, str(pk))
+        if not c:
+            from rest_framework.exceptions import NotFound
+            raise NotFound()
+        return contract_dict_to_object(c)
 
     def perform_destroy(self, instance):
-        user = instance.user
-        instance.delete()
-        # Refresh profile after contract deletion
-        try:
-            profile = UserProfile.objects.get(user=user)
-            profile.refresh_from_contracts()
-        except UserProfile.DoesNotExist:
-            pass
+        user_id = self.request.user.id
+        contract_id = getattr(instance, 'id', self.kwargs.get('pk'))
+        delete_contract(user_id, str(contract_id))
+        refresh_profile_from_contracts(self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        contract_id = getattr(instance, 'id', kwargs.get('pk'))
+        jur = request.data.get('jurisdiction', {}) if isinstance(request.data, dict) else {}
+        feats = request.data.get('features', {}) if isinstance(request.data, dict) else {}
+        dts = request.data.get('dates', {}) if isinstance(request.data, dict) else {}
+        metadata = {}
+        if 'title' in request.data:
+            metadata['title'] = request.data.get('title', '')
+        if 'rfp_id' in request.data:
+            metadata['rfp_id'] = request.data.get('rfp_id', '')
+        if 'issuing_agency' in request.data:
+            metadata['issuing_agency'] = request.data.get('issuing_agency', '')
+        if jur:
+            metadata['jurisdiction_state'] = jur.get('state', 'CA')
+            metadata['jurisdiction_county'] = jur.get('county', '')
+            metadata['jurisdiction_city'] = jur.get('city', '')
+        if feats:
+            for k in ('required_certifications', 'required_clearances', 'onsite_required', 'work_locations',
+                      'naics_codes', 'industry_tags', 'min_past_performance', 'contract_value_estimate',
+                      'timeline_duration', 'work_description'):
+                if k in feats:
+                    metadata[k] = feats[k]
+        if dts:
+            for k in ('award_date', 'start_date', 'end_date'):
+                if k in dts:
+                    metadata[k] = dts[k]
+        file = request.FILES.get('document') if request.FILES else None
+        updated = update_contract(request.user.id, str(contract_id), metadata, file=file)
+        if not updated:
+            return Response({'error': 'Contract not found'}, status=status.HTTP_404_NOT_FOUND)
+        refresh_profile_from_contracts(request.user)
+        return Response(ContractSerializer(contract_dict_to_object(updated)).data)
 
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
-    """Get or update current user's profile (background from past contracts)."""
+    """Get or update current user's profile. Stored in S3 user JSON."""
     serializer_class = UserProfileSerializer
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
-        profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
-        return profile
+        profile_dict = get_or_create_profile(self.request.user.id)
+        return profile_dict_to_object(profile_dict)
+
+    def update(self, request, *args, **kwargs):
+        user_id = request.user.id
+        profile_dict = get_profile(user_id) or get_or_create_profile(user_id)
+        serializer = self.get_serializer(data=request.data, partial=kwargs.get('partial', True))
+        serializer.is_valid(raise_exception=True)
+        for key, value in serializer.validated_data.items():
+            if key in profile_dict:
+                profile_dict[key] = value
+        profile_dict['user_id'] = user_id
+        save_profile(profile_dict)  # writes to S3 users/{username}.json
+        logger.info("Profile save: updated user JSON in S3 for user_id=%s", user_id)
+        return Response(UserProfileSerializer(profile_dict_to_object(profile_dict)).data)
 
 
 class UserProfileRefreshView(generics.GenericAPIView):
-    """Manually refresh profile from contracts."""
+    """Manually refresh profile from contracts. Stored in S3 user JSON."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        profile, _ = UserProfile.objects.get_or_create(user=request.user)
-        profile.refresh_from_contracts()
+        profile_dict = refresh_profile_from_contracts(request.user)
+        profile_obj = profile_dict_to_object(profile_dict)
         return Response(
-            UserProfileSerializer(profile).data,
+            UserProfileSerializer(profile_obj).data,
             status=status.HTTP_200_OK
         )
