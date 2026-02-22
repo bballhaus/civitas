@@ -289,7 +289,7 @@ export default function ProfileSetup() {
           const mergedProfile = mergeProfileData(profile, extractedData);
           
           // Mark files as parsed
-          mergedProfile.uploadedFiles = mergedProfile.uploadedFiles.map(file => 
+          mergedProfile.uploadedFiles = (mergedProfile.uploadedFiles ?? []).map(file => 
             unparsedFiles.some(uf => uf.name === file.name) 
               ? { ...file, parsed: true }
               : file
