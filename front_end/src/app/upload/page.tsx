@@ -51,7 +51,7 @@ export default function UploadPage() {
     });
 
     try {
-      const response = await fetch("http://localhost:8000/api/profile/extract/", {
+      const response = await fetch("https://civitas-server.onrender.com/api/profile/extract/", {
         method: "POST",
         body: formData,
       });
@@ -88,7 +88,7 @@ export default function UploadPage() {
       // Handle network errors (backend not running, CORS, etc.)
       if (error instanceof TypeError && error.message.includes("fetch")) {
         throw new Error(
-          "Cannot connect to backend server. Please make sure the Django server is running on http://localhost:8000"
+          "Cannot connect to backend server. Please make sure the Django server is running on https://civitas-server.onrender.com"
         );
       }
       throw error;

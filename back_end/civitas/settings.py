@@ -31,7 +31,7 @@ SECRET_KEY = 'django-insecure-139+z+r8*4bphs#o(%k%gvw7eki@(nq^y@)1k4)n7r3u#ni@iw
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'civitas-server.onrender.com']
 
 
 # Application definition
@@ -177,6 +177,7 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'https://civitas-ai.onrender.com',
 ]
 
 # Contract extraction (LLM)
