@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
+import { AppHeader } from "@/components/AppHeader";
 
 interface CompanyProfile {
   companyName: string;
@@ -29,7 +30,7 @@ interface CompanyProfile {
   }>;
 }
 
-export default function ProfileSetup() {
+function ProfileSetupContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const isPrefilled = searchParams.get("prefilled") === "true";
@@ -57,9 +58,10 @@ export default function ProfileSetup() {
   const [isSaving, setIsSaving] = useState(false);
 
 
-  // Load profile from local storage on mount
+  // Load profile from local storage on mount.
+  // We never pre-fill "Uploaded Files" from cache so the upload section only shows files the user adds this session.
   useEffect(() => {
-    // First, check if we have extracted data from upload page
+    // First, check if we have extracted data from upload page (only when ?prefilled=true)
     if (isPrefilled) {
       const extracted = localStorage.getItem("extractedProfileData");
       const uploadedFiles = localStorage.getItem("uploadedFiles");
@@ -104,8 +106,6 @@ export default function ProfileSetup() {
             uploadedFiles: fileInfo,
           });
 
-          // Clear the extracted data flag so it doesn't reload on refresh
-          // localStorage.removeItem("extractedProfileData");
           return;
         } catch (e) {
           console.error("Error loading extracted data:", e);
@@ -113,7 +113,7 @@ export default function ProfileSetup() {
       }
     }
 
-    // Otherwise, load saved profile
+    // Otherwise, load saved profile from cache but do NOT show old uploaded files in the upload section
     const saved = localStorage.getItem("companyProfile");
     if (saved) {
       try {
@@ -122,11 +122,9 @@ export default function ProfileSetup() {
         if (parsed.industry && typeof parsed.industry === "string") {
           parsed.industry = parsed.industry ? [parsed.industry] : [];
         }
-        // Migrate old data: if sizeStatus is a string, convert to array
         if (parsed.sizeStatus && typeof parsed.sizeStatus === "string") {
           parsed.sizeStatus = parsed.sizeStatus ? [parsed.sizeStatus] : [];
         }
-        // Ensure all array fields are arrays
         if (!Array.isArray(parsed.industry)) parsed.industry = [];
         if (!Array.isArray(parsed.sizeStatus)) parsed.sizeStatus = [];
         if (!Array.isArray(parsed.certifications)) parsed.certifications = [];
@@ -137,9 +135,10 @@ export default function ProfileSetup() {
         if (!Array.isArray(parsed.capabilities)) parsed.capabilities = [];
         if (!Array.isArray(parsed.agencyExperience)) parsed.agencyExperience = [];
         if (!Array.isArray(parsed.contractTypes)) parsed.contractTypes = [];
-        // Ensure numeric fields
         if (typeof parsed.contractCount !== 'number') parsed.contractCount = 0;
         if (typeof parsed.totalPastContractValue !== 'string') parsed.totalPastContractValue = "";
+        // Don't show previous session's files in the upload list – only what the user adds this session
+        parsed.uploadedFiles = [];
         setProfile(parsed);
       } catch (e) {
         console.error("Error loading profile:", e);
@@ -492,27 +491,17 @@ export default function ProfileSetup() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Navigation */}
-      <nav className="sticky top-0 bg-white border-b border-slate-200 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <img
-              src="/logo.png"
-              alt="Civitas logo"
-              className="h-12 w-12"
-            />
-            <span className="text-2xl font-bold text-slate-900">Civitas</span>
-          </Link>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push("/")}
-              className="px-4 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50"
-            >
-              Back to Home
-            </button>
-          </div>
-        </div>
-      </nav>
+      <AppHeader
+        rightContent={
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="px-4 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50"
+          >
+            Back to Home
+          </button>
+        }
+      />
 
       {/* Main Content */}
       <div className="max-w-4xl mx-auto px-6 py-12">
@@ -992,5 +981,19 @@ export default function ProfileSetup() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function ProfileSetup() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-slate-50">
+          <div className="text-slate-500">Loading...</div>
+        </div>
+      }
+    >
+      <ProfileSetupContent />
+    </Suspense>
   );
 }
