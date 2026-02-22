@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { MarkdownContent } from "@/components/MarkdownContent";
 
 // Filter options - same as profile-setup page
 const FILTER_OPTIONS = {
@@ -1352,6 +1353,9 @@ function RFPDetailPanel({
   const initialSummary = generateSummary(rfp, match);
   const [llmSummary, setLlmSummary] = useState<string | null>(cachedSummary ?? null);
   const [summaryError, setSummaryError] = useState(false);
+  const [requirementsSummary, setRequirementsSummary] = useState<string | null>(null);
+  const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
+  const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
 
   useEffect(() => {
     if (cachedSummary) {
@@ -1414,6 +1418,53 @@ function RFPDetailPanel({
     fetchSummary();
     return () => { cancelled = true; };
   }, [rfp.id, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.capabilities, rfp.certifications, rfp.contractType, rfp.description, profile, initialSummary, cachedSummary, onSummaryReady]);
+
+  useEffect(() => {
+    if (!rfp.description?.trim()) return;
+
+    let cancelled = false;
+    setRequirementsSummaryLoading(true);
+    setRequirementsSummaryError(false);
+
+    async function fetchRequirementsSummary() {
+      try {
+        const res = await fetch("/api/rfp-requirements-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rfp: {
+              title: rfp.title,
+              agency: rfp.agency,
+              industry: rfp.industry,
+              location: rfp.location,
+              deadline: rfp.deadline,
+              contractType: rfp.contractType,
+              capabilities: rfp.capabilities,
+              certifications: rfp.certifications,
+              estimatedValue: rfp.estimatedValue,
+              description: rfp.description,
+            },
+          }),
+        });
+        if (cancelled) return;
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (cancelled) return;
+        setRequirementsSummary(data.summary ?? rfp.description);
+      } catch (err) {
+        console.error("[rfp-requirements-summary] Fetch failed:", err);
+        if (!cancelled) {
+          setRequirementsSummaryError(true);
+          setRequirementsSummary(null);
+        }
+      } finally {
+        if (!cancelled) setRequirementsSummaryLoading(false);
+      }
+    }
+
+    fetchRequirementsSummary();
+    return () => { cancelled = true; };
+  }, [rfp.id, rfp.description, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.contractType, rfp.capabilities, rfp.certifications, rfp.estimatedValue]);
 
   const summary = llmSummary ?? initialSummary;
   const isLoadingSummary = llmSummary === null && !summaryError;
@@ -1572,10 +1623,19 @@ function RFPDetailPanel({
           </div>
         </div>
 
-        {/* Full description */}
+        {/* About this RFP - AI summary of contract requirements */}
         <div className="p-6 md:p-8 border-t border-slate-100">
           <h4 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h4>
-          <p className="text-slate-700 leading-relaxed">{rfp.description}</p>
+          {requirementsSummaryLoading ? (
+            <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
+          ) : requirementsSummary ? (
+            <MarkdownContent content={requirementsSummary} />
+          ) : (
+            <p className="text-slate-700 leading-relaxed">{rfp.description}</p>
+          )}
+          {requirementsSummaryError && (
+            <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
+          )}
         </div>
 
         {/* Tags */}
