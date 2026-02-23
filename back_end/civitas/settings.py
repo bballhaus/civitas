@@ -58,7 +58,7 @@ SECRET_KEY = 'django-insecure-139+z+r8*4bphs#o(%k%gvw7eki@(nq^y@)1k4)n7r3u#ni@iw
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'civitas-server.onrender.com']
 
 # Required when frontend (e.g. localhost:3000) calls Django (localhost:8000) directly; otherwise POST gets 403
 CSRF_TRUSTED_ORIGINS = [
@@ -169,6 +169,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # AWS: profile + contracts in DynamoDB, uploaded files in S3 (no toggles; always AWS)
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
@@ -209,6 +210,7 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'https://civitas-ai.onrender.com',
 ]
 
 # Contract extraction (LLM)

@@ -105,7 +105,7 @@ export default function ProfilePage() {
     });
 
     try {
-      const response = await fetch("http://localhost:8000/api/profile/extract/", {
+      const response = await fetch("https://civitas-server.onrender.com/api/profile/extract/", {
         method: "POST",
         body: formData,
       });
@@ -139,7 +139,7 @@ export default function ProfilePage() {
     } catch (error) {
       if (error instanceof TypeError && error.message.includes("fetch")) {
         throw new Error(
-          "Cannot connect to backend server. Please make sure the Django server is running on http://localhost:8000"
+          "Cannot connect to backend server. Please make sure the Django server is running on https://civitas-server.onrender.com"
         );
       }
       throw error;
@@ -624,11 +624,11 @@ export default function ProfilePage() {
   if (profile === null) {
     return (
       <div className="min-h-screen bg-slate-50">
-        <AppHeader rightContent={<Link href="/profile-setup" className={btnPrimary}>Save Profile</Link>} />
+        <AppHeader rightContent={<Link href="/profile" className={btnPrimary}>Save Profile</Link>} />
         <div className="max-w-3xl mx-auto px-6 py-16 text-center">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">No profile yet</h1>
           <p className="text-slate-600 mb-6">Create or save your company profile to see a summary here.</p>
-          <Link href="/profile-setup" className={"inline-flex px-6 py-3 " + btnPrimary}>
+          <Link href="/profile" className={"inline-flex px-6 py-3 " + btnPrimary}>
             Create profile
           </Link>
         </div>
@@ -736,7 +736,7 @@ export default function ProfilePage() {
           {!hasAnyData ? (
             <>
               <div className={sectionClass + " text-center text-slate-500"}>
-                No data entered yet. <Link href="/profile-setup" className="text-[#3C89C6] hover:underline">Create your profile</Link>.
+                No data entered yet. <Link href="/profile" className="text-[#3C89C6] hover:underline">Create your profile</Link>.
               </div>
               <section id="section-account" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
                 <h2 className={sectionTitleClass}>Account</h2>
