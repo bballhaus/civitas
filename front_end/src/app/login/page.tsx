@@ -27,7 +27,7 @@ export default function LoginPage() {
       });
       if (!csrfRes.ok) {
         const errData = await csrfRes.json().catch(() => ({}));
-        const msg = errData?.error || (csrfRes.status === 503 ? "Backend not reachable. Is Django running on http://localhost:8000?" : "Failed to get CSRF token");
+        const msg = errData?.error || (csrfRes.status === 503 ? "Backend not reachable." : "Failed to get CSRF token");
         throw new Error(msg);
       }
       const { csrfToken } = await csrfRes.json();
@@ -71,7 +71,7 @@ export default function LoginPage() {
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("fetch")) {
         setError(
-          "Cannot connect to server. Make sure the Django backend is running on http://localhost:8000"
+          "Cannot connect to server. The backend may be temporarily unavailable."
         );
       } else {
         setError(err instanceof Error ? err.message : "Login failed");
