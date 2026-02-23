@@ -77,7 +77,7 @@ ${currentProposal}
 ---
 
 User feedback:
-${feedback.trim()}
+${feedback?.trim() ?? ""}
 
 Produce the full revised proposal:`;
     } else {
