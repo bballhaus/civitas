@@ -4,7 +4,7 @@
  * Use DJANGO_API_URL if your backend runs elsewhere (e.g. in Docker use http://host.docker.internal:8000/api).
  */
 const DJANGO_API =
-  process.env.DJANGO_API_URL || "http://localhost:8000/api";
+  process.env.DJANGO_API_URL || "https://civitas-server.onrender.com/api";
 
 async function proxy(
   request: Request,

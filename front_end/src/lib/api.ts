@@ -1,10 +1,8 @@
-// In browser on localhost, call Django directly to avoid proxy connection issues. Otherwise use proxy.
+const BACKEND_URL = "https://civitas-server.onrender.com/api";
+
 export function getApiBase(): string {
-  if (typeof window === "undefined") return "http://127.0.0.1:8000/api";
-  if (window.location?.hostname === "localhost" || window.location?.hostname === "127.0.0.1") {
-    return "http://localhost:8000/api";
-  }
-  return "/api/django";
+  if (typeof window === "undefined") return BACKEND_URL;
+  return BACKEND_URL;
 }
 const API_BASE = getApiBase();
 

@@ -27,7 +27,7 @@ export default function LoginPage() {
       });
       if (!csrfRes.ok) {
         const errData = await csrfRes.json().catch(() => ({}));
-        const msg = errData?.error || (csrfRes.status === 503 ? "Backend not reachable. Is Django running on http://localhost:8000?" : "Failed to get CSRF token");
+        const msg = errData?.error || (csrfRes.status === 503 ? "Backend not reachable." : "Failed to get CSRF token");
         throw new Error(msg);
       }
       const { csrfToken } = await csrfRes.json();
@@ -71,7 +71,7 @@ export default function LoginPage() {
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("fetch")) {
         setError(
-          "Cannot connect to server. Make sure the Django backend is running on http://localhost:8000"
+          "Cannot connect to server. The backend may be temporarily unavailable."
         );
       } else {
         setError(err instanceof Error ? err.message : "Login failed");
@@ -107,7 +107,7 @@ export default function LoginPage() {
                 onChange={(e) => setUsername(e.target.value)}
                 required
                 autoComplete="username"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent text-slate-700 placeholder:text-slate-500"
                 placeholder="Enter your username"
               />
             </div>
@@ -126,7 +126,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent text-slate-700 placeholder:text-slate-500"
                 placeholder="Enter your password"
               />
             </div>
