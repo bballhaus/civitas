@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { getAuthToken, uploadContractDocument } from "@/lib/api";
 
 interface ExtractedData {
   companyName: string;
@@ -51,7 +52,7 @@ export default function UploadPage() {
     });
 
     try {
-      const response = await fetch("http://localhost:8000/api/profile/extract/", {
+      const response = await fetch("https://civitas-server.onrender.com/api/profile/extract/", {
         method: "POST",
         body: formData,
       });
@@ -88,7 +89,7 @@ export default function UploadPage() {
       // Handle network errors (backend not running, CORS, etc.)
       if (error instanceof TypeError && error.message.includes("fetch")) {
         throw new Error(
-          "Cannot connect to backend server. Please make sure the Django server is running on http://localhost:8000"
+          "Cannot connect to backend server. Please make sure the Django server is running on https://civitas-server.onrender.com"
         );
       }
       throw error;
@@ -106,45 +107,45 @@ export default function UploadPage() {
     setIsProcessing(true);
     setProgress(0);
 
-    // Update progress during processing
-    setProgress(30);
-
     try {
+      const isLoggedIn = !!getAuthToken();
+      if (isLoggedIn) {
+        setProgress(10);
+        for (let i = 0; i < files.length; i++) {
+          await uploadContractDocument(files[i], files[i].name);
+          setProgress(10 + Math.round((40 * (i + 1)) / files.length));
+        }
+      }
+
       setProgress(50);
-      // Call backend API to parse documents
       const extractedData = await parseDocumentsWithBackend(files);
       setProgress(90);
 
-      // Store uploaded files info
       const fileInfo = files.map((file) => ({
         name: file.name,
         type: file.type || "application/octet-stream",
         size: file.size,
         uploadedAt: new Date().toISOString(),
-        parsed: true, // Mark as parsed since we just processed them
+        parsed: true,
       }));
 
-      // Create complete profile with uploaded files
       const profileData = {
         ...extractedData,
         uploadedFiles: fileInfo,
       };
 
-      // Store as companyProfile so profile page can load it directly
       localStorage.setItem("companyProfile", JSON.stringify(profileData));
-      
-      // Also store uploaded files separately for reference
-      localStorage.setItem("uploadedFiles", JSON.stringify(fileInfo.map(f => ({ ...f, content: "" }))));
+      localStorage.setItem("uploadedFiles", JSON.stringify(fileInfo.map((f) => ({ ...f, content: "" }))));
 
       setProgress(100);
 
-      // Redirect to profile page with pre-filled data
       setTimeout(() => {
         router.push("/profile");
       }, 500);
     } catch (error) {
       console.error("Error processing files:", error);
-      alert(`Error processing files: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`);
+      alert(`Error processing files: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`);
+    } finally {
       setIsProcessing(false);
       setProgress(0);
     }
@@ -178,6 +179,11 @@ export default function UploadPage() {
             Our AI will analyze your documents to automatically fill in your
             company profile details.
           </p>
+          {!getAuthToken() && (
+            <p className="text-amber-700 text-sm mt-2">
+              Log in to save documents to your profile (stored in your account so they sync across devices).
+            </p>
+          )}
         </div>
 
         {/* Upload Area */}
@@ -306,7 +312,7 @@ export default function UploadPage() {
         {!isProcessing && (
           <div className="text-center mt-4">
             <button
-              onClick={() => router.push("/profile-setup")}
+              onClick={() => router.push("/profile")}
               className="text-sm text-slate-600 hover:text-slate-900 underline"
             >
               Skip and fill out manually
