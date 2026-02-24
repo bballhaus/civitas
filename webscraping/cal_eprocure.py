@@ -258,6 +258,7 @@ def main():
     os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
 
     options = webdriver.ChromeOptions()
+    #options.add_argument('--headless')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920,1080')
@@ -366,7 +367,7 @@ def main():
                             'total_events': len(all_events),
                             'events': all_events
                         }, f, indent=2, ensure_ascii=False)
-                    print(f"  💾 Progress saved ({len(all_events)} events)")
+                    print(f"Progress saved ({len(all_events)} events)")
 
             except KeyboardInterrupt:
                 print("\n\n⚠ Interrupted by user")
