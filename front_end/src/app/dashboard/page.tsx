@@ -1085,6 +1085,18 @@ export default function DashboardPage() {
               className="w-full px-3 py-2 text-sm text-slate-800 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563eb] focus:border-transparent placeholder:text-slate-500"
             />
             <div className="flex flex-nowrap items-center gap-2">
+              <SortByDropdown
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSortChange={(by, dir) => {
+                  setSortBy(by);
+                  setSortDirection(dir);
+                }}
+                isOpen={sortDropdownOpen}
+                onClose={() => setSortDropdownOpen(false)}
+                onToggle={() => setSortDropdownOpen((prev) => !prev)}
+                containerRef={sortDropdownRef}
+              />
               <div className="relative shrink-0">
                 <button
                   type="button"
@@ -1124,18 +1136,6 @@ export default function DashboardPage() {
                   />
                 )}
               </div>
-              <SortByDropdown
-                sortBy={sortBy}
-                sortDirection={sortDirection}
-                onSortChange={(by, dir) => {
-                  setSortBy(by);
-                  setSortDirection(dir);
-                }}
-                isOpen={sortDropdownOpen}
-                onClose={() => setSortDropdownOpen(false)}
-                onToggle={() => setSortDropdownOpen((prev) => !prev)}
-                containerRef={sortDropdownRef}
-              />
               <button
                 type="button"
                 onClick={() => setListFilter(listFilter === "saved" ? "all" : "saved")}
