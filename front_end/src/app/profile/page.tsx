@@ -4,6 +4,11 @@ import { useState, useEffect } from "react";
 import type { ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  CALIFORNIA_CITIES,
+  CALIFORNIA_COUNTIES,
+  NAICS_DISPLAY,
+} from "@/data/filter-options";
 
 type SectionId = "company" | "certifications" | "naics" | "capabilities" | "contract" | "documents" | null;
 
@@ -255,7 +260,7 @@ export default function ProfilePage() {
         const mergedProfile = mergeProfileData(profile, extractedData);
         
         // Mark files as parsed
-        mergedProfile.uploadedFiles = mergedProfile.uploadedFiles.map(file => 
+        mergedProfile.uploadedFiles = (mergedProfile.uploadedFiles ?? []).map(file => 
           unparsedFiles.some(uf => uf.name === file.name) 
             ? { ...file, parsed: true }
             : file
@@ -300,14 +305,16 @@ export default function ProfilePage() {
       | "capabilities"
       | "agencyExperience"
       | "contractTypes",
-    value: string
+    value: string,
+    valueToStore?: string
   ) => {
+    const stored = valueToStore ?? value;
     setProfile((prev) => {
       if (!prev) return null;
       const current = prev[field] ?? [];
-      const updated = current.includes(value)
-        ? current.filter((item) => item !== value)
-        : [...current, value];
+      const updated = current.includes(stored)
+        ? current.filter((item) => item !== stored)
+        : [...current, stored];
       return { ...prev, [field]: updated };
     });
   };
@@ -352,7 +359,7 @@ export default function ProfilePage() {
               const mergedProfile = mergeProfileData(profile, extractedData);
               
               // Mark files as parsed
-              mergedProfile.uploadedFiles = mergedProfile.uploadedFiles.map(file => 
+              mergedProfile.uploadedFiles = (mergedProfile.uploadedFiles ?? []).map(file => 
                 unparsedFiles.some(uf => uf.name === file.name) 
                   ? { ...file, parsed: true }
                   : file
@@ -431,6 +438,8 @@ export default function ProfilePage() {
     options,
     selectedValues,
     placeholder,
+    getValueToStore,
+    isOptionSelected,
   }: {
     field: keyof Pick<
       CompanyProfile,
@@ -448,6 +457,8 @@ export default function ProfilePage() {
     options: string[];
     selectedValues: string[];
     placeholder: string;
+    getValueToStore?: (option: string) => string;
+    isOptionSelected?: (option: string, selected: string[]) => boolean;
   }) {
     const [searchTerm, setSearchTerm] = useState("");
     const [isFocused, setIsFocused] = useState(false);
@@ -455,6 +466,9 @@ export default function ProfilePage() {
     const filtered = options.filter((o) =>
       o.toLowerCase().includes(searchTerm.toLowerCase())
     );
+    const checked = (option: string) =>
+      isOptionSelected ? isOptionSelected(option, safeSelected) : safeSelected.includes(option);
+    const valueToStore = (option: string) => (getValueToStore ? getValueToStore(option) : option);
 
     return (
       <div className="relative w-full">
@@ -485,8 +499,8 @@ export default function ProfilePage() {
                   >
                     <input
                       type="checkbox"
-                      checked={safeSelected.includes(option)}
-                      onChange={() => handleMultiSelect(field, option)}
+                      checked={checked(option)}
+                      onChange={() => handleMultiSelect(field, option, valueToStore(option))}
                       className="w-4 h-4 text-[#3C89C6] border-slate-300 rounded focus:ring-[#3C89C6]"
                     />
                     <span className="text-sm text-slate-700">{option}</span>
@@ -765,16 +779,21 @@ export default function ProfilePage() {
                     <p className="text-sm text-slate-600 mb-2">NAICS codes</p>
                     <SearchFirstDropdown
                       field="naicsCodes"
-                      options={["236220", "541330", "541511", "541512", "541519", "541611", "541690"]}
+                      options={NAICS_DISPLAY}
                       selectedValues={profile.naicsCodes ?? []}
                       placeholder="Type to search NAICS codes..."
+                      getValueToStore={(opt) => (opt.includes(" - ") ? opt.split(" - ")[0].trim() : opt)}
+                      isOptionSelected={(opt, sel) => {
+                        const code = opt.includes(" - ") ? opt.split(" - ")[0].trim() : opt;
+                        return sel.includes(code);
+                      }}
                     />
                   </div>
                   <div>
                     <p className="text-sm text-slate-600 mb-2">Work cities</p>
                     <SearchFirstDropdown
                       field="workCities"
-                      options={["Anaheim", "Bakersfield", "Fresno", "Long Beach", "Los Angeles", "Oakland", "Sacramento", "San Diego", "San Francisco", "San Jose"]}
+                      options={CALIFORNIA_CITIES}
                       selectedValues={profile.workCities ?? []}
                       placeholder="Type to search cities..."
                     />
@@ -783,7 +802,7 @@ export default function ProfilePage() {
                     <p className="text-sm text-slate-600 mb-2">Work counties</p>
                     <SearchFirstDropdown
                       field="workCounties"
-                      options={["Alameda", "Contra Costa", "Fresno", "Los Angeles", "Orange", "Riverside", "Sacramento", "San Bernardino", "San Diego", "San Francisco", "San Mateo", "Santa Clara", "Ventura"]}
+                      options={CALIFORNIA_COUNTIES}
                       selectedValues={profile.workCounties ?? []}
                       placeholder="Type to search counties..."
                     />
