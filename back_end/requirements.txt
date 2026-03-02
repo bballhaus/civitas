@@ -13,3 +13,4 @@ Pillow==11.0.0
 pdfplumber==0.11.4
 groq==0.10.0
 httpx<0.28
+gunicorn==23.0.0

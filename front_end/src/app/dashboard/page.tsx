@@ -11,6 +11,15 @@ import {
 } from "@/data/filter-options";
 
 // Filter options - cities, counties, NAICS from real data; others static
+import { MarkdownContent } from "@/components/MarkdownContent";
+import { AppHeader } from "@/components/AppHeader";
+import {
+  getCurrentUser,
+  mapBackendProfileToCompanyProfile,
+  getEmptyCompanyProfile,
+} from "@/lib/api";
+
+// Filter options - same as profile-setup page
 const FILTER_OPTIONS = {
   industry: [
     "Construction", "Consulting", "Education", "Engineering", "Healthcare",
@@ -832,15 +841,23 @@ function SortByDropdown({
 
 export default function DashboardPage() {
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ user_id: number; username: string } | null>(null);
   const [selectedRfpId, setSelectedRfpId] = useState<string | null>(null);
   const [rfps, setRfps] = useState<RFP[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.SAVED));
-  const [notInterestedRfpIds, setNotInterestedRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.NOT_INTERESTED));
-  const [expressedInterestRfpIds, setExpressedInterestRfpIds] = useState<Set<string>>(() => loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
+  const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(new Set());
+  const [notInterestedRfpIds, setNotInterestedRfpIds] = useState<Set<string>>(new Set());
+  const [expressedInterestRfpIds, setExpressedInterestRfpIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [summaryCache, setSummaryCache] = useState<Record<string, string>>({});
+
+  // Load RFP lists from localStorage after mount to avoid hydration mismatch (server has no localStorage)
+  useEffect(() => {
+    setSavedRfpIds(loadSet(STORAGE_KEYS.SAVED));
+    setNotInterestedRfpIds(loadSet(STORAGE_KEYS.NOT_INTERESTED));
+    setExpressedInterestRfpIds(loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
+  }, []);
 
   const handleSummaryReady = useCallback((rfpId: string, summary: string) => {
     setSummaryCache((prev) => ({ ...prev, [rfpId]: summary }));
@@ -940,24 +957,37 @@ export default function DashboardPage() {
     }
   }, [filterPanelOpen]);
 
+  // Load current user and profile from API when logged in; only use cache when not authenticated
   useEffect(() => {
-    const saved = localStorage.getItem("companyProfile");
-    const extracted = localStorage.getItem("extractedProfileData");
-    if (saved) {
-      try {
-        setProfile(JSON.parse(saved));
+    let cancelled = false;
+    getCurrentUser().then((data) => {
+      if (cancelled) return;
+      if (data) {
+        setCurrentUser({ user_id: data.user_id, username: data.username });
+        const apiProfile = mapBackendProfileToCompanyProfile(data.profile ?? null);
+        setProfile(apiProfile ?? getEmptyCompanyProfile());
         return;
-      } catch {
-        // ignore
       }
-    }
-    if (extracted) {
-      try {
-        setProfile(JSON.parse(extracted));
-      } catch {
-        // ignore
+      setCurrentUser(null);
+      const saved = localStorage.getItem("companyProfile");
+      const extracted = localStorage.getItem("extractedProfileData");
+      if (saved) {
+        try {
+          setProfile(JSON.parse(saved));
+          return;
+        } catch {
+          // ignore
+        }
       }
-    }
+      if (extracted) {
+        try {
+          setProfile(JSON.parse(extracted));
+        } catch {
+          // ignore
+        }
+      }
+    });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -1020,7 +1050,7 @@ export default function DashboardPage() {
     [rfpsWithMatch]
   );
 
-  const displayName = profile?.companyName?.trim() || "there";
+  const displayName = profile?.companyName?.trim() || currentUser?.username || "there";
   const matchCount = displayedRfps.length;
   const selectedId =
     (selectedRfpId && displayedRfps.some((r) => r.id === selectedRfpId))
@@ -1036,20 +1066,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f5]">
-      <nav className="sticky top-0 bg-white border-b border-slate-200 z-10 shadow-sm">
-        <div className="max-w-full mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <img src="/logo.png" alt="Civitas logo" className="h-10 w-10" />
-            <span className="text-xl font-bold text-slate-900">Civitas</span>
-          </Link>
-          <div className="flex items-center gap-4">
-            <Link href="/profile" className="text-slate-600 hover:text-slate-900 text-sm font-medium">
-              Profile
-            </Link>
-           
-          </div>
-        </div>
-      </nav>
+      <AppHeader variant="dashboard" rightContent={<Link href="/profile" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Profile</Link>} />
 
       {/* Split view */}
       <div className="flex flex-col lg:flex-row h-[calc(100vh-65px)]">
@@ -1227,11 +1244,10 @@ export default function DashboardPage() {
               const reasonSnippet = generateMatchSummary(rfp, match);
 
               return (
-                <button
+                <Link
                   key={rfp.id}
-                  type="button"
-                  onClick={() => setSelectedRfpId(rfp.id)}
-                  className={`w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md ${
+                  href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
+                  className={`block w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md ${
                     isSelected ? "border-[#2563eb] shadow-md" : "border-transparent hover:border-slate-200"
                   }`}
                 >
@@ -1275,7 +1291,7 @@ export default function DashboardPage() {
                       {reasonSnippet}
                     </p>
                   )}
-                </button>
+                </Link>
               );
             })}
           </div>
@@ -1345,6 +1361,9 @@ function RFPDetailPanel({
   const initialSummary = generateSummary(rfp, match);
   const [llmSummary, setLlmSummary] = useState<string | null>(cachedSummary ?? null);
   const [summaryError, setSummaryError] = useState(false);
+  const [requirementsSummary, setRequirementsSummary] = useState<string | null>(null);
+  const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
+  const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
 
   useEffect(() => {
     if (cachedSummary) {
@@ -1407,6 +1426,53 @@ function RFPDetailPanel({
     fetchSummary();
     return () => { cancelled = true; };
   }, [rfp.id, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.capabilities, rfp.certifications, rfp.contractType, rfp.description, profile, initialSummary, cachedSummary, onSummaryReady]);
+
+  useEffect(() => {
+    if (!rfp.description?.trim()) return;
+
+    let cancelled = false;
+    setRequirementsSummaryLoading(true);
+    setRequirementsSummaryError(false);
+
+    async function fetchRequirementsSummary() {
+      try {
+        const res = await fetch("/api/rfp-requirements-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rfp: {
+              title: rfp.title,
+              agency: rfp.agency,
+              industry: rfp.industry,
+              location: rfp.location,
+              deadline: rfp.deadline,
+              contractType: rfp.contractType,
+              capabilities: rfp.capabilities,
+              certifications: rfp.certifications,
+              estimatedValue: rfp.estimatedValue,
+              description: rfp.description,
+            },
+          }),
+        });
+        if (cancelled) return;
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (cancelled) return;
+        setRequirementsSummary(data.summary ?? rfp.description);
+      } catch (err) {
+        console.error("[rfp-requirements-summary] Fetch failed:", err);
+        if (!cancelled) {
+          setRequirementsSummaryError(true);
+          setRequirementsSummary(null);
+        }
+      } finally {
+        if (!cancelled) setRequirementsSummaryLoading(false);
+      }
+    }
+
+    fetchRequirementsSummary();
+    return () => { cancelled = true; };
+  }, [rfp.id, rfp.description, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.contractType, rfp.capabilities, rfp.certifications, rfp.estimatedValue]);
 
   const summary = llmSummary ?? initialSummary;
   const isLoadingSummary = llmSummary === null && !summaryError;
@@ -1565,10 +1631,19 @@ function RFPDetailPanel({
           </div>
         </div>
 
-        {/* Full description */}
+        {/* About this RFP - AI summary of contract requirements */}
         <div className="p-6 md:p-8 border-t border-slate-100">
           <h4 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h4>
-          <p className="text-slate-700 leading-relaxed">{rfp.description}</p>
+          {requirementsSummaryLoading ? (
+            <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
+          ) : requirementsSummary ? (
+            <MarkdownContent content={requirementsSummary} />
+          ) : (
+            <p className="text-slate-700 leading-relaxed">{rfp.description}</p>
+          )}
+          {requirementsSummaryError && (
+            <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
+          )}
         </div>
 
         {/* Tags */}
