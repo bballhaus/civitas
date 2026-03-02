@@ -2,8 +2,15 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import {
+  CALIFORNIA_CITIES,
+  CALIFORNIA_COUNTIES,
+  NAICS_CODES,
+  NAICS_DISPLAY,
+  NAICS_MAP,
+} from "@/data/filter-options";
 
-// Filter options - same as profile-setup page
+// Filter options - cities, counties, NAICS from real data; others static
 const FILTER_OPTIONS = {
   industry: [
     "Construction", "Consulting", "Education", "Engineering", "Healthcare",
@@ -14,16 +21,9 @@ const FILTER_OPTIONS = {
     "ITAR", "NAICS Codes", "NIST 800-53", "PCI DSS", "SOC 2",
   ],
   clearances: ["Public Trust", "Secret", "Top Secret", "TS/SCI"],
-  naicsCodes: ["236220", "541330", "541511", "541512", "541519", "541611", "541690"],
-  workCities: [
-    "Anaheim", "Bakersfield", "Fresno", "Long Beach", "Los Angeles", "Oakland",
-    "Sacramento", "San Diego", "San Francisco", "San Jose",
-  ],
-  workCounties: [
-    "Alameda", "Contra Costa", "Fresno", "Los Angeles", "Orange", "Riverside",
-    "Sacramento", "San Bernardino", "San Diego", "San Francisco", "San Mateo",
-    "Santa Clara", "Ventura",
-  ],
+  naicsCodes: NAICS_CODES,
+  workCities: CALIFORNIA_CITIES,
+  workCounties: CALIFORNIA_COUNTIES,
   agencies: [
     "California Dept of Forestry", "California Department of General Services",
     "California Department of Transportation", "City of Los Angeles",
@@ -128,6 +128,9 @@ function deriveFilterOptionsFromRfps(rfps: RFP[]): Record<keyof RFPFilters, stri
       .map((s) => s.trim())
       .filter((s) => s.length > 2)
   );
+  const rfpNaicsCodes = rfps.flatMap((r) => (r.naicsCodes || []).map(String).map((c) => c.trim()).filter(Boolean));
+  const allNaicsCodes = merge(FILTER_OPTIONS.naicsCodes, rfpNaicsCodes);
+  const naicsDisplay = allNaicsCodes.map((code) => (NAICS_MAP[code] ? `${code} - ${NAICS_MAP[code]}` : code));
   return {
     industry: merge(FILTER_OPTIONS.industry, rfps.map((r) => r.industry || "").filter(Boolean)),
     agencies: merge(FILTER_OPTIONS.agencies, rfps.map((r) => r.agency || "").filter(Boolean)),
@@ -139,10 +142,7 @@ function deriveFilterOptionsFromRfps(rfps: RFP[]): Record<keyof RFPFilters, stri
     sizeStatus: [...FILTER_OPTIONS.sizeStatus],
     certifications: merge(FILTER_OPTIONS.certifications, rfps.flatMap((r) => r.certifications || [])),
     clearances: [...FILTER_OPTIONS.clearances],
-    naicsCodes: merge(
-      FILTER_OPTIONS.naicsCodes,
-      rfps.flatMap((r) => (r.naicsCodes || []).map(String))
-    ),
+    naicsCodes: naicsDisplay,
     deadlineStatus: [...FILTER_OPTIONS.deadlineStatus],
   };
 }
@@ -588,6 +588,13 @@ const MATCH_SCORE_OPTIONS = [
   { value: 25, label: "Good" },
 ] as const;
 
+const SEARCHABLE_FILTER_KEYS: (keyof RFPFilters)[] = ["workCities", "workCounties", "naicsCodes"];
+
+function getFilterValue(key: keyof RFPFilters, opt: string): string {
+  if (key === "naicsCodes" && opt.includes(" - ")) return opt.split(" - ")[0].trim();
+  return opt;
+}
+
 function FilterPanel({
   filterOptions,
   filters,
@@ -610,6 +617,7 @@ function FilterPanel({
   onMinScoreChange: (v: number | null) => void;
 }) {
   const [matchExpanded, setMatchExpanded] = useState(false);
+  const [sectionSearch, setSectionSearch] = useState<Partial<Record<keyof RFPFilters, string>>>({});
 
   const toggle = (keyName: keyof RFPFilters, value: string) => {
     const arr = filters[keyName];
@@ -687,22 +695,41 @@ function FilterPanel({
                   <span className="text-slate-400 text-lg leading-none select-none">{isExpanded ? "−" : "+"}</span>
                 </button>
                 {isExpanded && (
-                  <div className="px-2 pb-2 pt-0 max-h-52 overflow-y-auto space-y-0.5">
-                    {options.length > 0 ? (
-                      options.map((opt) => (
-                        <label key={opt} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded px-2 py-1.5">
-                          <input
-                            type="checkbox"
-                            checked={selected.includes(opt)}
-                            onChange={() => toggle(key, opt)}
-                            className="w-3.5 h-3.5 text-[#2563eb] border-slate-300 rounded shrink-0"
-                          />
-                          <span className="text-xs text-slate-700 truncate">{opt}</span>
-                        </label>
-                      ))
-                    ) : (
-                      <p className="text-xs text-slate-500 italic py-2 px-2">No options</p>
+                  <div className="px-2 pb-2 pt-0">
+                    {SEARCHABLE_FILTER_KEYS.includes(key) && (
+                      <input
+                        type="text"
+                        value={sectionSearch[key] ?? ""}
+                        onChange={(e) => setSectionSearch((prev) => ({ ...prev, [key]: e.target.value }))}
+                        placeholder={`Search ${label.toLowerCase()}...`}
+                        className="w-full px-2.5 py-1.5 mb-2 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-[#2563eb] focus:border-[#2563eb] placeholder:text-slate-400"
+                      />
                     )}
+                    <div className="max-h-52 overflow-y-auto space-y-0.5">
+                      {(() => {
+                        const q = (sectionSearch[key] ?? "").trim().toLowerCase();
+                        const filtered = q
+                          ? options.filter((o) => o.toLowerCase().includes(q))
+                          : options;
+                        const showOptions = [...new Set([...selected.filter((s) => options.some((o) => getFilterValue(key, o) === s)), ...filtered])];
+                        const getVal = (opt: string) => getFilterValue(key, opt);
+                        return showOptions.length > 0 ? (
+                          showOptions.map((opt) => (
+                            <label key={opt} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded px-2 py-1.5">
+                              <input
+                                type="checkbox"
+                                checked={selected.includes(getVal(opt))}
+                                onChange={() => toggle(key, getVal(opt))}
+                                className="w-3.5 h-3.5 text-[#2563eb] border-slate-300 rounded shrink-0"
+                              />
+                              <span className="text-xs text-slate-700 truncate">{opt}</span>
+                            </label>
+                          ))
+                        ) : (
+                          <p className="text-xs text-slate-500 italic py-2 px-2">No matches</p>
+                        );
+                      })()}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1080,6 +1107,20 @@ export default function DashboardPage() {
                   />
                 )}
               </div>
+              {(countActiveFilters(filters) > 0 || minScore != null) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilters(EMPTY_FILTERS);
+                    setMinScore(null);
+                    setFilterPanelOpen(false);
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-200 transition-colors"
+                  title="Clear all filters"
+                >
+                  Clear filters
+                </button>
+              )}
               <SortByDropdown
                 sortBy={sortBy}
                 sortDirection={sortDirection}
