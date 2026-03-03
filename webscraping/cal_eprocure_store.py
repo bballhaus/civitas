@@ -376,8 +376,7 @@ def main():
             print(f"✓ Saved locally: {OUTPUT_JSON}")
 
             # Upload final combined files to S3
-            upload_to_s3(OUTPUT_CSV, 'scrapes/caleprocure/all_events_detailed.csv', 'text/csv')
-            upload_to_s3(OUTPUT_JSON, 'scrapes/caleprocure/all_events_detailed.json', 'application/json')
+            upload_to_s3(all_events)
 
         print("\nAll done!")
 
