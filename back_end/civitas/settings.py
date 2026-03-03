@@ -60,12 +60,17 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'civitas-server.onrender.com']
 
-# Required when frontend (e.g. localhost:3000) calls Django (localhost:8000) directly; otherwise POST gets 403
+# Required when frontend calls Django from another origin; otherwise POST gets 403 (CSRF).
+# Must include every origin that hosts the frontend (local + production).
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'https://civitas-ai.onrender.com',
 ]
-# So the CSRF cookie is sent on cross-origin POST from :3000 to :8000 (localhost is treated as secure)
+_extra_csrf = os.getenv('CSRF_TRUSTED_ORIGINS_EXTRA', '')
+if _extra_csrf:
+    CSRF_TRUSTED_ORIGINS.extend(s.strip() for s in _extra_csrf.split(',') if s.strip())
+# So the CSRF cookie is sent on cross-origin POST (required for Render frontend → backend)
 CSRF_COOKIE_SAMESITE = 'None'
 CSRF_COOKIE_SECURE = True
 
