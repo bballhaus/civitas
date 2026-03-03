@@ -562,10 +562,12 @@ export default function RFPDetailPage() {
             )}
             {proposal && (
               <div className="mt-6 rounded-xl border-2 border-slate-200 bg-slate-50 overflow-hidden">
-                <button
-                  type="button"
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setProposalExpanded((e) => !e)}
-                  className="w-full flex items-center justify-between gap-4 p-4 text-left hover:bg-slate-100/50 transition-colors"
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setProposalExpanded((v) => !v); } }}
+                  className="w-full flex items-center justify-between gap-4 p-4 text-left hover:bg-slate-100/50 transition-colors cursor-pointer"
                 >
                   <h3 className="text-sm font-bold text-slate-900">Generated Proposal</h3>
                   <div className="flex items-center gap-2">
@@ -591,7 +593,7 @@ export default function RFPDetailPage() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </div>
-                </button>
+                </div>
                 {proposalExpanded && (
                   <div className="px-4 pb-4 pt-0">
                     <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
@@ -633,10 +635,12 @@ export default function RFPDetailPage() {
             )}
             {planOfExecution && (
               <div className="mt-6 rounded-xl border-2 border-slate-200 bg-slate-50 overflow-hidden">
-                <button
-                  type="button"
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setPlanExpanded((e) => !e)}
-                  className="w-full flex items-center justify-between gap-4 p-4 text-left hover:bg-slate-100/50 transition-colors"
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPlanExpanded((v) => !v); } }}
+                  className="w-full flex items-center justify-between gap-4 p-4 text-left hover:bg-slate-100/50 transition-colors cursor-pointer"
                 >
                   <h3 className="text-sm font-bold text-slate-900">Plan of Execution</h3>
                   <div className="flex items-center gap-2">
@@ -662,7 +666,7 @@ export default function RFPDetailPage() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </div>
-                </button>
+                </div>
                 {planExpanded && (
                   <div className="px-4 pb-4 pt-0">
                     <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">

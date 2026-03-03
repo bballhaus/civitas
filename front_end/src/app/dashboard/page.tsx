@@ -902,11 +902,16 @@ export default function DashboardPage() {
   const handleExpressInterest = (rfpId: string) => {
     setExpressedInterestRfpIds((prev) => {
       const next = new Set(prev);
-      next.add(rfpId);
+      if (next.has(rfpId)) {
+        next.delete(rfpId);
+        showToast("Interest removed");
+      } else {
+        next.add(rfpId);
+        showToast("Interest expressed — we'll use this to improve your matches");
+      }
       saveSet(STORAGE_KEYS.EXPRESSED_INTEREST, next);
       return next;
     });
-    showToast("Interest expressed — we'll use this to improve your matches");
   };
 
   const handleRemoveFromNotInterested = (rfpId: string) => {
@@ -1553,10 +1558,9 @@ function RFPDetailPanel({
               <button
                 type="button"
                 onClick={onExpressInterest}
-                disabled={hasExpressedInterest}
                 className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
                   hasExpressedInterest
-                    ? "bg-emerald-100 text-emerald-800 cursor-default"
+                    ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
                     : "bg-[#2563eb] text-white hover:bg-[#1d4ed8]"
                 }`}
               >
