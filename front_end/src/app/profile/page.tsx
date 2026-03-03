@@ -4,11 +4,20 @@ import { useState, useEffect } from "react";
 import type { ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  CALIFORNIA_CITIES,
+  CALIFORNIA_COUNTIES,
+  NAICS_DISPLAY,
+} from "@/data/filter-options";
 import { AppHeader } from "@/components/AppHeader";
 import {
+  getApiBase,
   getCurrentUser,
-  clearCachedUser,
+  getCachedUser,
+  getCachedProfile,
+  setCachedProfile,
   saveProfileToBackend,
+  getProfileFromBackend,
   uploadContractDocument,
   deleteContractDocument,
   getAuthToken,
@@ -96,6 +105,9 @@ export default function ProfilePage() {
   const [sectionSaving, setSectionSaving] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [profileLoadedFromBackend, setProfileLoadedFromBackend] = useState(false);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -105,7 +117,7 @@ export default function ProfilePage() {
     });
 
     try {
-      const response = await fetch("https://civitas-server.onrender.com/api/profile/extract/", {
+      const response = await fetch(`${getApiBase()}/profile/extract/`, {
         method: "POST",
         body: formData,
       });
@@ -139,7 +151,7 @@ export default function ProfilePage() {
     } catch (error) {
       if (error instanceof TypeError && error.message.includes("fetch")) {
         throw new Error(
-          "Cannot connect to backend server. Please make sure the Django server is running on https://civitas-server.onrender.com"
+          `Cannot connect to backend server. Please make sure the Django server is running at ${getApiBase()}.`
         );
       }
       throw error;
@@ -299,24 +311,68 @@ export default function ProfilePage() {
     setIsClient(true);
   }, []);
 
-  // Profile only from API (GET /api/auth/me/). No fallback to localStorage.
+  // Instant show when we have cached user + profile; otherwise load user then profile from backend.
   useEffect(() => {
     if (!isClient) return;
-    console.log("[Civitas] Profile page: loading user + profile from API (auth/me)...");
-    clearCachedUser();
-    getCurrentUser().then((data) => {
-      if (data) {
-        console.log("[Civitas] Profile page: got user from API —", data.user_id, data.username, "profile:", data.profile ? "yes" : "no");
+    const cachedUser = getCachedUser();
+    const cachedProfile = cachedUser ? getCachedProfile(cachedUser.user_id) : null;
+    if (cachedUser && cachedProfile) {
+      setCurrentUser(cachedUser);
+      setProfile(cachedProfile);
+      setProfileLoadedFromBackend(true);
+      setInitialLoadDone(true);
+      setLoadingProfile(false);
+      return;
+    }
+    setLoadingProfile(true);
+    getCurrentUser(false)
+      .then((data) => {
+        if (!data) {
+          setCurrentUser(null);
+          setProfile(null);
+          setInitialLoadDone(true);
+          setLoadingProfile(false);
+          return;
+        }
         setCurrentUser(data);
-        const mapped = mapBackendProfileToCompanyProfile(data.profile);
-        setProfile(mapped ?? getEmptyCompanyProfile());
-      } else {
-        console.log("[Civitas] Profile page: API returned 401/error — not authenticated. Log in to see your profile.");
-        setCurrentUser(null);
-        setProfile(null);
-      }
-    });
+        return getProfileFromBackend()
+          .then((backendProfile) => {
+            const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+            setProfile(mapped);
+            setCachedProfile(data.user_id, mapped);
+            setProfileLoadedFromBackend(true);
+          })
+          .catch((e) => {
+            console.error("Failed to load profile from backend:", e);
+            setProfile(getEmptyCompanyProfile());
+          });
+      })
+      .catch((e) => {
+        console.error("Failed to load user:", e);
+      })
+      .finally(() => {
+        setInitialLoadDone(true);
+        setLoadingProfile(false);
+      });
   }, [isClient]);
+
+  const ensureProfileLoaded = async (): Promise<boolean> => {
+    if (profileLoadedFromBackend) return true;
+    setLoadingProfile(true);
+    try {
+      const backendProfile = await getProfileFromBackend();
+      const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+      setProfile(mapped);
+      if (currentUser) setCachedProfile(currentUser.user_id, mapped);
+      setProfileLoadedFromBackend(true);
+      return true;
+    } catch (e) {
+      console.error("Failed to load profile from backend:", e);
+      return false;
+    } finally {
+      setLoadingProfile(false);
+    }
+  };
 
   const handleInputChange = (field: keyof CompanyProfile, value: unknown) => {
     setProfile((prev) => (prev ? { ...prev, [field]: value } : null));
@@ -334,14 +390,16 @@ export default function ProfilePage() {
       | "capabilities"
       | "agencyExperience"
       | "contractTypes",
-    value: string
+    value: string,
+    valueToStore?: string
   ) => {
+    const stored = valueToStore ?? value;
     setProfile((prev) => {
       if (!prev) return null;
       const current = prev[field] ?? [];
-      const updated = current.includes(value)
-        ? current.filter((item) => item !== value)
-        : [...current, value];
+      const updated = current.includes(stored)
+        ? current.filter((item) => item !== stored)
+        : [...current, stored];
       return { ...prev, [field]: updated };
     });
   };
@@ -458,7 +516,9 @@ export default function ProfilePage() {
       }
 
       if (currentUser) {
-        await saveProfileToBackend(profileToBackendPayload(profileToSave));
+        const saved = await saveProfileToBackend(profileToBackendPayload(profileToSave));
+        const mapped = mapBackendProfileToCompanyProfile(saved);
+        if (mapped) setCachedProfile(currentUser.user_id, mapped);
       } else {
         localStorage.setItem("companyProfile", JSON.stringify(profileToSave));
       }
@@ -525,6 +585,8 @@ export default function ProfilePage() {
     options,
     selectedValues,
     placeholder,
+    getValueToStore,
+    isOptionSelected,
   }: {
     field: keyof Pick<
       CompanyProfile,
@@ -542,6 +604,8 @@ export default function ProfilePage() {
     options: string[];
     selectedValues: string[];
     placeholder: string;
+    getValueToStore?: (option: string) => string;
+    isOptionSelected?: (option: string, selected: string[]) => boolean;
   }) {
     const [searchTerm, setSearchTerm] = useState("");
     const [isFocused, setIsFocused] = useState(false);
@@ -549,6 +613,9 @@ export default function ProfilePage() {
     const filtered = options.filter((o) =>
       o.toLowerCase().includes(searchTerm.toLowerCase())
     );
+    const checked = (option: string) =>
+      isOptionSelected ? isOptionSelected(option, safeSelected) : safeSelected.includes(option);
+    const valueToStore = (option: string) => (getValueToStore ? getValueToStore(option) : option);
 
     return (
       <div className="relative w-full">
@@ -579,8 +646,8 @@ export default function ProfilePage() {
                   >
                     <input
                       type="checkbox"
-                      checked={safeSelected.includes(option)}
-                      onChange={() => handleMultiSelect(field, option)}
+                      checked={checked(option)}
+                      onChange={() => handleMultiSelect(field, option, valueToStore(option))}
                       className="w-4 h-4 text-[#3C89C6] border-slate-300 rounded focus:ring-[#3C89C6]"
                     />
                     <span className="text-sm text-slate-700">{option}</span>
@@ -621,6 +688,19 @@ export default function ProfilePage() {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#3C89C6]"></div>
+      </div>
+    );
+  }
+
+  // Show loading until user + profile fetch is done (must be before profile === null check).
+  if (!initialLoadDone) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <AppHeader />
+        <div className="max-w-7xl mx-auto px-6 py-10 flex flex-col items-center justify-center min-h-[40vh] gap-4">
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#3C89C6]"></div>
+          <p className="text-slate-600 font-medium">Loading your profile…</p>
+        </div>
       </div>
     );
   }
@@ -677,8 +757,16 @@ export default function ProfilePage() {
           </button>
         </div>
       ) : (
-        <button type="button" onClick={() => setEditingSection(sectionId)} className={btnSecondary}>
-          Edit
+        <button
+          type="button"
+          onClick={async () => {
+            const ok = await ensureProfileLoaded();
+            if (ok) setEditingSection(sectionId);
+          }}
+          disabled={loadingProfile}
+          className={btnSecondary}
+        >
+          {loadingProfile ? "Loading…" : "Edit"}
         </button>
       )}
     </div>
@@ -867,16 +955,21 @@ export default function ProfilePage() {
                     <p className="text-sm text-slate-600 mb-2">NAICS codes</p>
                     <SearchFirstDropdown
                       field="naicsCodes"
-                      options={["236220", "541330", "541511", "541512", "541519", "541611", "541690"]}
+                      options={NAICS_DISPLAY}
                       selectedValues={profile.naicsCodes ?? []}
                       placeholder="Type to search NAICS codes..."
+                      getValueToStore={(opt) => (opt.includes(" - ") ? opt.split(" - ")[0].trim() : opt)}
+                      isOptionSelected={(opt, sel) => {
+                        const code = opt.includes(" - ") ? opt.split(" - ")[0].trim() : opt;
+                        return sel.includes(code);
+                      }}
                     />
                   </div>
                   <div>
                     <p className="text-sm text-slate-600 mb-2">Work cities</p>
                     <SearchFirstDropdown
                       field="workCities"
-                      options={["Anaheim", "Bakersfield", "Fresno", "Long Beach", "Los Angeles", "Oakland", "Sacramento", "San Diego", "San Francisco", "San Jose"]}
+                      options={CALIFORNIA_CITIES}
                       selectedValues={profile.workCities ?? []}
                       placeholder="Type to search cities..."
                     />
@@ -885,7 +978,7 @@ export default function ProfilePage() {
                     <p className="text-sm text-slate-600 mb-2">Work counties</p>
                     <SearchFirstDropdown
                       field="workCounties"
-                      options={["Alameda", "Contra Costa", "Fresno", "Los Angeles", "Orange", "Riverside", "Sacramento", "San Bernardino", "San Diego", "San Francisco", "San Mateo", "Santa Clara", "Ventura"]}
+                      options={CALIFORNIA_COUNTIES}
                       selectedValues={profile.workCounties ?? []}
                       placeholder="Type to search counties..."
                     />
