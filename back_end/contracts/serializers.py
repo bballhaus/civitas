@@ -211,8 +211,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 
 class UserWithProfileSerializer(serializers.Serializer):
-    """Combined user (id, username) and profile for /api/auth/me/."""
+    """Combined user (id, username) and optional profile for /api/auth/me/."""
 
     user_id = serializers.IntegerField(source='user.id')
     username = serializers.CharField(source='user.username')
-    profile = UserProfileSerializer()
+    profile = UserProfileSerializer(allow_null=True, required=False)

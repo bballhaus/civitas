@@ -1,8 +1,15 @@
-const BACKEND_URL = "https://civitas-server.onrender.com/api";
+const PRODUCTION_API = "https://civitas-server.onrender.com/api";
+const DEV_API = "http://localhost:8000/api";
 
 export function getApiBase(): string {
-  if (typeof window === "undefined") return BACKEND_URL;
-  return BACKEND_URL;
+  const isDev = process.env.NODE_ENV === "development";
+  const base =
+    process.env.NEXT_PUBLIC_API_BASE ||
+    (typeof window === "undefined" ? process.env.API_BASE : undefined) ||
+    (isDev ? DEV_API : PRODUCTION_API) ||
+    PRODUCTION_API;
+  const url = (base || PRODUCTION_API).replace(/\/$/, "");
+  return url || PRODUCTION_API;
 }
 const API_BASE = getApiBase();
 
@@ -167,6 +174,22 @@ function authHeaders(): Record<string, string> {
   return {};
 }
 
+/** Read cached user from localStorage (for instant dashboard load when profile + events are also cached). */
+export function getCachedUser(): { user_id: number; username: string; email?: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(CACHED_USER_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as { user_id?: number; username?: string; email?: string };
+    if (typeof data?.user_id === "number" && typeof data?.username === "string") {
+      return { user_id: data.user_id, username: data.username, email: data.email };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Store user in localStorage (used only for non–profile flows if needed). */
 export function setCachedUser(user: { user_id: number; username: string; email?: string }): void {
   if (typeof window === "undefined") return;
@@ -184,19 +207,38 @@ export function clearCachedUser(): void {
   try {
     const had = localStorage.getItem(CACHED_USER_KEY);
     localStorage.removeItem(CACHED_USER_KEY);
+    clearProfileCache();
     console.log(`${LOG_PREFIX} Cache cleared: cached user removed${had ? " (had previous user)" : ""} — only backend/AWS trusted`);
   } catch {
     // ignore
   }
 }
 
+/** In-memory profile cache: only refetch from backend when profile is saved or cache is empty. */
+let profileCache: { userId: number; profile: CompanyProfileFromApi } | null = null;
+
+export function getCachedProfile(userId: number): CompanyProfileFromApi | null {
+  if (profileCache && profileCache.userId === userId) return profileCache.profile;
+  return null;
+}
+
+export function setCachedProfile(userId: number, profile: CompanyProfileFromApi): void {
+  profileCache = { userId, profile };
+}
+
+export function clearProfileCache(): void {
+  profileCache = null;
+}
+
 /**
- * Fetch current user and profile from backend (profile from AWS DynamoDB). Requires session.
- * Only source of truth for "who is logged in" and profile data when used.
+ * Fetch current user (and optionally profile) from backend.
+ * When includeProfile is false (default), only user_id/username are returned — no S3/AWS call.
+ * When includeProfile is true, profile is loaded from S3 (slower). Use for dashboard matching, etc.
  */
-export async function getCurrentUser(): Promise<CurrentUser | null> {
-  console.log(`${LOG_PREFIX} Fetching current user + profile from backend (GET /api/auth/me/, profile from AWS)...`);
-  const res = await fetch(`${API_BASE}/auth/me/`, {
+export async function getCurrentUser(includeProfile = false): Promise<CurrentUser | null> {
+  const url = includeProfile ? `${API_BASE}/auth/me/?include_profile=1` : `${API_BASE}/auth/me/`;
+  console.log(`${LOG_PREFIX} Fetching current user from backend (GET auth/me, includeProfile=${includeProfile})...`);
+  const res = await fetch(url, {
     credentials: "include",
     headers: { ...authHeaders() },
   });
@@ -205,8 +247,23 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     return null;
   }
   const data = await res.json();
-  console.log(`${LOG_PREFIX} Backend auth/me OK: user_id=${data?.user_id} username=${data?.username} (profile from AWS)`);
+  console.log(`${LOG_PREFIX} Backend auth/me OK: user_id=${data?.user_id} username=${data?.username}${includeProfile ? " (profile from AWS)" : ""}`);
   return data;
+}
+
+/**
+ * Fetch profile from backend (S3). Use when user wants to view/edit profile so we only hit AWS on demand.
+ */
+export async function getProfileFromBackend(): Promise<AuthMeProfile> {
+  const res = await fetch(`${API_BASE}/profile/`, {
+    credentials: "include",
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.error || "Failed to load profile");
+  }
+  return res.json();
 }
 
 /** Payload for PATCH /api/profile/ (snake_case, writable fields only). */

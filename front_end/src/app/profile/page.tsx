@@ -6,9 +6,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import {
+  getApiBase,
   getCurrentUser,
-  clearCachedUser,
+  getCachedUser,
+  getCachedProfile,
+  setCachedProfile,
   saveProfileToBackend,
+  getProfileFromBackend,
   uploadContractDocument,
   deleteContractDocument,
   getAuthToken,
@@ -96,6 +100,9 @@ export default function ProfilePage() {
   const [sectionSaving, setSectionSaving] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [profileLoadedFromBackend, setProfileLoadedFromBackend] = useState(false);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -105,7 +112,7 @@ export default function ProfilePage() {
     });
 
     try {
-      const response = await fetch("https://civitas-server.onrender.com/api/profile/extract/", {
+      const response = await fetch(`${getApiBase()}/profile/extract/`, {
         method: "POST",
         body: formData,
       });
@@ -139,7 +146,7 @@ export default function ProfilePage() {
     } catch (error) {
       if (error instanceof TypeError && error.message.includes("fetch")) {
         throw new Error(
-          "Cannot connect to backend server. Please make sure the Django server is running on https://civitas-server.onrender.com"
+          `Cannot connect to backend server. Please make sure the Django server is running at ${getApiBase()}.`
         );
       }
       throw error;
@@ -298,24 +305,68 @@ export default function ProfilePage() {
     setIsClient(true);
   }, []);
 
-  // Profile only from API (GET /api/auth/me/). No fallback to localStorage.
+  // Instant show when we have cached user + profile; otherwise load user then profile from backend.
   useEffect(() => {
     if (!isClient) return;
-    console.log("[Civitas] Profile page: loading user + profile from API (auth/me)...");
-    clearCachedUser();
-    getCurrentUser().then((data) => {
-      if (data) {
-        console.log("[Civitas] Profile page: got user from API —", data.user_id, data.username, "profile:", data.profile ? "yes" : "no");
+    const cachedUser = getCachedUser();
+    const cachedProfile = cachedUser ? getCachedProfile(cachedUser.user_id) : null;
+    if (cachedUser && cachedProfile) {
+      setCurrentUser(cachedUser);
+      setProfile(cachedProfile);
+      setProfileLoadedFromBackend(true);
+      setInitialLoadDone(true);
+      setLoadingProfile(false);
+      return;
+    }
+    setLoadingProfile(true);
+    getCurrentUser(false)
+      .then((data) => {
+        if (!data) {
+          setCurrentUser(null);
+          setProfile(null);
+          setInitialLoadDone(true);
+          setLoadingProfile(false);
+          return;
+        }
         setCurrentUser(data);
-        const mapped = mapBackendProfileToCompanyProfile(data.profile);
-        setProfile(mapped ?? getEmptyCompanyProfile());
-      } else {
-        console.log("[Civitas] Profile page: API returned 401/error — not authenticated. Log in to see your profile.");
-        setCurrentUser(null);
-        setProfile(null);
-      }
-    });
+        return getProfileFromBackend()
+          .then((backendProfile) => {
+            const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+            setProfile(mapped);
+            setCachedProfile(data.user_id, mapped);
+            setProfileLoadedFromBackend(true);
+          })
+          .catch((e) => {
+            console.error("Failed to load profile from backend:", e);
+            setProfile(getEmptyCompanyProfile());
+          });
+      })
+      .catch((e) => {
+        console.error("Failed to load user:", e);
+      })
+      .finally(() => {
+        setInitialLoadDone(true);
+        setLoadingProfile(false);
+      });
   }, [isClient]);
+
+  const ensureProfileLoaded = async (): Promise<boolean> => {
+    if (profileLoadedFromBackend) return true;
+    setLoadingProfile(true);
+    try {
+      const backendProfile = await getProfileFromBackend();
+      const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+      setProfile(mapped);
+      if (currentUser) setCachedProfile(currentUser.user_id, mapped);
+      setProfileLoadedFromBackend(true);
+      return true;
+    } catch (e) {
+      console.error("Failed to load profile from backend:", e);
+      return false;
+    } finally {
+      setLoadingProfile(false);
+    }
+  };
 
   const handleInputChange = (field: keyof CompanyProfile, value: unknown) => {
     setProfile((prev) => (prev ? { ...prev, [field]: value } : null));
@@ -454,7 +505,9 @@ export default function ProfilePage() {
       }
 
       if (currentUser) {
-        await saveProfileToBackend(profileToBackendPayload(profileToSave));
+        const saved = await saveProfileToBackend(profileToBackendPayload(profileToSave));
+        const mapped = mapBackendProfileToCompanyProfile(saved);
+        if (mapped) setCachedProfile(currentUser.user_id, mapped);
       } else {
         localStorage.setItem("companyProfile", JSON.stringify(profileToSave));
       }
@@ -621,6 +674,19 @@ export default function ProfilePage() {
     );
   }
 
+  // Show loading until user + profile fetch is done (must be before profile === null check).
+  if (!initialLoadDone) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <AppHeader />
+        <div className="max-w-7xl mx-auto px-6 py-10 flex flex-col items-center justify-center min-h-[40vh] gap-4">
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#3C89C6]"></div>
+          <p className="text-slate-600 font-medium">Loading your profile…</p>
+        </div>
+      </div>
+    );
+  }
+
   if (profile === null) {
     return (
       <div className="min-h-screen bg-slate-50">
@@ -673,8 +739,16 @@ export default function ProfilePage() {
           </button>
         </div>
       ) : (
-        <button type="button" onClick={() => setEditingSection(sectionId)} className={btnSecondary}>
-          Edit
+        <button
+          type="button"
+          onClick={async () => {
+            const ok = await ensureProfileLoaded();
+            if (ok) setEditingSection(sectionId);
+          }}
+          disabled={loadingProfile}
+          className={btnSecondary}
+        >
+          {loadingProfile ? "Loading…" : "Edit"}
         </button>
       )}
     </div>

@@ -127,20 +127,28 @@ class LogoutView(APIView):
 
 
 class CurrentUserView(APIView):
-    """Return current user (user_id, username) and their profile. Profile from S3 user JSON."""
+    """Return current user (user_id, username) and optionally profile. Profile from S3 only when include_profile=1."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
-        logger.info("Auth/me: fetching account info from AWS for user_id=%s username=%s", user.id, user.username)
-        profile_dict = get_or_create_profile(user.id)
-        profile = profile_dict_to_object(profile_dict)
-        serializer = UserWithProfileSerializer({
-            'user': user,
-            'profile': profile,
-        })
-        logger.info("Auth/me: returning user + profile for user_id=%s", user.id)
+        include_profile = request.query_params.get('include_profile', '').lower() in ('1', 'true', 'yes')
+        if include_profile:
+            logger.info("Auth/me: fetching user + profile from S3 for user_id=%s username=%s", user.id, user.username)
+            profile_dict = get_or_create_profile(user.id)
+            profile = profile_dict_to_object(profile_dict)
+            serializer = UserWithProfileSerializer({
+                'user': user,
+                'profile': profile,
+            })
+            logger.info("Auth/me: returning user + profile for user_id=%s", user.id)
+        else:
+            logger.info("Auth/me: returning user only (no S3) for user_id=%s username=%s", user.id, user.username)
+            serializer = UserWithProfileSerializer({
+                'user': user,
+                'profile': None,
+            })
         return Response(serializer.data)
 
 
@@ -165,9 +173,9 @@ class ContractExtractView(APIView):
 
 
 class ProfileExtractView(APIView):
-    """Extract company profile data from multiple contract documents. No auth required for now."""
+    """Extract company profile data from multiple contract documents."""
 
-    permission_classes = [AllowAny]  # No auth required for initial profile setup
+    permission_classes = [AllowAny]  
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):

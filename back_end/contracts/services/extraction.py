@@ -140,31 +140,6 @@ def _call_groq(text: str) -> dict[str, Any]:
     return _parse_llm_json(raw)
 
 
-def _call_openai(text: str) -> dict[str, Any]:
-    """Call OpenAI API (GPT-4o-mini is cheap)."""
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise ExtractionError(
-            "OpenAI SDK not installed. Run: pip install openai"
-        ) from None
-
-    api_key = getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise ExtractionError("OPENAI_API_KEY not set in settings or environment")
-
-    client = OpenAI(api_key=api_key)
-    model = getattr(settings, "EXTRACTION_LLM_MODEL", "gpt-4o-mini")
-
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": EXTRACTION_PROMPT.format(text=text)}],
-        temperature=0.1,
-    )
-    raw = response.choices[0].message.content.strip()
-    return _parse_llm_json(raw)
-
-
 def _parse_llm_json(raw: str) -> dict[str, Any]:
     """Parse JSON from LLM response, handling markdown code blocks."""
     # Remove markdown code fences if present
@@ -239,8 +214,6 @@ def extract_metadata_from_document(file) -> dict[str, Any]:
     provider = getattr(settings, "EXTRACTION_LLM_PROVIDER", "groq").lower()
     if provider == "groq":
         data = _call_groq(text)
-    elif provider == "openai":
-        data = _call_openai(text)
     else:
         raise ExtractionError(
             f"Unknown EXTRACTION_LLM_PROVIDER: {provider}. Use 'groq' or 'openai'."

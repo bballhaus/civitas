@@ -6,6 +6,11 @@ import { MarkdownContent } from "@/components/MarkdownContent";
 import { AppHeader } from "@/components/AppHeader";
 import {
   getCurrentUser,
+  getCachedUser,
+  getCachedProfile,
+  setCachedProfile,
+  setCachedUser,
+  clearCachedUser,
   mapBackendProfileToCompanyProfile,
   getEmptyCompanyProfile,
 } from "@/lib/api";
@@ -220,6 +225,9 @@ const STORAGE_KEYS = {
   NOT_INTERESTED: "civitas_not_interested_rfps",
   EXPRESSED_INTEREST: "civitas_expressed_interest_rfps",
 };
+
+/** Cached events so we only refetch when user refreshes; matches stay stable until profile is updated. */
+let cachedEvents: RFP[] | null = null;
 
 function loadSet(key: string): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -1053,6 +1061,7 @@ export default function DashboardPage() {
   const [selectedRfpId, setSelectedRfpId] = useState<string | null>(null);
   const [rfps, setRfps] = useState<RFP[]>([]);
   const [loading, setLoading] = useState(true);
+  const [profileLoadDone, setProfileLoadDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(new Set());
   const [notInterestedRfpIds, setNotInterestedRfpIds] = useState<Set<string>>(new Set());
@@ -1165,48 +1174,98 @@ export default function DashboardPage() {
     }
   }, [filterPanelOpen]);
 
-  // Load current user and profile from API when logged in; only use cache when not authenticated
+  // Instant load when we have full cache (no network); otherwise load user + profile, then events.
   useEffect(() => {
     let cancelled = false;
-    getCurrentUser().then((data) => {
-      if (cancelled) return;
-      if (data) {
-        setCurrentUser({ user_id: data.user_id, username: data.username });
-        const apiProfile = mapBackendProfileToCompanyProfile(data.profile ?? null);
-        setProfile(apiProfile ?? getEmptyCompanyProfile());
-        return;
-      }
-      setCurrentUser(null);
-      const saved = localStorage.getItem("companyProfile");
-      const extracted = localStorage.getItem("extractedProfileData");
-      if (saved) {
-        try {
-          setProfile(JSON.parse(saved));
+    const cachedUser = getCachedUser();
+    const cachedProfile = cachedUser ? getCachedProfile(cachedUser.user_id) : null;
+    const hasEvents = cachedEvents && cachedEvents.length > 0;
+    if (cachedUser && cachedProfile && hasEvents) {
+      setCurrentUser(cachedUser);
+      setProfile(cachedProfile);
+      setRfps(cachedEvents);
+      setProfileLoadDone(true);
+      setLoading(false);
+      getCurrentUser(false).then((data) => {
+        if (cancelled) return;
+        if (!data) {
+          clearCachedUser();
+          cachedEvents = null;
+          setCurrentUser(null);
+          setProfile(null);
+        } else {
+          setCachedUser(data);
+        }
+      });
+      return () => { cancelled = true; };
+    }
+    getCurrentUser(false)
+      .then((data) => {
+        if (cancelled) return;
+        if (data) {
+          setCurrentUser({ user_id: data.user_id, username: data.username });
+          setCachedUser(data);
+          const cached = getCachedProfile(data.user_id);
+          if (cached) {
+            setProfile(cached);
+            setProfileLoadDone(true);
+            return;
+          }
+          getCurrentUser(true)
+            .then((full) => {
+              if (cancelled || !full) return;
+              const apiProfile = mapBackendProfileToCompanyProfile(full.profile ?? null);
+              const mapped = apiProfile ?? getEmptyCompanyProfile();
+              setProfile(mapped);
+              setCachedProfile(full.user_id, mapped);
+              setProfileLoadDone(true);
+            })
+            .catch(() => {
+              if (!cancelled) setProfileLoadDone(true);
+            });
           return;
-        } catch {
-          // ignore
         }
-      }
-      if (extracted) {
-        try {
-          setProfile(JSON.parse(extracted));
-        } catch {
-          // ignore
+        setCurrentUser(null);
+        const saved = localStorage.getItem("companyProfile");
+        const extracted = localStorage.getItem("extractedProfileData");
+        if (saved) {
+          try {
+            setProfile(JSON.parse(saved));
+          } catch {
+            // ignore
+          }
         }
-      }
-    });
+        if (extracted) {
+          try {
+            setProfile(JSON.parse(extracted));
+          } catch {
+            // ignore
+          }
+        }
+        setProfileLoadDone(true);
+      })
+      .catch(() => {
+        if (!cancelled) setProfileLoadDone(true);
+      });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     async function fetchEvents() {
-      try {
+      if (cachedEvents && cachedEvents.length > 0) {
+        setRfps(cachedEvents);
+        setLoading(false);
+      } else {
         setLoading(true);
-        setError(null);
+      }
+      setError(null);
+      try {
         const res = await fetch("/api/events");
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        setRfps(data.events ?? []);
+        const events = data.events ?? [];
+        setRfps(events);
+        cachedEvents = events;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load events");
         setRfps(FALLBACK_RFPS);
@@ -1271,6 +1330,19 @@ export default function DashboardPage() {
       setSelectedRfpId(displayedRfps[0]?.id ?? null);
     }
   }, [displayedRfps, selectedRfpId]);
+
+  // Full-page loading until both profile and events are loaded — keeps match scores stable (no re-sort after load).
+  if (loading || !profileLoadDone) {
+    return (
+      <div className="min-h-screen bg-[#f5f5f5]">
+        <AppHeader variant="dashboard" rightContent={<Link href="/profile" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Profile</Link>} />
+        <div className="flex flex-col items-center justify-center min-h-[calc(100vh-65px)] gap-4">
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#2563eb]" />
+          <p className="text-slate-600 font-medium">Loading matches…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#f5f5f5]">
@@ -1386,11 +1458,7 @@ export default function DashboardPage() {
           <div
             className={`flex-1 min-h-0 p-3 space-y-3 ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
           >
-            {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#2563eb]"></div>
-              </div>
-            ) : error ? (
+            {error ? (
               <p className="text-sm text-amber-600 py-4 px-4 bg-amber-50 rounded-lg">{error}. Showing sample data.</p>
             ) : null}
             {hiddenCount > 0 && (
