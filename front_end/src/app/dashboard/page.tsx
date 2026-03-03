@@ -868,6 +868,33 @@ export default function DashboardPage() {
     setExpressedInterestRfpIds(loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
   }, []);
 
+  // Keep saved/not-interested/expressed in sync with current RFP list so we don't show counts for stale IDs
+  const currentRfpIds = React.useMemo(
+    () => (rfps.length > 0 ? new Set(rfps.map((r) => r.id)) : null),
+    [rfps]
+  );
+  useEffect(() => {
+    if (!currentRfpIds || currentRfpIds.size === 0) return;
+    const saved = loadSet(STORAGE_KEYS.SAVED);
+    const notInt = loadSet(STORAGE_KEYS.NOT_INTERESTED);
+    const expressed = loadSet(STORAGE_KEYS.EXPRESSED_INTEREST);
+    const savedFiltered = new Set([...saved].filter((id) => currentRfpIds.has(id)));
+    const notIntFiltered = new Set([...notInt].filter((id) => currentRfpIds.has(id)));
+    const expressedFiltered = new Set([...expressed].filter((id) => currentRfpIds.has(id)));
+    if (
+      savedFiltered.size !== saved.size ||
+      notIntFiltered.size !== notInt.size ||
+      expressedFiltered.size !== expressed.size
+    ) {
+      saveSet(STORAGE_KEYS.SAVED, savedFiltered);
+      saveSet(STORAGE_KEYS.NOT_INTERESTED, notIntFiltered);
+      saveSet(STORAGE_KEYS.EXPRESSED_INTEREST, expressedFiltered);
+      setSavedRfpIds(savedFiltered);
+      setNotInterestedRfpIds(notIntFiltered);
+      setExpressedInterestRfpIds(expressedFiltered);
+    }
+  }, [currentRfpIds]);
+
   const handleSummaryReady = useCallback((rfpId: string, summary: string) => {
     setSummaryCache((prev) => ({ ...prev, [rfpId]: summary }));
   }, []);
@@ -1228,16 +1255,6 @@ export default function DashboardPage() {
                 Saved ({savedRfpIds.size})
               </button>
             </div>
-            <Link
-              href="/profile"
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-[#2563eb] text-sm font-medium hover:bg-slate-50 transition-colors w-fit"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              Update Match Preferences
-            </Link>
           </div>
           <div
             className={`flex-1 min-h-0 p-3 space-y-3 ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
