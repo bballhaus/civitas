@@ -277,23 +277,24 @@ export default function ProfilePage() {
       if (filesToParse.length > 0) {
         // Parse the documents
         const extractedData = await parseDocumentsWithBackend(filesToParse);
-        
+
         // Merge extracted data with existing profile
         const mergedProfile = mergeProfileData(profile, extractedData);
-        
+
         // Mark files as parsed
-        mergedProfile.uploadedFiles = (mergedProfile.uploadedFiles ?? []).map(file =>
-          unparsedFiles.some(uf => uf.name === file.name)
+        const updatedFiles = (mergedProfile.uploadedFiles ?? []).map((file) =>
+          unparsedFiles.some((uf) => uf.name === file.name)
             ? { ...file, parsed: true }
             : file
         );
-        
+        mergedProfile.uploadedFiles = updatedFiles;
+
         // Update profile state
         setProfile(mergedProfile);
-        
+
         // Save merged profile
         localStorage.setItem("companyProfile", JSON.stringify(mergedProfile));
-        
+
         alert(`Successfully parsed ${filesToParse.length} document(s) and updated your profile!`);
       } else {
         alert("Could not find file data to parse. Please try uploading the files again.");
@@ -495,16 +496,19 @@ export default function ProfilePage() {
             }
             if (filesToParse.length > 0) {
               const extractedData = await parseDocumentsWithBackend(filesToParse);
-              
+
               // Merge extracted data with existing profile
               const mergedProfile = mergeProfileData(profileToSave, extractedData);
-              
+
               // Mark files as parsed
-              mergedProfile.uploadedFiles = (mergedProfile.uploadedFiles ?? []).map(file => 
-                unparsedFiles.some(uf => uf.name === file.name) 
+              const updatedFiles = (mergedProfile.uploadedFiles ?? []).map((file) =>
+                unparsedFiles.some((uf) => uf.name === file.name)
                   ? { ...file, parsed: true }
                   : file
               );
+              mergedProfile.uploadedFiles = updatedFiles;
+
+              // Update profile state
               setProfile(mergedProfile);
               profileToSave = mergedProfile;
             }
