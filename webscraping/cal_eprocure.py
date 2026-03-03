@@ -1,8 +1,3 @@
-"""
-Click-and-Switch-Tab Scraper
-Handles events that open in new tabs + downloads attachments
-"""
-
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -56,7 +51,7 @@ def scrape_event_page(driver, wait):
         wait.until(
             EC.presence_of_element_located((By.CSS_SELECTOR, '[data-if-label="eventName"]'))
         )
-        time.sleep(3)
+        #time.sleep(3)
     except:
         pass
 
@@ -149,25 +144,25 @@ def download_attachments(driver, wait, event_id):
     then for each attachment: opens modal → grabs URL → downloads via requests → closes modal.
     Files saved to downloads/<event_id>/
     """
-    # Create a subfolder per event so files don't collide
+    # Create a subfolder per event 
     safe_id = event_id.replace('/', '_')
     event_download_dir = os.path.join(BASE_DOWNLOAD_DIR, safe_id)
     os.makedirs(event_download_dir, exist_ok=True)
 
     print(f"  [attachments] Saving to: {event_download_dir}")
 
-    # ── Step 1: Click "View Event Package" ──────────────────────────────────
+    #  Click "View Event Package"
     try:
         view_pkg_btn = wait.until(
             EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-if-label="viewPackage"]'))
         )
         view_pkg_btn.click()
-        print(f"  [attachments] ✓ Clicked 'View Event Package'")
+        print(f" Clicked 'View Event Package'")
     except Exception as e:
-        print(f"  [attachments] ✗ Could not click 'View Event Package': {e}")
+        print(f"  Could not click 'View Event Package': {e}")
         return
 
-    # ── Step 2: Wait for attachments table ──────────────────────────────────
+    # Wait for attachments table to load
     time.sleep(4)
     try:
         wait.until(
@@ -175,19 +170,19 @@ def download_attachments(driver, wait, event_id):
                 (By.CSS_SELECTOR, '[data-if-label^="ViewAttachmentsTableRow"]')
             )
         )
-        print(f"  [attachments] ✓ Attachments table loaded")
+        print(f"Attachments table loaded")
     except Exception as e:
-        print(f"  [attachments] ✗ Attachments table did not load: {e}")
+        print(f"Attachments table did not load: {e}")
         return
 
-    # ── Step 3: Count buttons ────────────────────────────────────────────────
+    # count total downloads
     download_buttons = driver.find_elements(
         By.CSS_SELECTOR, 'button[data-if-label^="ViewAttachmentsView"]'
     )
     total = len(download_buttons)
-    print(f"  [attachments] ✓ Found {total} attachment(s)")
+    print(f" Found {total} attachment(s)")
 
-    # ── Step 4: Loop — re-fetch each time to avoid stale refs ───────────────
+    # loop — re-fetch each time to avoid stale refs 
     for i in range(total):
         try:
             # Re-fetch fresh every iteration
@@ -251,29 +246,34 @@ def download_attachments(driver, wait, event_id):
 
 
 def main():
-    print("\n" + "=" * 80)
-    print("Tab-Aware Event Scraper (with attachment downloads)")
-    print("=" * 80)
-
+    # make folder for attachment download 
     os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
 
+    # using selenium ; initial options were beautifulsoup and requests-html
+    # possible additions: using scrapy to scale and do asynchronous 
     options = webdriver.ChromeOptions()
-    #options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
+
+    # played with the headless option but was crashing 
+    #options.add_argument('--headless') 
+    #options.add_argument('--no-sandbox')
+    #options.add_argument('--disable-dev-shm-usage')
+
     options.add_argument('--window-size=1920,1080')
 
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 20) # set up watiing timeout for event wait 
 
     all_events = []
 
+
     try:
+        # loads search page 
         print("\n1. Loading search page...")
         driver.get(SEARCH_URL)
         time.sleep(10)
 
+        # use css to find table and get all rows 
         print("\n2. Counting events...")
         all_rows = driver.find_elements(By.CSS_SELECTOR, '[data-if-label^="tblBodyTr"]')
         visible_rows = [
@@ -283,6 +283,7 @@ def main():
         total_events = len(visible_rows)
         print(f"   Found {total_events} events")
 
+        # scraping 
         print("\n3. Scraping events...")
         print("=" * 80)
 
@@ -290,7 +291,8 @@ def main():
             print(f"\nEvent {i + 1}/{total_events}:")
 
             try:
-                # Reload search page fresh each time
+                # Reload search page fresh each time we go back 
+                # otherwise cannot click on link
                 driver.get(SEARCH_URL)
                 time.sleep(10)
 
@@ -300,17 +302,13 @@ def main():
                     if 'if-hide' not in (row.get_attribute('class') or '') and row.is_displayed()
                 ]
 
+                # if refreshing changes # of events somehoe  
                 if i >= len(visible_rows):
-                    print("  ⚠ Row not found, skipping")
                     continue
 
                 row = visible_rows[i]
 
-                try:
-                    event_id_text = row.find_element(By.CSS_SELECTOR, '[data-if-label="tdEventId"]').text.strip()
-                    print(f"  ID: {event_id_text}")
-                except:
-                    event_id_text = f"event_{i + 1}"
+                # find the cell to click 
 
                 original_window = driver.current_window_handle
                 original_windows = driver.window_handles
@@ -318,12 +316,12 @@ def main():
                 print(f"  Clicking...")
                 event_id_cell = row.find_element(By.CSS_SELECTOR, '[data-if-label="tdEventId"]')
                 event_id_cell.click()
-                time.sleep(2)
+                time.sleep(2) # wait for tab to load 
 
                 new_windows = driver.window_handles
 
                 if len(new_windows) > len(original_windows):
-                    print(f"  ✓ New tab opened, switching...")
+                    # find new tab to switch into 
                     new_window = [w for w in new_windows if w not in original_windows][0]
                     driver.switch_to.window(new_window)
 
@@ -331,33 +329,15 @@ def main():
                     event_data = scrape_event_page(driver, wait)
 
                     if event_data['title']:
-                        print(f"  ✓ Title: {event_data['title'][:60]}")
-                    if event_data['contact_email']:
-                        print(f"    Contact: {event_data['contact_email']}")
-                    if event_data['end_date']:
-                        print(f"    End Date: {event_data['end_date']}")
+                        print(f"Title: {event_data['title'][:60]}")
 
                     # ── Download attachments for this event ──────────────
-                    download_attachments(driver, wait, event_data['event_id'] or event_id_text)
+                    download_attachments(driver, wait, event_data['event_id'])
 
                     all_events.append(event_data)
 
                     driver.close()
                     driver.switch_to.window(original_window)
-
-                else:
-                    print(f"  No new tab, scraping current page...")
-                    event_data = scrape_event_page(driver, wait)
-
-                    if event_data['title']:
-                        print(f"  ✓ Title: {event_data['title'][:60]}")
-                    if event_data['contact_email']:
-                        print(f"    Contact: {event_data['contact_email']}")
-
-                    # ── Download attachments for this event ──────────────
-                    download_attachments(driver, wait, event_data['event_id'] or event_id_text)
-
-                    all_events.append(event_data)
 
                 # Save progress every 10 events
                 if len(all_events) % 10 == 0:
@@ -370,17 +350,17 @@ def main():
                     print(f"Progress saved ({len(all_events)} events)")
 
             except KeyboardInterrupt:
-                print("\n\n⚠ Interrupted by user")
+                print("\n\nInterrupted by user")
                 break
             except Exception as e:
-                print(f"  ✗ Error: {e}")
+                print(f"Error: {e}")
                 try:
                     driver.switch_to.window(original_window)
                 except:
                     pass
                 continue
 
-        # ── Final save ───────────────────────────────────────────────────────
+        # final save 
         print("\n" + "=" * 80)
         print(f"Scraping complete! Collected {len(all_events)} events")
 
@@ -405,10 +385,10 @@ def main():
                 }, f, indent=2, ensure_ascii=False)
             print(f"✓ Saved to {OUTPUT_JSON}")
 
-        print("\n✓ All done!")
+        print("\nAll done!")
 
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        print(f"\nError: {e}")
         import traceback
         traceback.print_exc()
 
