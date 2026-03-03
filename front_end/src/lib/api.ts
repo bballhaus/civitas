@@ -134,6 +134,7 @@ export function getEmptyCompanyProfile(): CompanyProfileFromApi {
 }
 
 const CACHED_USER_KEY = "civitas_current_user";
+const CACHED_PROFILE_KEY = "civitas_cached_profile";
 const AUTH_TOKEN_KEY = "civitas_auth_token";
 
 const LOG_PREFIX = "[Civitas]";
@@ -214,20 +215,44 @@ export function clearCachedUser(): void {
   }
 }
 
-/** In-memory profile cache: only refetch from backend when profile is saved or cache is empty. */
+/** Profile cache: in-memory + localStorage for instant loads across refreshes. */
 let profileCache: { userId: number; profile: CompanyProfileFromApi } | null = null;
 
 export function getCachedProfile(userId: number): CompanyProfileFromApi | null {
   if (profileCache && profileCache.userId === userId) return profileCache.profile;
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(CACHED_PROFILE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as { userId?: number; profile?: CompanyProfileFromApi };
+    if (data?.userId === userId && data?.profile) {
+      profileCache = { userId, profile: data.profile };
+      return data.profile;
+    }
+  } catch {
+    // ignore
+  }
   return null;
 }
 
 export function setCachedProfile(userId: number, profile: CompanyProfileFromApi): void {
   profileCache = { userId, profile };
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(CACHED_PROFILE_KEY, JSON.stringify({ userId, profile }));
+  } catch {
+    // ignore
+  }
 }
 
 export function clearProfileCache(): void {
   profileCache = null;
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(CACHED_PROFILE_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 /**
