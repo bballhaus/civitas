@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getAuthToken, uploadContractDocument } from "@/lib/api";
+import { getApiBase, getAuthToken, uploadContractDocument } from "@/lib/api";
 
 interface ExtractedData {
   companyName: string;
@@ -52,7 +52,7 @@ export default function UploadPage() {
     });
 
     try {
-      const response = await fetch("https://civitas-server.onrender.com/api/profile/extract/", {
+      const response = await fetch(`${getApiBase()}/profile/extract/`, {
         method: "POST",
         body: formData,
       });
@@ -89,7 +89,7 @@ export default function UploadPage() {
       // Handle network errors (backend not running, CORS, etc.)
       if (error instanceof TypeError && error.message.includes("fetch")) {
         throw new Error(
-          "Cannot connect to backend server. Please make sure the Django server is running on https://civitas-server.onrender.com"
+          `Cannot connect to backend server. Please make sure the Django server is running at ${getApiBase()}.`
         );
       }
       throw error;
