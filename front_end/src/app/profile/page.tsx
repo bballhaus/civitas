@@ -47,7 +47,6 @@ interface CompanyProfile {
   uploadedFiles?: Array<{
     name: string;
     type: string;
-    size: number;
     uploadedAt: string;
     parsed?: boolean;
     uploadedToBackend?: boolean;
@@ -108,6 +107,7 @@ export default function ProfilePage() {
   const [profileLoadedFromBackend, setProfileLoadedFromBackend] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [dupMessage, setDupMessage] = useState("");
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -536,11 +536,22 @@ export default function ProfilePage() {
   const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || !profile) return;
-    Array.from(files).forEach((file) => {
+    const existingNames = new Set((profile.uploadedFiles ?? []).map((f) => f.name));
+    const newFiles = Array.from(files).filter((f) => {
+      if (existingNames.has(f.name)) return false;
+      existingNames.add(f.name);
+      return true;
+    });
+    const skipped = files.length - newFiles.length;
+    if (skipped > 0) {
+      setDupMessage(`${skipped} duplicate file(s) already uploaded — skipped.`);
+    } else {
+      setDupMessage("");
+    }
+    newFiles.forEach((file) => {
       const fileInfo = {
         name: file.name,
         type: file.type || "application/octet-stream",
-        size: file.size,
         uploadedAt: new Date().toISOString(),
         parsed: false,
       };
@@ -751,7 +762,17 @@ export default function ProfilePage() {
       <h2 className={sectionTitleClass.replace(" mb-4", "")}>{title}</h2>
       {editingSection === sectionId ? (
         <div className="flex items-center gap-2 shrink-0">
-          <button type="button" onClick={() => setEditingSection(null)} className={btnSecondary}>
+          <button type="button" onClick={() => {
+            if (sectionId === "documents") {
+              setProfile((prev) =>
+                prev
+                  ? { ...prev, uploadedFiles: (prev.uploadedFiles ?? []).filter((f) => f.parsed !== false) }
+                  : null
+              );
+              setDupMessage("");
+            }
+            setEditingSection(null);
+          }} className={btnSecondary}>
             Cancel
           </button>
           <button type="button" onClick={saveSection} disabled={sectionSaving} className={btnPrimary + " disabled:opacity-50"}>
@@ -1166,7 +1187,7 @@ export default function ProfilePage() {
                                   <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
                                 )}
                               </div>
-                              <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(2)} KB</p>
+                              <p className="text-xs text-slate-500">{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}</p>
                             </div>
                           </div>
                           <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
@@ -1174,6 +1195,9 @@ export default function ProfilePage() {
                           </button>
                         </div>
                       ))}
+                      {dupMessage && (
+                        <p className="text-sm text-amber-600 mt-2">{dupMessage}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1182,7 +1206,6 @@ export default function ProfilePage() {
                   {profile.uploadedFiles?.map((file, i) => (
                     <li key={i} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                       <span className="text-slate-700 font-medium">{file.name}</span>
-                      <span className="text-slate-500 text-sm">{(file.size / 1024).toFixed(2)} KB</span>
                     </li>
                   ))}
                 </ul>

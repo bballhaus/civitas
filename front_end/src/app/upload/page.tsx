@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getApiBase, getAuthToken, uploadContractDocument } from "@/lib/api";
@@ -31,13 +31,28 @@ export default function UploadPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [dupMessage, setDupMessage] = useState("");
+  const [isLoggedIn, setIsLoggedIn] = useState(true);
+
+  useEffect(() => {
+    setIsLoggedIn(!!getAuthToken());
+  }, []);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files;
     if (!selectedFiles) return;
 
     const fileArray = Array.from(selectedFiles);
-    setFiles((prev) => [...prev, ...fileArray]);
+    setDupMessage("");
+    setFiles((prev) => {
+      const existingNames = new Set(prev.map((f) => f.name));
+      const newFiles = fileArray.filter((f) => !existingNames.has(f.name));
+      const skipped = fileArray.length - newFiles.length;
+      if (skipped > 0) {
+        setDupMessage(`${skipped} duplicate file(s) already uploaded — skipped.`);
+      }
+      return [...prev, ...newFiles];
+    });
   };
 
   const removeFile = (index: number) => {
@@ -124,7 +139,6 @@ export default function UploadPage() {
       const fileInfo = files.map((file) => ({
         name: file.name,
         type: file.type || "application/octet-stream",
-        size: file.size,
         uploadedAt: new Date().toISOString(),
         parsed: true,
       }));
@@ -179,7 +193,7 @@ export default function UploadPage() {
             Our AI will analyze your documents to automatically fill in your
             company profile details.
           </p>
-          {!getAuthToken() && (
+          {!isLoggedIn && (
             <p className="text-amber-700 text-sm mt-2">
               Log in to save documents to your profile (stored in your account so they sync across devices).
             </p>
@@ -255,9 +269,6 @@ export default function UploadPage() {
                       <p className="text-sm font-medium text-slate-900">
                         {file.name}
                       </p>
-                      <p className="text-xs text-slate-500">
-                        {(file.size / 1024).toFixed(2)} KB
-                      </p>
                     </div>
                   </div>
                   {!isProcessing && (
@@ -271,6 +282,9 @@ export default function UploadPage() {
                   )}
                 </div>
               ))}
+              {dupMessage && (
+                <p className="text-sm text-amber-600 mt-2">{dupMessage}</p>
+              )}
             </div>
           )}
 
