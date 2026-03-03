@@ -14,3 +14,5 @@ pdfplumber==0.11.4
 groq==0.10.0
 httpx<0.28
 gunicorn==23.0.0
+selenium==4.41.0
+webdriver-manager==4.0.2
