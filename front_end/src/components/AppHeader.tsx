@@ -41,7 +41,7 @@ export function AppHeader({ rightContent, variant = "default" }: AppHeaderProps)
   return (
     <nav className="sticky top-0 bg-white border-b border-slate-200 z-10 shadow-sm">
       <div className={`${maxWidth} mx-auto px-6 py-4 flex items-center justify-between`}>
-        <Link href="/dashboard" onClick={handleLogoClick} className="flex items-center gap-2">
+        <Link href="/home" onClick={handleLogoClick} className="flex items-center gap-2">
           <img src="/logo.png" alt="Civitas logo" className={logoSize} />
           <span className={`${titleSize} font-bold text-slate-900`}>Civitas</span>
         </Link>
