@@ -980,7 +980,7 @@ export default function DashboardPage() {
     if (cachedUser && cachedProfile && hasEvents) {
       setCurrentUser(cachedUser);
       setProfile(cachedProfile);
-      setRfps(cachedEvents);
+      setRfps(cachedEvents ?? []);
       setProfileLoadDone(true);
       setLoading(false);
       getCurrentUser(false).then((data) => {

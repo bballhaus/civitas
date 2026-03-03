@@ -3,8 +3,6 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
-import { saveAs } from "file-saver";
 import {
   type RFP,
   type RFPMatch,
@@ -95,13 +93,14 @@ export default function RFPDetailPage() {
 
   useEffect(() => {
     if (!rfpData) return;
+    const rfp: RFP = rfpData;
 
     let cancelled = false;
     setSummaryLoading(true);
     setSummaryError(false);
 
-    const match = computeMatch(rfpData, profile);
-    const initialSummary = generateMatchSummary(rfpData, match);
+    const match = computeMatch(rfp, profile);
+    const initialSummary = generateMatchSummary(rfp, match);
 
     async function fetchSummary() {
       try {
@@ -110,15 +109,15 @@ export default function RFPDetailPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             rfp: {
-              title: rfpData.title,
-              agency: rfpData.agency,
-              industry: rfpData.industry,
-              location: rfpData.location,
-              deadline: rfpData.deadline,
-              capabilities: rfpData.capabilities,
-              certifications: rfpData.certifications,
-              contractType: rfpData.contractType,
-              description: (rfpData.description || "").slice(0, 1500),
+              title: rfp.title,
+              agency: rfp.agency,
+              industry: rfp.industry,
+              location: rfp.location,
+              deadline: rfp.deadline,
+              capabilities: rfp.capabilities,
+              certifications: rfp.certifications,
+              contractType: rfp.contractType,
+              description: (rfp.description || "").slice(0, 1500),
             },
             profile: profile
               ? {
@@ -133,6 +132,8 @@ export default function RFPDetailPage() {
                 }
               : null,
             currentSummary: initialSummary,
+            positiveReasons: match.positiveReasons,
+            negativeReasons: match.negativeReasons,
           }),
         });
         if (cancelled) return;
@@ -148,7 +149,7 @@ export default function RFPDetailPage() {
         console.error("[match-summary] Fetch failed:", err);
         if (!cancelled) {
           setSummaryError(true);
-          setSummary(generateMatchSummary(rfpData, match));
+          setSummary(generateMatchSummary(rfp, match));
         }
       } finally {
         if (!cancelled) setSummaryLoading(false);
@@ -162,8 +163,8 @@ export default function RFPDetailPage() {
   }, [rfpData?.id, profile]);
 
   useEffect(() => {
-    const rfp = rfpData;
-    if (!rfp?.description?.trim()) return;
+    if (!rfpData || !rfpData.description?.trim()) return;
+    const rfp: RFP = rfpData;
 
     let cancelled = false;
     setRequirementsSummaryLoading(true);
@@ -186,6 +187,7 @@ export default function RFPDetailPage() {
               certifications: rfp.certifications,
               estimatedValue: rfp.estimatedValue,
               description: rfp.description,
+              attachmentRollup: (rfp as any).attachmentRollup ?? null,
             },
           }),
         });
@@ -206,7 +208,9 @@ export default function RFPDetailPage() {
     }
 
     fetchRequirementsSummary();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [rfpData?.id]);
 
   const downloadAsDocx = async (
@@ -214,8 +218,10 @@ export default function RFPDetailPage() {
     title: string,
     filename: string
   ) => {
+    const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import("docx");
+    const { saveAs } = await import("file-saver");
     const lines = content.split(/\n/);
-    const children: (Paragraph)[] = [];
+    const children = [];
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) {
@@ -509,7 +515,7 @@ export default function RFPDetailPage() {
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
-                onClick={handleGenerateProposal}
+                onClick={() => handleGenerateProposal()}
                 disabled={proposalLoading}
                 className="inline-flex items-center justify-center gap-2 min-w-[240px] px-6 py-3 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
               >
@@ -532,7 +538,7 @@ export default function RFPDetailPage() {
               </button>
               <button
                 type="button"
-                onClick={handleGeneratePlanOfExecution}
+                onClick={() => handleGeneratePlanOfExecution()}
                 disabled={planLoading}
                 className="inline-flex items-center justify-center gap-2 min-w-[260px] px-6 py-3 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
               >
