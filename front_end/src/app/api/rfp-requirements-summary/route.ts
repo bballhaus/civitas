@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 
-const PROMPT = `You are an expert government contracting consultant. Given the full text of an RFP (Request for Proposal) description, produce a clear, structured summary of the contract's requirements.
+const PROMPT = `You are an expert government contracting consultant. Given the full text of an RFP (Request for Proposal) description and any pre-extracted key requirements from attachments, produce a clear, structured summary of the contract's requirements.
 
 You will be given:
 1) RFP title, agency, and other metadata
 2) The full RFP description text
+3) Optionally, an attachmentRollup object containing about-RFP summary text, key requirement bullets, and combined constraints extracted from attachments
 
 Your task: Write a concise summary (approximately 150–250 words) that captures:
 - **Scope & deliverables** – What the contractor must deliver
@@ -46,6 +47,7 @@ export async function POST(req: Request) {
     }
 
     const description = (rfp.description as string) || "";
+    const attachmentRollup = (rfp as any).attachmentRollup;
     if (!description.trim()) {
       return NextResponse.json(
         { error: "RFP description is required" },
@@ -67,6 +69,9 @@ Estimated value: ${rfp.estimatedValue ?? "N/A"}
 
 Full description:
 ${description.slice(0, 6000)}
+
+Attachment-derived summary and constraints (if any):
+${attachmentRollup ? JSON.stringify(attachmentRollup).slice(0, 2000) : "None provided"}
 
 Summarize the contract requirements:`;
 

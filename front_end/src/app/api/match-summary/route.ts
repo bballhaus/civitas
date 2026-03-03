@@ -7,8 +7,10 @@ Given:
 1) The RFP details (title, agency, industry, capabilities, location, deadline, description snippet)
 2) The company's full profile (industries, capabilities, certifications, locations, agency experience, contract types)
 3) A rule-based match summary that lists reasons like "the deadline is still open", "industry aligns", "capabilities align: X"
+4) Optional lists of positive and negative match reasons
+5) Optional attachment-derived key requirements and constraints (e.g., certifications, clearances, set-asides, geography)
 
-Your task: Write a short, natural 1-3 sentence summary explaining why this RFP is a good match. Use the rule-based summary as a starting point but make it more personalized and readable. Reference specific overlaps. Keep it conversational and under 80 words. No bullet points.`;
+Your task: Write a short, natural 1-3 sentence summary explaining why this RFP is a good match (or why it might not be). Use the rule-based summary and reason lists as a starting point but make it more personalized and readable. When attachment-derived requirements are provided, explicitly mention important constraints (like certifications, clearances, set-asides, or geography) and whether the company appears to meet them. Reference specific overlaps. Keep it conversational and under 80 words. No bullet points.`;
 
 export async function POST(req: Request) {
   try {
@@ -26,10 +28,14 @@ export async function POST(req: Request) {
       rfp,
       profile,
       currentSummary,
+      positiveReasons,
+      negativeReasons,
     }: {
       rfp: Record<string, unknown>;
       profile: Record<string, unknown> | null;
       currentSummary: string;
+      positiveReasons?: string[];
+      negativeReasons?: string[];
     } = body;
 
     if (!rfp || !currentSummary) {
@@ -42,7 +48,13 @@ export async function POST(req: Request) {
     const client = new Groq({ apiKey });
     const input = `RFP: ${JSON.stringify(rfp)}
 Profile: ${profile ? JSON.stringify(profile) : "No profile"}
-Rule-based summary: ${currentSummary}`;
+Rule-based summary: ${currentSummary}
+Positive reasons: ${
+      Array.isArray(positiveReasons) ? JSON.stringify(positiveReasons) : "[]"
+    }
+Negative reasons: ${
+      Array.isArray(negativeReasons) ? JSON.stringify(negativeReasons) : "[]"
+    }`;
 
     const completion = await client.chat.completions.create({
       model: "llama-3.1-8b-instant",
