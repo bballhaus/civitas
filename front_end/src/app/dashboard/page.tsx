@@ -23,6 +23,15 @@ import {
   mapBackendProfileToCompanyProfile,
   getEmptyCompanyProfile,
 } from "@/lib/api";
+import {
+  type RFP as RFPType,
+  type RFPMatch as RFPMatchType,
+  type CompanyProfile as CompanyProfileType,
+  type ScoreBreakdown,
+  computeMatch as computeMatchLib,
+  generateMatchSummary as generateMatchSummaryLib,
+  parseDeadline as parseDeadlineLib,
+} from "@/lib/rfp-matching";
 
 // Filter options - same as profile-setup page
 const FILTER_OPTIONS = {
@@ -161,46 +170,10 @@ function deriveFilterOptionsFromRfps(rfps: RFP[]): Record<keyof RFPFilters, stri
   };
 }
 
-interface CompanyProfile {
-  companyName: string;
-  industry: string[];
-  sizeStatus: string[];
-  certifications: string[];
-  clearances: string[];
-  naicsCodes: string[];
-  workCities: string[];
-  workCounties: string[];
-  capabilities: string[];
-  agencyExperience: string[];
-  contractTypes: string[];
-}
-
-interface RFP {
-  id: string;
-  title: string;
-  agency: string;
-  location: string;
-  deadline: string;
-  estimatedValue: string;
-  industry: string;
-  naicsCodes: string[];
-  capabilities: string[];
-  certifications: string[];
-  contractType: string;
-  description: string;
-  eventUrl?: string;
-  contactName?: string;
-  contactEmail?: string;
-  contactPhone?: string;
-}
-
-interface RFPMatch {
-  score: number;
-  reasons: string[];
-  positiveReasons: string[];
-  negativeReasons: string[];
-}
-
+// Use the shared types from rfp-matching.ts
+type CompanyProfile = CompanyProfileType;
+type RFP = RFPType;
+type RFPMatch = RFPMatchType;
 type RFPWithMatch = RFP & { match: RFPMatch };
 
 const FALLBACK_RFPS: RFP[] = [
@@ -233,83 +206,8 @@ function saveSet(key: string, set: Set<string>) {
   localStorage.setItem(key, JSON.stringify([...set]));
 }
 
-function parseDeadline(deadline: string): Date | null {
-  const normalized = deadline?.trim();
-  if (!normalized || normalized.toUpperCase() === "TBD") return null;
-
-  const direct = Date.parse(normalized);
-  if (!Number.isNaN(direct)) return new Date(direct);
-
-  const cleaned = normalized
-    .replace(/\b(PST|PDT)\b/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const m = cleaned.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(AM|PM)$/i
-  );
-  if (!m) return null;
-
-  const mm = Number(m[1]);
-  const dd = Number(m[2]);
-  const yyyy = Number(m[3]);
-  let hh = Number(m[4]);
-  const min = Number(m[5]);
-  const ampm = m[6].toUpperCase();
-
-  if (ampm === "PM" && hh !== 12) hh += 12;
-  if (ampm === "AM" && hh === 12) hh = 0;
-
-  return new Date(yyyy, mm - 1, dd, hh, min, 0);
-}
-
-function clamp(n: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, n));
-}
-
-function normalizeText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function tokenize(value: string): string[] {
-  const normalized = normalizeText(value);
-  if (!normalized) return [];
-  return normalized.split(" ").filter((token) => token.length > 2);
-}
-
-function toTokenSet(values: string[]): Set<string> {
-  const tokens = values.flatMap((value) => tokenize(value));
-  return new Set(tokens);
-}
-
-function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 && b.size === 0) return 0;
-  let intersection = 0;
-  for (const item of a) if (b.has(item)) intersection += 1;
-  const union = a.size + b.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
-
-function countNaicsOverlap(rfpCodes: string[], profileCodes: string[]): string[] {
-  if (rfpCodes.length === 0 || profileCodes.length === 0) return [];
-  const normalizedProfile = profileCodes.map((code) => code.trim());
-  return rfpCodes.filter((code) =>
-    normalizedProfile.some((profileCode) =>
-      profileCode === code || profileCode.startsWith(code) || code.startsWith(profileCode)
-    )
-  );
-}
-
-function findTokenOverlap(values: string[], profileTokens: Set<string>): string[] {
-  return values.filter((value) => {
-    const tokens = tokenize(value);
-    return tokens.some((token) => profileTokens.has(token));
-  });
-}
+// Use parseDeadline from rfp-matching.ts
+const parseDeadline = parseDeadlineLib;
 
 function getDeadlineStatus(deadline: string): "Still open" | "Deadline passed" | "Unknown/TBD" {
   const due = parseDeadline(deadline);
@@ -411,189 +309,42 @@ function countActiveFilters(f: RFPFilters): number {
   );
 }
 
-function scoreFromSimilarity(sim: number, maxPoints: number) {
-  const s = clamp(sim, 0, 1);
-  return maxPoints * (0.15 + 0.85 * s);
-}
+// Use shared matching functions from rfp-matching.ts
+const computeMatch = computeMatchLib;
+const generateMatchSummary = generateMatchSummaryLib;
 
-function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch {
-  const positiveReasons: string[] = [];
-  const negativeReasons: string[] = [];
-  let score = 40;
-
-  if (!profile) {
-    return {
-      score: 50,
-      reasons: ["Complete your profile for personalized match scores"],
-      positiveReasons: [],
-      negativeReasons: [],
-    };
+function MatchBadge({ score, tier, disqualified }: { score: number; tier?: RFPMatch["tier"]; disqualified?: boolean }) {
+  if (disqualified) {
+    return (
+      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold bg-red-100 text-red-700">
+        <span className="mr-1">✗</span>
+        Not Eligible
+      </span>
+    );
   }
 
-  const profileIndustryTokens = toTokenSet(profile.industry ?? []);
-  const profileNaics = profile.naicsCodes ?? [];
-  const profileCapsTokens = toTokenSet(profile.capabilities ?? []);
-  const profileCertTokens = toTokenSet(profile.certifications ?? []);
-  const profileAgencyTokens = toTokenSet(profile.agencyExperience ?? []);
-  const profileContractTokens = toTokenSet(profile.contractTypes ?? []);
-  const profileLocationTokens = toTokenSet([...(profile.workCities ?? []), ...(profile.workCounties ?? [])]);
+  const t = tier ?? (score >= 75 ? "excellent" : score >= 55 ? "strong" : score >= 35 ? "moderate" : "low");
 
-  const rfpIndustryTokens = toTokenSet([rfp.industry ?? ""]);
-  const rfpCapTokens = toTokenSet(rfp.capabilities ?? []);
-  const rfpAgencyTokens = toTokenSet([rfp.agency ?? ""]);
-  const rfpContractTokens = toTokenSet([rfp.contractType ?? ""]);
-  const rfpLocationTokens = toTokenSet([rfp.location ?? ""]);
-  const rfpDescTokens = toTokenSet([rfp.description ?? "", rfp.title ?? ""]);
+  const styles = {
+    excellent: "bg-emerald-500 text-white",
+    strong: "bg-blue-500 text-white",
+    moderate: "bg-amber-400 text-amber-900",
+    low: "bg-slate-200 text-slate-600",
+    disqualified: "bg-red-100 text-red-700",
+  };
 
-  const due = parseDeadline(rfp.deadline);
-  if (due) {
-    const now = new Date();
-    if (now > due) {
-      score = 5;
-      negativeReasons.push("Deadline has passed.");
-      const reasons = [
-        ...positiveReasons.map((r) => `✓ ${r}`),
-        ...negativeReasons.map((r) => `✗ ${r}`),
-      ];
-      return { score, reasons, positiveReasons, negativeReasons };
-    }
-    positiveReasons.push("Deadline is still open.");
-    score += 6;
-  } else if (rfp.deadline?.toUpperCase() !== "TBD") {
-    negativeReasons.push("Could not parse deadline.");
-  }
-
-  const certOverlap = findTokenOverlap(rfp.certifications ?? [], profileCertTokens);
-  if ((rfp.certifications ?? []).length > 0) {
-    if (certOverlap.length === 0) {
-      score -= 18;
-      negativeReasons.push("RFP lists certifications you may not have.");
-    } else {
-      score += 10;
-      positiveReasons.push(`Certification overlap: ${certOverlap.slice(0, 2).join(", ")}`);
-    }
-  }
-
-  const locationSimilarity = jaccardSimilarity(rfpLocationTokens, profileLocationTokens);
-  if ((rfp.location ?? "").trim().length > 0) {
-    if (locationSimilarity === 0 && profileLocationTokens.size > 0) {
-      score -= 12;
-      negativeReasons.push("Location may be outside your service area.");
-    } else if (locationSimilarity > 0) {
-      score += 8;
-      positiveReasons.push("Location aligns with your service area.");
-    }
-  }
-
-  const industrySimilarity = jaccardSimilarity(rfpIndustryTokens, profileIndustryTokens);
-  if (industrySimilarity > 0) {
-    score += scoreFromSimilarity(industrySimilarity, 18);
-    positiveReasons.push("Industry aligns with your profile.");
-  } else if ((rfp.industry ?? "").trim()) {
-    score -= 6;
-    negativeReasons.push(`Industry (${rfp.industry}) not reflected in your profile.`);
-  }
-
-  const naicsOverlap = countNaicsOverlap(rfp.naicsCodes ?? [], profileNaics);
-  if ((rfp.naicsCodes ?? []).length > 0) {
-    if (naicsOverlap.length > 0) {
-      const ratio = naicsOverlap.length / Math.max(1, rfp.naicsCodes.length);
-      score += 16 * ratio;
-      positiveReasons.push(`NAICS overlap: ${naicsOverlap.slice(0, 3).join(", ")}`);
-    } else {
-      score -= 6;
-      negativeReasons.push("No NAICS overlap.");
-    }
-  }
-
-  const capSimilarity = jaccardSimilarity(rfpCapTokens, profileCapsTokens);
-  const capOverlap = findTokenOverlap(rfp.capabilities ?? [], profileCapsTokens);
-  if ((rfp.capabilities ?? []).length > 0) {
-    if (capSimilarity > 0 || capOverlap.length > 0) {
-      score += scoreFromSimilarity(clamp(capSimilarity + capOverlap.length * 0.05, 0, 1), 26);
-      positiveReasons.push(
-        capOverlap.length > 0
-          ? `Capabilities align: ${capOverlap.slice(0, 3).join(", ")}`
-          : "Capabilities align with your profile."
-      );
-    } else {
-      score -= 8;
-      negativeReasons.push("Limited capability overlap.");
-    }
-  }
-
-  const profileTextTokens = new Set<string>([
-    ...profileIndustryTokens,
-    ...profileCapsTokens,
-    ...profileCertTokens,
-    ...profileAgencyTokens,
-  ]);
-  const descSimilarity = jaccardSimilarity(rfpDescTokens, profileTextTokens);
-  if (descSimilarity > 0.05) {
-    score += scoreFromSimilarity(descSimilarity, 12);
-    positiveReasons.push("Description language matches your profile keywords.");
-  }
-
-  const agencySimilarity = jaccardSimilarity(rfpAgencyTokens, profileAgencyTokens);
-  if (agencySimilarity > 0) {
-    score += scoreFromSimilarity(agencySimilarity, 8);
-    positiveReasons.push("You have experience with this agency.");
-  }
-
-  const contractSimilarity = jaccardSimilarity(rfpContractTokens, profileContractTokens);
-  if (contractSimilarity > 0) {
-    score += scoreFromSimilarity(contractSimilarity, 5);
-    positiveReasons.push("Contract type matches your preferences.");
-  }
-
-  score = clamp(score, 5, 98);
-  score = Math.round(score);
-
-  const reasons = [
-    ...positiveReasons.slice(0, 3).map((r) => `✓ ${r}`),
-    ...negativeReasons.slice(0, 3).map((r) => `✗ ${r}`),
-  ];
-
-  return { score, reasons, positiveReasons, negativeReasons };
-}
-
-function generateMatchSummary(_rfp: RFP, match: RFPMatch): string {
-  const { positiveReasons, negativeReasons, score } = match;
-  if (score >= 75 && positiveReasons.length > 0) {
-    const topReasons = positiveReasons.slice(0, 3);
-    const first = topReasons[0].charAt(0).toLowerCase() + topReasons[0].slice(1);
-    const rest = topReasons.slice(1).map((r) => r.toLowerCase()).join(". ");
-    return `This RFP is a strong fit for you. ${first}. ${rest}. Worth a close look.`;
-  }
-  if (score >= 55 && positiveReasons.length > 0) {
-    const top = positiveReasons[0].toLowerCase();
-    const extra = positiveReasons.length > 1 ? ` Also: ${positiveReasons.slice(1, 2).join(", ").toLowerCase()}.` : ".";
-    return `This opportunity has potential: ${top}${extra}`;
-  }
-  if (positiveReasons.length > 0) {
-    const align = positiveReasons[0].toLowerCase();
-    const hint = negativeReasons.length > 0 ? " Consider updating your profile to improve future matches." : "";
-    return `Some alignment: ${align}.${hint}`;
-  }
-  return "Complete your profile for personalized match insights.";
-}
-
-function MatchBadge({ score }: { score: number }) {
-  const isHigh = score >= 75;
-  const isMedium = score >= 55 && score < 75;
+  const labels = {
+    excellent: "Excellent",
+    strong: "Strong",
+    moderate: "Moderate",
+    low: "Low",
+    disqualified: "Not Eligible",
+  };
 
   return (
-    <span
-      className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold ${
-        isHigh
-          ? "bg-emerald-500 text-white"
-          : isMedium
-          ? "bg-amber-400 text-amber-900"
-          : "bg-slate-200 text-slate-600"
-      }`}
-    >
-      {isHigh && <span className="mr-1">★</span>}
-      {score}% match
+    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold ${styles[t]}`}>
+      {t === "excellent" && <span className="mr-1">★</span>}
+      {score}% · {labels[t]}
     </span>
   );
 }
@@ -1302,7 +1053,6 @@ export default function DashboardPage() {
             {displayedRfps.map((rfp) => {
               const { match } = rfp;
               const isSelected = rfp.id === selectedId;
-              const isHighMatch = match.score >= 75;
               const isSaved = savedRfpIds.has(rfp.id);
               const reasonSnippet = generateMatchSummary(rfp, match);
 
@@ -1311,8 +1061,8 @@ export default function DashboardPage() {
                   key={rfp.id}
                   href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
                   className={`block w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md ${
-                    isSelected ? "border-[#2563eb] shadow-md" : "border-transparent hover:border-slate-200"
-                  }`}
+                    match.disqualified ? "opacity-60 " : ""
+                  }${isSelected ? "border-[#2563eb] shadow-md" : "border-transparent hover:border-slate-200"}`}
                 >
                   <p className="text-sm font-bold text-slate-800 mb-0.5">{rfp.agency}</p>
                   <p className="text-xs text-slate-500 mb-2">{rfp.industry}</p>
@@ -1332,9 +1082,19 @@ export default function DashboardPage() {
                     <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-amber-50 text-amber-600">
                       {rfp.capabilities[0] || rfp.contractType || "Contract"}
                     </span>
-                    {isHighMatch && (
+                    {match.tier === "excellent" && (
                       <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
-                        <span className="text-emerald-500">✓</span> High Match
+                        <span className="text-emerald-500">★</span> Excellent Match
+                      </span>
+                    )}
+                    {match.tier === "strong" && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700">
+                        Strong Match
+                      </span>
+                    )}
+                    {match.disqualified && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-red-50 text-red-600">
+                        <span className="text-red-500">✗</span> Not Eligible
                       </span>
                     )}
                     {isSaved && (
@@ -1347,7 +1107,7 @@ export default function DashboardPage() {
                     )}
                   </div>
                   <div className="flex items-center justify-between">
-                    <MatchBadge score={match.score} />
+                    <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
                   </div>
                   {reasonSnippet && (
                     <p className="text-xs text-slate-500 mt-2 line-clamp-2">
@@ -1410,7 +1170,7 @@ function RFPDetailPanel({
   rfp: RFPWithMatch;
   profile: CompanyProfile | null;
   generateSummary: (rfp: RFP, match: RFPMatch) => string;
-  MatchBadge: React.ComponentType<{ score: number }>;
+  MatchBadge: React.ComponentType<{ score: number; tier?: RFPMatch["tier"]; disqualified?: boolean }>;
   isSaved: boolean;
   hasExpressedInterest: boolean;
   onSave: () => void;
@@ -1420,7 +1180,7 @@ function RFPDetailPanel({
   onSummaryReady: (rfpId: string, summary: string) => void;
 }) {
   const { match } = rfp;
-  const isHighMatch = match.score >= 75;
+  const isHighMatch = match.tier === "excellent" || match.tier === "strong";
   const initialSummary = generateSummary(rfp, match);
   const [llmSummary, setLlmSummary] = useState<string | null>(cachedSummary ?? null);
   const [summaryError, setSummaryError] = useState(false);
@@ -1467,6 +1227,12 @@ function RFPDetailPanel({
               contractTypes: profile.contractTypes,
             } : null,
             currentSummary: initialSummary,
+            positiveReasons: match.positiveReasons,
+            negativeReasons: match.negativeReasons,
+            disqualifiers: match.disqualifiers,
+            breakdown: match.breakdown,
+            score: match.score,
+            tier: match.tier,
           }),
         });
         if (cancelled) return;
@@ -1606,9 +1372,10 @@ function RFPDetailPanel({
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-amber-50 text-amber-600">
               {rfp.capabilities[0] || rfp.contractType || "Contract"}
             </span>
-            {isHighMatch && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-50 text-emerald-600">
-                <span className="text-emerald-500">✓</span> High Success Rate
+            <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
+            {match.disqualified && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-red-50 text-red-600">
+                <span className="text-red-500">✗</span> Not Eligible
               </span>
             )}
           </div>
@@ -1658,30 +1425,41 @@ function RFPDetailPanel({
           </div>
         </div>
 
+        {/* Disqualifier banner */}
+        {match.disqualified && match.disqualifiers.length > 0 && (
+          <div className="px-6 md:px-8 py-4 border-t border-red-100 bg-red-50">
+            <h4 className="text-sm font-bold text-red-800 mb-2">Not Eligible</h4>
+            <ul className="space-y-1">
+              {match.disqualifiers.map((d, i) => (
+                <li key={i} className="text-sm text-red-700 flex items-start gap-2">
+                  <span className="text-red-500 shrink-0 mt-0.5">✗</span>
+                  {d}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Quick indicators */}
-        {isHighMatch && (
+        {isHighMatch && !match.disqualified && (
           <div className="px-6 md:px-8 py-4 flex flex-wrap gap-2 border-t border-slate-100">
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-violet-50 text-violet-600">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              Responds Quickly
-            </span>
             <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-600">
-              <span className="text-emerald-500">✓</span> High Success Rate
+              <span className="text-emerald-500">★</span> {match.tier === "excellent" ? "Excellent" : "Strong"} Match
             </span>
           </div>
         )}
 
-        {/* AI-generated match summary - RippleMatch style */}
+        {/* AI-generated match summary */}
         <div className="p-6 md:p-8 border-t border-slate-100">
-          <div className="rounded-xl border-2 border-blue-200 bg-white p-5">
+          <div className={`rounded-xl border-2 ${match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
             <div className="flex items-start justify-between gap-2 mb-3">
-              <h4 className="text-sm font-bold text-slate-900">Why this is a good match</h4>
+              <h4 className="text-sm font-bold text-slate-900">
+                {match.disqualified ? "Match Analysis" : "Why this is a good match"}
+              </h4>
               {isLoadingSummary ? (
                 <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
               ) : (
-                <svg className="w-5 h-5 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className={`w-5 h-5 ${match.disqualified ? "text-red-400" : "text-blue-500"} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               )}
@@ -1692,6 +1470,48 @@ function RFPDetailPanel({
             )}
           </div>
         </div>
+
+        {/* Score Breakdown */}
+        {match.breakdown.length > 0 && !match.disqualified && (
+          <div className="p-6 md:p-8 border-t border-slate-100">
+            <h4 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h4>
+            <div className="space-y-2">
+              {match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
+                const pct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                const barColor =
+                  b.status === "strong" ? "bg-emerald-500" :
+                  b.status === "partial" ? "bg-blue-400" :
+                  b.status === "weak" ? "bg-amber-400" :
+                  b.status === "missing" ? "bg-red-300" :
+                  "bg-slate-200";
+                const textColor =
+                  b.status === "strong" ? "text-emerald-700" :
+                  b.status === "partial" ? "text-blue-700" :
+                  b.status === "weak" ? "text-amber-700" :
+                  b.status === "missing" ? "text-red-600" :
+                  "text-slate-500";
+
+                return (
+                  <div key={i} className="flex items-center gap-3">
+                    <span className="text-xs font-medium text-slate-700 w-28 shrink-0 truncate" title={b.category}>{b.category}</span>
+                    {b.maxPoints > 0 ? (
+                      <>
+                        <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className={`text-xs font-bold w-12 text-right shrink-0 ${textColor}`}>
+                          {b.points}/{b.maxPoints}
+                        </span>
+                      </>
+                    ) : (
+                      <span className={`text-xs ${textColor} flex-1`}>{b.detail}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* About this RFP - AI summary of contract requirements */}
         <div className="p-6 md:p-8 border-t border-slate-100">

@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 
-const PROMPT = `You are helping a vendor/contractor understand why an RFP (Request for Proposal) is a good match for their company.
+const PROMPT = `You are helping a vendor/contractor understand why an RFP (Request for Proposal) is or isn't a good match for their company.
 
 Given:
 1) The RFP details (title, agency, industry, capabilities, location, deadline, description snippet)
 2) The company's full profile (industries, capabilities, certifications, locations, agency experience, contract types)
-3) A rule-based match summary that lists reasons like "the deadline is still open", "industry aligns", "capabilities align: X"
-4) Optional lists of positive and negative match reasons
-5) Optional attachment-derived key requirements and constraints (e.g., certifications, clearances, set-asides, geography)
+3) A rule-based match summary with score, tier, and reasons
+4) A per-category score breakdown showing how points were earned
+5) Any disqualifiers (hard blockers like expired deadlines or missing clearances)
 
-Your task: Write a short, natural 1-3 sentence summary explaining why this RFP is a good match (or why it might not be). Use the rule-based summary and reason lists as a starting point but make it more personalized and readable. When attachment-derived requirements are provided, explicitly mention important constraints (like certifications, clearances, set-asides, or geography) and whether the company appears to meet them. Reference specific overlaps. Keep it conversational and under 80 words. No bullet points.`;
+Your task: Write a short, natural 2-4 sentence summary explaining why this RFP is a good match (or why it isn't). Reference specific overlaps or gaps from the breakdown. If disqualified, explain clearly why. If a strong match, highlight the top strengths. If weak, suggest what profile updates might help. Keep it conversational and under 100 words. No bullet points.`;
 
 export async function POST(req: Request) {
   try {
@@ -30,12 +30,20 @@ export async function POST(req: Request) {
       currentSummary,
       positiveReasons,
       negativeReasons,
+      disqualifiers,
+      breakdown,
+      score,
+      tier,
     }: {
       rfp: Record<string, unknown>;
       profile: Record<string, unknown> | null;
       currentSummary: string;
       positiveReasons?: string[];
       negativeReasons?: string[];
+      disqualifiers?: string[];
+      breakdown?: Array<{ category: string; points: number; maxPoints: number; status: string; detail: string }>;
+      score?: number;
+      tier?: string;
     } = body;
 
     if (!rfp || !currentSummary) {
@@ -48,13 +56,12 @@ export async function POST(req: Request) {
     const client = new Groq({ apiKey });
     const input = `RFP: ${JSON.stringify(rfp)}
 Profile: ${profile ? JSON.stringify(profile) : "No profile"}
+Score: ${score ?? "unknown"}/100 (Tier: ${tier ?? "unknown"})
 Rule-based summary: ${currentSummary}
-Positive reasons: ${
-      Array.isArray(positiveReasons) ? JSON.stringify(positiveReasons) : "[]"
-    }
-Negative reasons: ${
-      Array.isArray(negativeReasons) ? JSON.stringify(negativeReasons) : "[]"
-    }`;
+Positive reasons: ${JSON.stringify(positiveReasons ?? [])}
+Negative reasons: ${JSON.stringify(negativeReasons ?? [])}
+Disqualifiers: ${JSON.stringify(disqualifiers ?? [])}
+Score breakdown: ${JSON.stringify(breakdown ?? [])}`;
 
     const completion = await client.chat.completions.create({
       model: "llama-3.1-8b-instant",
@@ -63,7 +70,7 @@ Negative reasons: ${
         { role: "user", content: input },
       ],
       temperature: 0.3,
-      max_tokens: 150,
+      max_tokens: 200,
     });
 
     const summary =
