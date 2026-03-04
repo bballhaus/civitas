@@ -645,11 +645,13 @@ export function generateMatchSummary(_rfp: RFP, match: RFPMatch): string {
     const hint = negativeReasons.length > 0
       ? " Consider updating your profile to improve match accuracy."
       : "";
-    return `Some alignment: ${align.charAt(0).toLowerCase() + align.slice(1)}.${hint}`;
+    const alignText = align.replace(/\.$/, "");
+    return `Some alignment: ${alignText.charAt(0).toLowerCase() + alignText.slice(1)}.${hint}`;
   }
 
   if (score > 0 && positiveReasons.length > 0) {
-    return `Limited alignment. ${positiveReasons[0]}`;
+    const reason = positiveReasons[0].replace(/\.$/, "");
+    return `Limited alignment: ${reason.charAt(0).toLowerCase() + reason.slice(1)}. Consider updating your profile to improve future matches.`;
   }
 
   return "Complete your profile for personalized match insights.";
