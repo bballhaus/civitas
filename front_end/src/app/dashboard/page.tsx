@@ -1095,11 +1095,6 @@ export default function DashboardPage() {
                         Strong Match
                       </span>
                     )}
-                    {match.disqualified && (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-red-50 text-red-600">
-                        <span className="text-red-500">✗</span> Not Eligible
-                      </span>
-                    )}
                     {isSaved && (
                       <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
                         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
@@ -1352,11 +1347,6 @@ function RFPDetailPanel({
               {rfp.capabilities[0] || rfp.contractType || "Contract"}
             </span>
             <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
-            {match.disqualified && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-red-50 text-red-600">
-                <span className="text-red-500">✗</span> Not Eligible
-              </span>
-            )}
           </div>
 
           {/* Key details with icons */}

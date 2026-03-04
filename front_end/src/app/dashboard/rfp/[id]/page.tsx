@@ -521,117 +521,6 @@ export default function RFPDetailPage() {
             </div>
           )}
 
-          {/* Groq-generated summary */}
-          <div className="p-6 md:p-8 border-b border-slate-100">
-            <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <h2 className="text-sm font-bold text-slate-900">
-                  {rfp.match.disqualified ? "Match Analysis" : "Why this is a good match"}
-                </h2>
-                {summaryLoading ? (
-                  <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
-                ) : (
-                  <svg className={`w-5 h-5 ${rfp.match.disqualified ? "text-red-400" : "text-blue-500"} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-              </div>
-              <p className="text-slate-700 leading-relaxed">{displaySummary}</p>
-              {summaryError && (
-                <p className="mt-2 text-xs text-amber-600">
-                  AI summary unavailable. Showing rule-based summary.
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Score Breakdown */}
-          {rfp.match.breakdown.length > 0 && !rfp.match.disqualified && (
-            <div className="p-6 md:p-8 border-b border-slate-100">
-              <h2 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h2>
-              <div className="space-y-3">
-                {rfp.match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
-                  const pct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
-                  const barColor =
-                    b.status === "strong" ? "bg-emerald-500" :
-                    b.status === "partial" ? "bg-blue-400" :
-                    b.status === "weak" ? "bg-amber-400" :
-                    b.status === "missing" ? "bg-red-300" :
-                    "bg-slate-200";
-                  const textColor =
-                    b.status === "strong" ? "text-emerald-700" :
-                    b.status === "partial" ? "text-blue-700" :
-                    b.status === "weak" ? "text-amber-700" :
-                    b.status === "missing" ? "text-red-600" :
-                    "text-slate-500";
-
-                  return (
-                    <div key={i}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-slate-700">{b.category}</span>
-                        {b.maxPoints > 0 && (
-                          <span className={`text-xs font-bold ${textColor}`}>{b.points}/{b.maxPoints}</span>
-                        )}
-                      </div>
-                      {b.maxPoints > 0 ? (
-                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
-                        </div>
-                      ) : (
-                        <p className={`text-xs ${textColor}`}>{b.detail}</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* About this RFP - AI summary of contract requirements */}
-          <div className="p-6 md:p-8 border-b border-slate-100">
-            <h2 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h2>
-            {requirementsSummaryLoading ? (
-              <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
-            ) : requirementsSummary ? (
-              <MarkdownContent content={requirementsSummary} />
-            ) : (
-              <p className="text-slate-700 leading-relaxed">{rfp.description}</p>
-            )}
-            {requirementsSummaryError && (
-              <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
-            )}
-          </div>
-
-          {/* Details & link */}
-          <div className="p-6 md:p-8 border-b border-slate-100">
-            <h2 className="text-sm font-bold text-slate-900 mb-3">Details</h2>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {rfp.naicsCodes?.map((n) => (
-                <span key={n} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600">
-                  NAICS {n}
-                </span>
-              ))}
-              {rfp.capabilities?.map((c) => (
-                <span key={c} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-600">
-                  {c}
-                </span>
-              ))}
-            </div>
-            {rfp.eventUrl && (
-              <a
-                href={rfp.eventUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 text-sm font-medium text-[#2563eb] hover:underline"
-              >
-                View on Cal eProcure
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </a>
-            )}
-          </div>
-
           {/* Generate Proposal & Plan */}
           <div className="p-6 md:p-8 border-b border-slate-100 space-y-3">
             <h2 className="text-sm font-bold text-slate-900 mb-4">Generate Proposal &amp; Plan</h2>
@@ -834,6 +723,117 @@ export default function RFPDetailPage() {
                   </div>
                 )}
               </div>
+            )}
+          </div>
+
+          {/* Groq-generated summary */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
+              <div className="flex items-start justify-between gap-2 mb-3">
+                <h2 className="text-sm font-bold text-slate-900">
+                  {rfp.match.disqualified ? "Match Analysis" : "Why this is a good match"}
+                </h2>
+                {summaryLoading ? (
+                  <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
+                ) : (
+                  <svg className={`w-5 h-5 ${rfp.match.disqualified ? "text-red-400" : "text-blue-500"} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                )}
+              </div>
+              <p className="text-slate-700 leading-relaxed">{displaySummary}</p>
+              {summaryError && (
+                <p className="mt-2 text-xs text-amber-600">
+                  AI summary unavailable. Showing rule-based summary.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Score Breakdown */}
+          {rfp.match.breakdown.length > 0 && !rfp.match.disqualified && (
+            <div className="p-6 md:p-8 border-b border-slate-100">
+              <h2 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h2>
+              <div className="space-y-3">
+                {rfp.match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
+                  const pct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                  const barColor =
+                    b.status === "strong" ? "bg-emerald-500" :
+                    b.status === "partial" ? "bg-blue-400" :
+                    b.status === "weak" ? "bg-amber-400" :
+                    b.status === "missing" ? "bg-red-300" :
+                    "bg-slate-200";
+                  const textColor =
+                    b.status === "strong" ? "text-emerald-700" :
+                    b.status === "partial" ? "text-blue-700" :
+                    b.status === "weak" ? "text-amber-700" :
+                    b.status === "missing" ? "text-red-600" :
+                    "text-slate-500";
+
+                  return (
+                    <div key={i}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-slate-700">{b.category}</span>
+                        {b.maxPoints > 0 && (
+                          <span className={`text-xs font-bold ${textColor}`}>{b.points}/{b.maxPoints}</span>
+                        )}
+                      </div>
+                      {b.maxPoints > 0 ? (
+                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      ) : (
+                        <p className={`text-xs ${textColor}`}>{b.detail}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* About this RFP - AI summary of contract requirements */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <h2 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h2>
+            {requirementsSummaryLoading ? (
+              <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
+            ) : requirementsSummary ? (
+              <MarkdownContent content={requirementsSummary} />
+            ) : (
+              <p className="text-slate-700 leading-relaxed">{rfp.description}</p>
+            )}
+            {requirementsSummaryError && (
+              <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
+            )}
+          </div>
+
+          {/* Details & link */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <h2 className="text-sm font-bold text-slate-900 mb-3">Details</h2>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {rfp.naicsCodes?.map((n) => (
+                <span key={n} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600">
+                  NAICS {n}
+                </span>
+              ))}
+              {rfp.capabilities?.map((c) => (
+                <span key={c} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-600">
+                  {c}
+                </span>
+              ))}
+            </div>
+            {rfp.eventUrl && (
+              <a
+                href={rfp.eventUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-sm font-medium text-[#2563eb] hover:underline"
+              >
+                View on Cal eProcure
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
             )}
           </div>
 
