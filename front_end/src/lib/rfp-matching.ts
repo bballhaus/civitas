@@ -34,6 +34,17 @@ export interface RFP {
   contactName?: string;
   contactEmail?: string;
   contactPhone?: string;
+  // Attachment-derived fields (populated when extraction data exists)
+  clearancesRequired?: string[];
+  setAsideTypes?: string[];
+  deliverables?: string[];
+  contractDuration?: string | null;
+  evaluationCriteria?: string[];
+  attachmentRollup?: {
+    summary: string;
+    text: string;
+    pdfsProcessed: string[];
+  } | null;
 }
 
 export interface ScoreBreakdown {
@@ -427,7 +438,9 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
   // STAGE 1: Hard Disqualifiers (pass/fail gates)
   // =========================================================================
 
-  const rfpFullText = `${rfp.title} ${rfp.description} ${(rfp.capabilities || []).join(" ")} ${(rfp.certifications || []).join(" ")}`;
+  // Build full text including attachment-derived fields for broader matching
+  const deliverableText = (rfp.deliverables ?? []).join(" ");
+  const rfpFullText = `${rfp.title} ${rfp.description} ${(rfp.capabilities || []).join(" ")} ${(rfp.certifications || []).join(" ")} ${deliverableText} ${rfp.attachmentRollup?.summary ?? ""}`;
 
   // 1a. Deadline check
   const due = parseDeadline(rfp.deadline);
@@ -438,19 +451,28 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     }
   }
 
-  // 1b. Required clearances
+  // 1b. Required clearances — check both text-based detection AND attachment-derived data
   const requiredClearance = detectRequiredClearance(rfpFullText);
-  if (requiredClearance) {
+  const attachmentClearances = rfp.clearancesRequired ?? [];
+  // Also check attachment-derived clearances against our patterns
+  let effectiveClearance = requiredClearance;
+  if (!effectiveClearance && attachmentClearances.length > 0) {
+    const attachClearanceText = attachmentClearances.join(" ");
+    effectiveClearance = detectRequiredClearance(attachClearanceText);
+  }
+  if (effectiveClearance) {
     const profileLevel = getProfileClearanceLevel(profile.clearances ?? []);
-    if (profileLevel < requiredClearance.level) {
+    if (profileLevel < effectiveClearance.level) {
       disqualifiers.push(
-        `Requires ${requiredClearance.label} clearance which is not in your profile.`
+        `Requires ${effectiveClearance.label} clearance which is not in your profile.`
       );
     }
   }
 
-  // 1c. Set-aside requirements
-  const rfpSetAsides = detectSetAsides(rfpFullText);
+  // 1c. Set-aside requirements — combine text-detected and attachment-derived
+  const textSetAsides = detectSetAsides(rfpFullText);
+  const attachmentSetAsides = rfp.setAsideTypes ?? [];
+  const rfpSetAsides = [...new Set([...textSetAsides, ...attachmentSetAsides])];
   if (rfpSetAsides.length > 0) {
     const profileStatuses = (profile.sizeStatus ?? []).map((s) => s.toLowerCase());
     const profileCerts = (profile.certifications ?? []).map((c) => c.toLowerCase());
@@ -508,7 +530,12 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
   const rfpAgencyTokens = toTokenSet([rfp.agency ?? ""]);
   const rfpContractTokens = toTokenSet([rfp.contractType ?? ""]);
   const rfpLocationTokens = toTokenSet([rfp.location ?? ""]);
-  const rfpDescTokens = toTokenSet([rfp.description ?? "", rfp.title ?? ""]);
+  const rfpDescTokens = toTokenSet([
+    rfp.description ?? "",
+    rfp.title ?? "",
+    ...(rfp.deliverables ?? []),
+    rfp.attachmentRollup?.summary ?? "",
+  ]);
 
   // =========================================================================
   // STAGE 3: Weighted Scoring (100-point scale)
@@ -652,11 +679,11 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
   }
 
   // --- Clearance bonus (not in base 100, but boost if matched) ---
-  if (requiredClearance) {
+  if (effectiveClearance) {
     const profileLevel = getProfileClearanceLevel(profile.clearances ?? []);
-    if (profileLevel >= requiredClearance.level) {
-      positiveReasons.push(`You hold the required ${requiredClearance.label} clearance.`);
-      breakdown.push({ category: "Security Clearance", points: 0, maxPoints: 0, status: "strong", detail: `${requiredClearance.label} clearance requirement met.` });
+    if (profileLevel >= effectiveClearance.level) {
+      positiveReasons.push(`You hold the required ${effectiveClearance.label} clearance.`);
+      breakdown.push({ category: "Security Clearance", points: 0, maxPoints: 0, status: "strong", detail: `${effectiveClearance.label} clearance requirement met.` });
     }
   }
 
