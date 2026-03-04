@@ -620,22 +620,25 @@ export function generateMatchSummary(_rfp: RFP, match: RFPMatch): string {
   const { positiveReasons, negativeReasons, score, disqualified, disqualifiers, tier } = match;
 
   if (disqualified && disqualifiers.length > 0) {
-    return `Not eligible: ${disqualifiers[0].toLowerCase()}`;
+    const dq = disqualifiers[0].replace(/\.$/, "");
+    return `Not eligible: ${dq.charAt(0).toLowerCase() + dq.slice(1)}.`;
   }
 
   if (tier === "excellent" && positiveReasons.length > 0) {
     const topReasons = positiveReasons.filter((r) => r !== "Deadline is still open.").slice(0, 3);
     if (topReasons.length === 0) return "Strong overall alignment with your profile.";
-    const first = topReasons[0].charAt(0).toLowerCase() + topReasons[0].slice(1);
-    const rest = topReasons.slice(1).map((r) => r.charAt(0).toLowerCase() + r.slice(1)).join(". ");
-    return `Excellent fit: ${first}.${rest ? ` ${rest}.` : ""} Worth a close look.`;
+    const fmt = (r: string) => { const s = r.replace(/\.$/, ""); return s.charAt(0).toLowerCase() + s.slice(1); };
+    const first = fmt(topReasons[0]);
+    const rest = topReasons.slice(1).map(fmt).join(", ");
+    return `Excellent fit: ${first}${rest ? `, ${rest}` : ""}. Worth a close look.`;
   }
 
   if (tier === "strong" && positiveReasons.length > 0) {
     const top = positiveReasons.filter((r) => r !== "Deadline is still open.").slice(0, 2);
     if (top.length === 0) return "Good overall alignment with your profile.";
-    const first = top[0].charAt(0).toLowerCase() + top[0].slice(1);
-    const extra = top.length > 1 ? ` Also: ${top[1].charAt(0).toLowerCase() + top[1].slice(1)}.` : "";
+    const fmt = (r: string) => { const s = r.replace(/\.$/, ""); return s.charAt(0).toLowerCase() + s.slice(1); };
+    const first = fmt(top[0]);
+    const extra = top.length > 1 ? ` Also, ${fmt(top[1])}.` : "";
     return `Strong potential: ${first}.${extra}`;
   }
 
