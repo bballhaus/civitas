@@ -702,94 +702,94 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
 
   let score = 0;
 
-  // --- Capabilities (max 25 pts) ---
-  // No requirement = full points (everyone qualifies)
+  // --- Capabilities (max 20 pts) ---
+  // Empty = 50% (relevance unknown, not a positive signal)
   const capSimilarity = synonymAwareJaccard(rfpCapTokens, profileCapsTokens);
   const capOverlap = synonymAwareOverlap(rfp.capabilities ?? [], profileCapsTokens);
   if ((rfp.capabilities ?? []).length > 0) {
     if (capSimilarity > 0 || capOverlap.length > 0) {
       const pts = scoreFromSimilarity(
         clamp(capSimilarity + capOverlap.length * 0.05, 0, 1),
-        25
+        20
       );
       score += pts;
       const detail = capOverlap.length > 0
         ? `Capabilities align: ${capOverlap.slice(0, 3).join(", ")}`
         : "Capabilities align with your profile.";
       positiveReasons.push(detail);
-      breakdown.push({ category: "Capabilities", points: Math.round(pts), maxPoints: 25, status: pts >= 18 ? "strong" : "partial", detail });
+      breakdown.push({ category: "Capabilities", points: Math.round(pts), maxPoints: 20, status: pts >= 14 ? "strong" : "partial", detail });
     } else {
       negativeReasons.push("Limited capability overlap with your profile.");
-      breakdown.push({ category: "Capabilities", points: 0, maxPoints: 25, status: "missing", detail: "No capability overlap detected." });
+      breakdown.push({ category: "Capabilities", points: 0, maxPoints: 20, status: "missing", detail: "No capability overlap detected." });
     }
   } else {
-    score += 25;
-    breakdown.push({ category: "Capabilities", points: 25, maxPoints: 25, status: "strong", detail: "No specific capabilities required." });
+    score += 10;
+    breakdown.push({ category: "Capabilities", points: 10, maxPoints: 20, status: "neutral", detail: "No specific capabilities listed — not a strong relevance signal." });
   }
 
-  // --- Industry (max 20 pts) ---
+  // --- Industry (max 15 pts) ---
+  // Empty = 50% (relevance unknown)
   const industrySimilarity = synonymAwareJaccard(rfpIndustryTokens, profileIndustryTokens);
   if ((rfp.industry ?? "").trim()) {
     if (industrySimilarity > 0) {
-      const pts = scoreFromSimilarity(industrySimilarity, 20);
+      const pts = scoreFromSimilarity(industrySimilarity, 15);
       score += pts;
       positiveReasons.push("Industry aligns with your profile.");
-      breakdown.push({ category: "Industry", points: Math.round(pts), maxPoints: 20, status: pts >= 14 ? "strong" : "partial", detail: "Industry match found." });
+      breakdown.push({ category: "Industry", points: Math.round(pts), maxPoints: 15, status: pts >= 10 ? "strong" : "partial", detail: "Industry match found." });
     } else {
       negativeReasons.push(`Industry (${rfp.industry}) not reflected in your profile.`);
-      breakdown.push({ category: "Industry", points: 0, maxPoints: 20, status: "weak", detail: `Industry "${rfp.industry}" not in your profile.` });
+      breakdown.push({ category: "Industry", points: 0, maxPoints: 15, status: "weak", detail: `Industry "${rfp.industry}" not in your profile.` });
     }
   } else {
-    score += 20;
-    breakdown.push({ category: "Industry", points: 20, maxPoints: 20, status: "strong", detail: "No specific industry required." });
+    score += 8;
+    breakdown.push({ category: "Industry", points: 8, maxPoints: 15, status: "neutral", detail: "No specific industry listed — not a strong relevance signal." });
   }
 
-  // --- NAICS Codes (max 15 pts) ---
-  // No NAICS requirement = full points
+  // --- NAICS Codes (max 10 pts) ---
+  // Empty = 50% (relevance unknown)
   const naicsOverlap = countNaicsOverlap(rfp.naicsCodes ?? [], profileNaics);
   if ((rfp.naicsCodes ?? []).length > 0) {
     if (naicsOverlap.length > 0) {
       const ratio = naicsOverlap.length / Math.max(1, rfp.naicsCodes.length);
-      const pts = 15 * ratio;
+      const pts = 10 * ratio;
       score += pts;
       positiveReasons.push(`NAICS overlap: ${naicsOverlap.slice(0, 3).join(", ")}`);
-      breakdown.push({ category: "NAICS Codes", points: Math.round(pts), maxPoints: 15, status: ratio >= 0.75 ? "strong" : "partial", detail: `${naicsOverlap.length}/${rfp.naicsCodes.length} codes match.` });
+      breakdown.push({ category: "NAICS Codes", points: Math.round(pts), maxPoints: 10, status: ratio >= 0.75 ? "strong" : "partial", detail: `${naicsOverlap.length}/${rfp.naicsCodes.length} codes match.` });
     } else {
       negativeReasons.push("No NAICS code overlap.");
-      breakdown.push({ category: "NAICS Codes", points: 0, maxPoints: 15, status: "missing", detail: "None of the RFP's NAICS codes match your profile." });
+      breakdown.push({ category: "NAICS Codes", points: 0, maxPoints: 10, status: "missing", detail: "None of the RFP's NAICS codes match your profile." });
     }
   } else {
-    score += 15;
-    breakdown.push({ category: "NAICS Codes", points: 15, maxPoints: 15, status: "strong", detail: "No specific NAICS codes required." });
+    score += 5;
+    breakdown.push({ category: "NAICS Codes", points: 5, maxPoints: 10, status: "neutral", detail: "No NAICS codes listed — not a strong relevance signal." });
   }
 
-  // --- Certifications (max 12 pts) ---
-  // Use canonical matching so "ISO 9001" matches "ISO-9001"
-  // No cert requirement = full points
+  // --- Certifications (max 10 pts) ---
+  // ELIGIBILITY category: no cert requirement = full points (everyone eligible)
   if ((rfp.certifications ?? []).length > 0) {
     const certMatch = canonicalSetMatch(rfp.certifications ?? [], profile.certifications ?? [], CERTIFICATION_CANONICAL);
     if (certMatch.matched.length > 0) {
-      const pts = 12 * certMatch.ratio;
+      const pts = 10 * certMatch.ratio;
       score += pts;
       positiveReasons.push(`Certification match: ${certMatch.matched.slice(0, 2).join(", ")}`);
-      breakdown.push({ category: "Certifications", points: Math.round(pts), maxPoints: 12, status: certMatch.ratio >= 0.75 ? "strong" : "partial", detail: `${certMatch.matched.length}/${(rfp.certifications ?? []).length} certifications match.` });
+      breakdown.push({ category: "Certifications", points: Math.round(pts), maxPoints: 10, status: certMatch.ratio >= 0.75 ? "strong" : "partial", detail: `${certMatch.matched.length}/${(rfp.certifications ?? []).length} certifications match.` });
     } else {
       // Fall back to token overlap in case canonical mapping doesn't cover everything
       const certOverlap = findTokenOverlap(rfp.certifications ?? [], profileCertTokens);
       if (certOverlap.length > 0) {
         const ratio = certOverlap.length / Math.max(1, (rfp.certifications ?? []).length);
-        const pts = 12 * ratio;
+        const pts = 10 * ratio;
         score += pts;
         positiveReasons.push(`Certification match: ${certOverlap.slice(0, 2).join(", ")}`);
-        breakdown.push({ category: "Certifications", points: Math.round(pts), maxPoints: 12, status: ratio >= 0.75 ? "strong" : "partial", detail: `${certOverlap.length}/${(rfp.certifications ?? []).length} certifications match.` });
+        breakdown.push({ category: "Certifications", points: Math.round(pts), maxPoints: 10, status: ratio >= 0.75 ? "strong" : "partial", detail: `${certOverlap.length}/${(rfp.certifications ?? []).length} certifications match.` });
       } else {
         negativeReasons.push("RFP lists certifications you may not have.");
-        breakdown.push({ category: "Certifications", points: 0, maxPoints: 12, status: "missing", detail: "None of the listed certifications found in your profile." });
+        breakdown.push({ category: "Certifications", points: 0, maxPoints: 10, status: "missing", detail: "None of the listed certifications found in your profile." });
       }
     }
   } else {
-    score += 12;
-    breakdown.push({ category: "Certifications", points: 12, maxPoints: 12, status: "strong", detail: "No certifications required." });
+    score += 10;
+    breakdown.push({ category: "Certifications", points: 10, maxPoints: 10, status: "strong", detail: "No certifications required — you're eligible." });
   }
 
   // --- Location (max 10 pts) ---
@@ -817,16 +817,16 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     breakdown.push({ category: "Location", points: 10, maxPoints: 10, status: "strong", detail: "No location restriction." });
   }
 
-  // --- Agency Experience (max 8 pts) ---
-  // Agency match is a bonus — keep as-is for empty (not full points)
+  // --- Agency Experience (max 10 pts) ---
+  // Agency match is a bonus — 0 for no match (not penalized, but not rewarded)
   const agencySimilarity = synonymAwareJaccard(rfpAgencyTokens, profileAgencyTokens);
   if (agencySimilarity > 0) {
-    const pts = scoreFromSimilarity(agencySimilarity, 8);
+    const pts = scoreFromSimilarity(agencySimilarity, 10);
     score += pts;
     positiveReasons.push("You have experience with this agency.");
-    breakdown.push({ category: "Agency Experience", points: Math.round(pts), maxPoints: 8, status: "strong", detail: `Prior experience with ${rfp.agency}.` });
+    breakdown.push({ category: "Agency Experience", points: Math.round(pts), maxPoints: 10, status: "strong", detail: `Prior experience with ${rfp.agency}.` });
   } else if (profileAgencyTokens.size > 0) {
-    breakdown.push({ category: "Agency Experience", points: 0, maxPoints: 8, status: "neutral", detail: "No prior experience with this agency." });
+    breakdown.push({ category: "Agency Experience", points: 0, maxPoints: 10, status: "neutral", detail: "No prior experience with this agency." });
   }
 
   // --- Contract Type (max 5 pts) ---
@@ -848,7 +848,10 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     breakdown.push({ category: "Contract Type", points: 5, maxPoints: 5, status: "strong", detail: "No contract type specified." });
   }
 
-  // --- Description / Title text match (max 5 pts) ---
+  // --- Description / Title text match (max 20 pts) ---
+  // Highest weight — the best signal for actual content relevance.
+  // A lease RFP description won't match a construction profile, but a concrete
+  // RFP description will. This is the key discriminator against generic RFPs.
   const profileTextTokens = new Set<string>([
     ...expandWithSynonyms(profileIndustryTokens),
     ...expandWithSynonyms(profileCapsTokens),
@@ -856,11 +859,17 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     ...profileAgencyTokens,
   ]);
   const descSimilarity = jaccardSimilarity(rfpDescTokens, profileTextTokens);
-  if (descSimilarity > 0.05) {
-    const pts = scoreFromSimilarity(descSimilarity, 5);
+  if (descSimilarity > 0.02) {
+    const pts = scoreFromSimilarity(descSimilarity, 20);
     score += pts;
-    positiveReasons.push("Description language matches your profile keywords.");
-    breakdown.push({ category: "Description Match", points: Math.round(pts), maxPoints: 5, status: "partial", detail: "Keywords in the RFP description overlap with your profile." });
+    if (descSimilarity >= 0.1) {
+      positiveReasons.push("RFP description strongly matches your profile keywords.");
+    } else {
+      positiveReasons.push("Description language matches your profile keywords.");
+    }
+    breakdown.push({ category: "Description Match", points: Math.round(pts), maxPoints: 20, status: descSimilarity >= 0.1 ? "strong" : "partial", detail: "Keywords in the RFP description overlap with your profile." });
+  } else {
+    breakdown.push({ category: "Description Match", points: 0, maxPoints: 20, status: "weak", detail: "RFP description has little keyword overlap with your profile." });
   }
 
   // --- Technology Stack overlap (informational, 0 scored points) ---
