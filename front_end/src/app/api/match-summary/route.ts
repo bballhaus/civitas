@@ -6,10 +6,15 @@ const PROMPT = `You are helping a vendor/contractor understand why an RFP (Reque
 Given:
 1) The RFP details (title, agency, industry, capabilities, location, deadline, description snippet)
 2) Attachment-derived data (NAICS codes, certifications, clearances, set-asides, deliverables) if available — this comes from the actual RFP attachment PDFs
-3) The company's full profile (industries, capabilities, certifications, locations, agency experience, contract types)
+3) The company's full profile (industries, capabilities, certifications, locations, agency experience, contract types, technology stack)
 4) A rule-based match summary with score, tier, and reasons
 5) A per-category score breakdown showing how points were earned
 6) Any disqualifiers (hard blockers like expired deadlines or missing clearances)
+
+Important scoring context:
+- When an RFP does NOT specify a requirement for a category (e.g., no NAICS codes, no certifications), the company earns FULL points for that category. This means "no requirement = everyone qualifies" and is expected, not a flaw.
+- A high score on a generic RFP (few specific requirements) is normal — the company isn't penalized for requirements that don't exist.
+- Focus explanations on categories where there IS a specific RFP requirement and how the company matches or doesn't match.
 
 Your task: Write a short, natural 2-4 sentence summary explaining why this RFP is a good match (or why it isn't). Reference specific overlaps or gaps from the breakdown. When attachment-derived data is present, reference specific NAICS codes, certifications, or requirements from the attachments. If disqualified, explain clearly why. If a strong match, highlight the top strengths. If weak, suggest what profile updates might help. Keep it conversational and under 100 words. No bullet points.`;
 
@@ -82,8 +87,24 @@ export async function POST(req: Request) {
       if (rollup.summary) rfpSummary.attachmentSummary = rollup.summary;
     }
 
+    // Build compact profile summary with new enriched fields
+    let profileSummary = "No profile";
+    if (profile) {
+      const profileAny = profile as Record<string, unknown>;
+      const compactProfile: Record<string, unknown> = { ...profile };
+      // Include technology stack if present
+      if (Array.isArray(profileAny.technologyStack) && (profileAny.technologyStack as string[]).length > 0) {
+        compactProfile.technologyStack = profileAny.technologyStack;
+      }
+      // Include max single contract value if present
+      if (profileAny.maxSingleContractValue) {
+        compactProfile.maxSingleContractValue = profileAny.maxSingleContractValue;
+      }
+      profileSummary = JSON.stringify(compactProfile);
+    }
+
     const input = `RFP: ${JSON.stringify(rfpSummary)}
-Profile: ${profile ? JSON.stringify(profile) : "No profile"}
+Profile: ${profileSummary}
 Score: ${score ?? "unknown"}/100 (Tier: ${tier ?? "unknown"})
 Rule-based summary: ${currentSummary}
 Positive reasons: ${JSON.stringify(positiveReasons ?? [])}
