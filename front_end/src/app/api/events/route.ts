@@ -49,16 +49,34 @@ function loadAttachmentExtractions(): Record<string, AttachmentExtraction> {
   }
 }
 
-// Infer location from description (look for County names)
+// Infer location from description (look for explicit City/County fields first, then pattern match)
 function extractLocation(description: string, department: string): string {
+  // First: look for explicit "City: X" or "County: X" fields (common in lease & structured RFPs)
+  const cityField = description.match(/\bCity:\s*([A-Za-z\s]+?)(?:\n|$)/);
+  const countyField = description.match(/\bCounty:\s*([A-Za-z\s]+?)(?:\n|$)/);
+  if (cityField) {
+    const city = cityField[1].trim();
+    if (city && city.length > 1 && city.length < 40) {
+      const county = countyField ? countyField[1].trim() : "";
+      return county ? `${city}, ${county} County, CA` : `${city}, CA`;
+    }
+  }
+  if (countyField) {
+    const county = countyField[1].trim();
+    if (county && county.length > 1 && county.length < 40) {
+      return `${county} County, CA`;
+    }
+  }
+
+  // Fallback: look for "X County" pattern in description text
   const counties = [
     "Sacramento", "Los Angeles", "San Francisco", "San Diego", "Orange",
     "Alameda", "Santa Clara", "San Mateo", "Contra Costa", "Riverside",
-    "San Bernardino", "Ventura", "Fresno", "Nevada", "Alameda", "Marin",
+    "San Bernardino", "Ventura", "Fresno", "Nevada", "Marin",
     "Napa", "Sonoma", "Solano", "Kern", "Tulare", "Monterey", "Santa Cruz"
   ];
   for (const county of counties) {
-    if (description.includes(`${county} County`) || description.includes(`${county},`)) {
+    if (description.includes(`${county} County`)) {
       return `${county}, CA`;
     }
   }
@@ -71,10 +89,12 @@ function inferIndustry(department: string, title?: string, description?: string)
   const d = department.toLowerCase();
 
   // Content-based inference (most accurate — looks at what the RFP actually asks for)
+  // FIRST: catch lease/real estate before anything else — "building code" triggers false positives otherwise
+  if (text.match(/\bwanted\s+to\s+lease\b/) || text.match(/\blease\s+(office|warehouse|space|property)\b/) || text.match(/\b(nusf|rentable\s+square|leasable)\b/)) return "Real Estate & Leasing";
   if (text.match(/\b(software|saas|cloud|cyber|data\s*base|network|telecom|it\s+consult|electronic.*system|computer|digital)\b/)) return "IT Services";
   if (text.match(/\b(janitorial|cleaning|custodial|sanitation|housekeeping)\b/)) return "Facilities Maintenance";
   if (text.match(/\b(hvac|heating|ventilation|cooling|plumbing|elevator|generator|preventive\s+maintenance|equipment\s+maintenance)\b/)) return "Facilities Maintenance";
-  if (text.match(/\b(construction|building|demolition|renovation|roofing|concrete|masonry|paving|asphalt|grading|excavation|siding)\b/)) return "Construction";
+  if (text.match(/\b(construction|building\s+construct|demolition|renovation|roofing|concrete|masonry|paving|asphalt|grading|excavation|siding)\b/)) return "Construction";
   if (text.match(/\b(road|highway|bridge|pavement|culvert|striping|high\s+friction)\b/)) return "Construction";
   if (text.match(/\b(hazardous\s+waste|waste\s+removal|disposal|remediation|abatement|contamination|environmental\s+test)\b/)) return "Environmental Services";
   if (text.match(/\b(landscaping|grounds|irrigation|vegetation|tree\s+trimming|pest\s+control|weed)\b/)) return "Environmental Services";
