@@ -850,24 +850,38 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
 
   // --- Description / Title text match (max 20 pts) ---
   // Highest weight — the best signal for actual content relevance.
-  // A lease RFP description won't match a construction profile, but a concrete
-  // RFP description will. This is the key discriminator against generic RFPs.
+  // Uses COVERAGE metric instead of Jaccard: what fraction of profile keywords
+  // appear in the RFP description? Jaccard fails here because both token sets
+  // are large (200+ tokens) so even 20 overlapping tokens give tiny ratios.
   const profileTextTokens = new Set<string>([
     ...expandWithSynonyms(profileIndustryTokens),
     ...expandWithSynonyms(profileCapsTokens),
     ...expandWithSynonyms(profileCertTokens),
     ...profileAgencyTokens,
   ]);
-  const descSimilarity = jaccardSimilarity(rfpDescTokens, profileTextTokens);
-  if (descSimilarity > 0.02) {
-    const pts = scoreFromSimilarity(descSimilarity, 20);
+  // Coverage: what fraction of the PROFILE tokens appear in the RFP description
+  const descOverlapTokens = [...profileTextTokens].filter((t) => rfpDescTokens.has(t));
+  const descCoverage = descOverlapTokens.length / Math.max(1, profileTextTokens.size);
+  // Also compute reverse coverage: what fraction of RFP description's meaningful tokens match profile
+  const rfpInProfile = [...rfpDescTokens].filter((t) => profileTextTokens.has(t));
+  const reverseCoverage = rfpInProfile.length / Math.max(1, rfpDescTokens.size);
+  // Use the geometric mean of both coverages to balance the signal
+  const descRelevance = Math.sqrt(descCoverage * reverseCoverage);
+  // Also keep Jaccard as a floor (prevents zero-scoring when coverage is asymmetric)
+  const descJaccard = jaccardSimilarity(rfpDescTokens, profileTextTokens);
+  const descScore = Math.max(descRelevance, descJaccard);
+
+  if (descScore > 0.01) {
+    const pts = scoreFromSimilarity(Math.min(descScore * 3, 1), 20); // scale up: 0.33 coverage → full points
     score += pts;
-    if (descSimilarity >= 0.1) {
+    if (pts >= 14) {
       positiveReasons.push("RFP description strongly matches your profile keywords.");
-    } else {
+    } else if (pts >= 6) {
       positiveReasons.push("Description language matches your profile keywords.");
+    } else {
+      positiveReasons.push("Some description keywords overlap with your profile.");
     }
-    breakdown.push({ category: "Description Match", points: Math.round(pts), maxPoints: 20, status: descSimilarity >= 0.1 ? "strong" : "partial", detail: "Keywords in the RFP description overlap with your profile." });
+    breakdown.push({ category: "Description Match", points: Math.round(pts), maxPoints: 20, status: pts >= 14 ? "strong" : pts >= 6 ? "partial" : "weak", detail: `${descOverlapTokens.length} profile keywords found in RFP description.` });
   } else {
     breakdown.push({ category: "Description Match", points: 0, maxPoints: 20, status: "weak", detail: "RFP description has little keyword overlap with your profile." });
   }
