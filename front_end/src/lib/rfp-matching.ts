@@ -712,45 +712,68 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
 // ---------------------------------------------------------------------------
 
 export function generateMatchSummary(_rfp: RFP, match: RFPMatch): string {
-  const { positiveReasons, negativeReasons, score, disqualified, disqualifiers, tier } = match;
+  const { positiveReasons, negativeReasons, score, disqualified, disqualifiers, tier, breakdown } = match;
+
+  const fmt = (r: string) => {
+    const s = r.replace(/\.$/, "");
+    return s.charAt(0).toLowerCase() + s.slice(1);
+  };
+
+  // Filter out generic "Deadline is still open" from content reasons
+  const strengths = positiveReasons.filter((r) => r !== "Deadline is still open.");
+  const gaps = negativeReasons;
+
+  // Pull top scored categories from breakdown for specificity
+  const topCategories = breakdown
+    .filter((b) => b.maxPoints > 0 && b.status === "strong")
+    .map((b) => b.category);
+  const weakCategories = breakdown
+    .filter((b) => b.maxPoints > 0 && (b.status === "missing" || b.status === "weak"))
+    .map((b) => b.category);
 
   if (disqualified && disqualifiers.length > 0) {
     const dq = disqualifiers[0].replace(/\.$/, "");
     return `Not eligible: ${dq.charAt(0).toLowerCase() + dq.slice(1)}.`;
   }
 
-  if (tier === "excellent" && positiveReasons.length > 0) {
-    const topReasons = positiveReasons.filter((r) => r !== "Deadline is still open.").slice(0, 3);
-    if (topReasons.length === 0) return "Strong overall alignment with your profile.";
-    const fmt = (r: string) => { const s = r.replace(/\.$/, ""); return s.charAt(0).toLowerCase() + s.slice(1); };
-    const first = fmt(topReasons[0]);
-    const rest = topReasons.slice(1).map(fmt).join(", ");
-    return `Excellent fit: ${first}${rest ? `, ${rest}` : ""}. Worth a close look.`;
+  if (tier === "excellent") {
+    if (strengths.length >= 2) {
+      return `Strong match in ${topCategories.slice(0, 3).join(", ").toLowerCase()}. ${fmt(strengths[0])}.`;
+    }
+    return strengths.length > 0
+      ? `Excellent fit: ${fmt(strengths[0])}. Well-aligned across key categories.`
+      : "Strong overall alignment with your profile across multiple categories.";
   }
 
-  if (tier === "strong" && positiveReasons.length > 0) {
-    const top = positiveReasons.filter((r) => r !== "Deadline is still open.").slice(0, 2);
-    if (top.length === 0) return "Good overall alignment with your profile.";
-    const fmt = (r: string) => { const s = r.replace(/\.$/, ""); return s.charAt(0).toLowerCase() + s.slice(1); };
-    const first = fmt(top[0]);
-    const extra = top.length > 1 ? ` Also, ${fmt(top[1])}.` : "";
-    return `Strong potential: ${first}.${extra}`;
+  if (tier === "strong") {
+    if (strengths.length > 0 && gaps.length > 0) {
+      return `${fmt(strengths[0])}, but ${fmt(gaps[0])}.`;
+    }
+    return strengths.length > 0
+      ? `Good fit: ${fmt(strengths[0])}. Review breakdown for details.`
+      : "Good overall alignment with your profile.";
   }
 
-  if (tier === "moderate" && positiveReasons.length > 0) {
-    const align = positiveReasons.filter((r) => r !== "Deadline is still open.")[0];
-    if (!align) return "Some alignment found. Review details for fit.";
-    const hint = negativeReasons.length > 0
-      ? " Consider updating your profile to improve match accuracy."
-      : "";
-    const alignText = align.replace(/\.$/, "");
-    return `Some alignment: ${alignText.charAt(0).toLowerCase() + alignText.slice(1)}.${hint}`;
+  if (tier === "moderate") {
+    if (strengths.length > 0 && weakCategories.length > 0) {
+      return `${fmt(strengths[0])}, but gaps in ${weakCategories.slice(0, 2).join(" and ").toLowerCase()}.`;
+    }
+    if (strengths.length > 0) {
+      return `Partial fit: ${fmt(strengths[0])}. Other areas don't align.`;
+    }
+    return "Some overlap found, but key areas like capabilities and industry don't align.";
   }
 
-  if (score > 0 && positiveReasons.length > 0) {
-    const reason = positiveReasons[0].replace(/\.$/, "");
-    return `Limited alignment: ${reason.charAt(0).toLowerCase() + reason.slice(1)}. Consider updating your profile to improve future matches.`;
+  // Low tier
+  if (score > 0) {
+    if (weakCategories.length > 0) {
+      return `Low match — gaps in ${weakCategories.slice(0, 3).join(", ").toLowerCase()}. May not be the right fit.`;
+    }
+    if (gaps.length > 0) {
+      return `Low match: ${fmt(gaps[0])}. Profile updates may help.`;
+    }
+    return "Minimal overlap with your profile. Review breakdown for details.";
   }
 
-  return "Complete your profile for personalized match insights.";
+  return "Complete your profile for personalized match scores.";
 }
