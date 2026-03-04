@@ -20,6 +20,7 @@ export default function RFPDetailPage() {
   const id = params?.id ? decodeURIComponent(String(params.id)) : "";
   const [rfpData, setRfpData] = useState<RFP | null>(null);
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export default function RFPDetailPage() {
   const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
   const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
 
-  const rfp: RFPWithMatch | null = rfpData
+  const rfp: RFPWithMatch | null = rfpData && profileLoaded
     ? { ...rfpData, match: computeMatch(rfpData, profile) }
     : null;
 
@@ -59,6 +60,7 @@ export default function RFPDetailPage() {
         // ignore
       }
     }
+    setProfileLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -93,7 +95,7 @@ export default function RFPDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    if (!rfpData) return;
+    if (!rfpData || !profileLoaded) return;
     const rfp: RFP = rfpData;
 
     let cancelled = false;
@@ -165,7 +167,7 @@ export default function RFPDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [rfpData?.id, profile]);
+  }, [rfpData?.id, profile, profileLoaded]);
 
   useEffect(() => {
     if (!rfpData || !rfpData.description?.trim()) return;
@@ -585,9 +587,54 @@ export default function RFPDetailPage() {
             </div>
           )}
 
-          {/* Action buttons */}
+          {/* About this RFP - AI summary of contract requirements */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <h2 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h2>
+            {requirementsSummaryLoading ? (
+              <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
+            ) : requirementsSummary ? (
+              <MarkdownContent content={requirementsSummary} />
+            ) : (
+              <p className="text-slate-700 leading-relaxed">{rfp.description}</p>
+            )}
+            {requirementsSummaryError && (
+              <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
+            )}
+          </div>
+
+          {/* Details & link */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <h2 className="text-sm font-bold text-slate-900 mb-3">Details</h2>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {rfp.naicsCodes?.map((n) => (
+                <span key={n} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600">
+                  NAICS {n}
+                </span>
+              ))}
+              {rfp.capabilities?.map((c) => (
+                <span key={c} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-600">
+                  {c}
+                </span>
+              ))}
+            </div>
+            {rfp.eventUrl && (
+              <a
+                href={rfp.eventUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-sm font-medium text-[#2563eb] hover:underline"
+              >
+                View on Cal eProcure
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            )}
+          </div>
+
+          {/* Generate Proposal & Plan */}
           <div className="p-6 md:p-8 border-b border-slate-100 space-y-3">
-            <h2 className="text-sm font-bold text-slate-900 mb-4">Actions</h2>
+            <h2 className="text-sm font-bold text-slate-900 mb-4">Generate Proposal &amp; Plan</h2>
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
@@ -790,50 +837,6 @@ export default function RFPDetailPage() {
             )}
           </div>
 
-          {/* About this RFP - AI summary of contract requirements */}
-          <div className="p-6 md:p-8 border-b border-slate-100">
-            <h2 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h2>
-            {requirementsSummaryLoading ? (
-              <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
-            ) : requirementsSummary ? (
-              <MarkdownContent content={requirementsSummary} />
-            ) : (
-              <p className="text-slate-700 leading-relaxed">{rfp.description}</p>
-            )}
-            {requirementsSummaryError && (
-              <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
-            )}
-          </div>
-
-          {/* Details & link */}
-          <div className="p-6 md:p-8">
-            <h2 className="text-sm font-bold text-slate-900 mb-3">Details</h2>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {rfp.naicsCodes?.map((n) => (
-                <span key={n} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600">
-                  NAICS {n}
-                </span>
-              ))}
-              {rfp.capabilities?.map((c) => (
-                <span key={c} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-600">
-                  {c}
-                </span>
-              ))}
-            </div>
-            {rfp.eventUrl && (
-              <a
-                href={rfp.eventUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 text-sm font-medium text-[#2563eb] hover:underline"
-              >
-                View on Cal eProcure
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </a>
-            )}
-          </div>
         </article>
       </main>
     </div>
