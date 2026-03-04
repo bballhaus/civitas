@@ -7,6 +7,7 @@ import {
   type RFP,
   type RFPMatch,
   type CompanyProfile,
+  type ScoreBreakdown,
   computeMatch,
   generateMatchSummary,
 } from "@/lib/rfp-matching";
@@ -134,6 +135,10 @@ export default function RFPDetailPage() {
             currentSummary: initialSummary,
             positiveReasons: match.positiveReasons,
             negativeReasons: match.negativeReasons,
+            disqualifiers: match.disqualifiers,
+            breakdown: match.breakdown,
+            score: match.score,
+            tier: match.tier,
           }),
         });
         if (cancelled) return;
@@ -480,22 +485,51 @@ export default function RFPDetailPage() {
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-amber-50 text-amber-600">
                 {rfp.capabilities[0] || rfp.contractType || "Contract"}
               </span>
-              <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700">
-                {rfp.match.score}% match
-              </span>
+              {rfp.match.disqualified ? (
+                <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-bold bg-red-100 text-red-700">
+                  <span className="mr-1">✗</span> Not Eligible
+                </span>
+              ) : (
+                <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-bold ${
+                  rfp.match.tier === "excellent" ? "bg-emerald-500 text-white" :
+                  rfp.match.tier === "strong" ? "bg-blue-500 text-white" :
+                  rfp.match.tier === "moderate" ? "bg-amber-400 text-amber-900" :
+                  "bg-slate-200 text-slate-600"
+                }`}>
+                  {rfp.match.tier === "excellent" && <span className="mr-1">★</span>}
+                  {rfp.match.score}% · {rfp.match.tier.charAt(0).toUpperCase() + rfp.match.tier.slice(1)}
+                </span>
+              )}
             </div>
             <p className="text-sm text-slate-600">{rfp.agency} · Due {rfp.deadline} · {rfp.estimatedValue}</p>
           </div>
 
+          {/* Disqualifier banner */}
+          {rfp.match.disqualified && rfp.match.disqualifiers.length > 0 && (
+            <div className="px-6 md:px-8 py-4 border-b border-red-100 bg-red-50">
+              <h2 className="text-sm font-bold text-red-800 mb-2">Not Eligible</h2>
+              <ul className="space-y-1">
+                {rfp.match.disqualifiers.map((d, i) => (
+                  <li key={i} className="text-sm text-red-700 flex items-start gap-2">
+                    <span className="text-red-500 shrink-0 mt-0.5">✗</span>
+                    {d}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Groq-generated summary */}
           <div className="p-6 md:p-8 border-b border-slate-100">
-            <div className="rounded-xl border-2 border-blue-200 bg-white p-5">
+            <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
               <div className="flex items-start justify-between gap-2 mb-3">
-                <h2 className="text-sm font-bold text-slate-900">Why this is a good match</h2>
+                <h2 className="text-sm font-bold text-slate-900">
+                  {rfp.match.disqualified ? "Match Analysis" : "Why this is a good match"}
+                </h2>
                 {summaryLoading ? (
                   <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
                 ) : (
-                  <svg className="w-5 h-5 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className={`w-5 h-5 ${rfp.match.disqualified ? "text-red-400" : "text-blue-500"} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 )}
@@ -508,6 +542,48 @@ export default function RFPDetailPage() {
               )}
             </div>
           </div>
+
+          {/* Score Breakdown */}
+          {rfp.match.breakdown.length > 0 && !rfp.match.disqualified && (
+            <div className="p-6 md:p-8 border-b border-slate-100">
+              <h2 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h2>
+              <div className="space-y-3">
+                {rfp.match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
+                  const pct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                  const barColor =
+                    b.status === "strong" ? "bg-emerald-500" :
+                    b.status === "partial" ? "bg-blue-400" :
+                    b.status === "weak" ? "bg-amber-400" :
+                    b.status === "missing" ? "bg-red-300" :
+                    "bg-slate-200";
+                  const textColor =
+                    b.status === "strong" ? "text-emerald-700" :
+                    b.status === "partial" ? "text-blue-700" :
+                    b.status === "weak" ? "text-amber-700" :
+                    b.status === "missing" ? "text-red-600" :
+                    "text-slate-500";
+
+                  return (
+                    <div key={i}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-slate-700">{b.category}</span>
+                        {b.maxPoints > 0 && (
+                          <span className={`text-xs font-bold ${textColor}`}>{b.points}/{b.maxPoints}</span>
+                        )}
+                      </div>
+                      {b.maxPoints > 0 ? (
+                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      ) : (
+                        <p className={`text-xs ${textColor}`}>{b.detail}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Action buttons */}
           <div className="p-6 md:p-8 border-b border-slate-100 space-y-3">
