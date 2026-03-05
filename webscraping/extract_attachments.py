@@ -519,6 +519,18 @@ def main():
 
     print(f"\nDone! Extracted data for {len(existing)} events → {OUTPUT_FILE.name}")
 
+    # Upload final extractions to S3 so the frontend can access them on Vercel
+    try:
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key="scrapes/caleprocure/attachment_extractions.json",
+            Body=json.dumps(existing, indent=2, ensure_ascii=False),
+            ContentType="application/json",
+        )
+        print(f"☁ Uploaded extractions to S3: scrapes/caleprocure/attachment_extractions.json")
+    except Exception as e:
+        print(f"⚠ Failed to upload extractions to S3: {e}")
+
 
 if __name__ == "__main__":
     main()

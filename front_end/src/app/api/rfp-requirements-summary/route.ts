@@ -90,9 +90,6 @@ ${description.slice(0, descriptionSlice)}
 Attachment-derived summary and constraints (if any):
 ${hasAttachments ? JSON.stringify(attachmentRollup).slice(0, attachmentSlice) : "None provided"}
 
-Attachment-derived summary and constraints (if any):
-${attachmentRollup ? JSON.stringify(attachmentRollup).slice(0, 2000) : "None provided"}
-
 Summarize the contract requirements:`;
 
     const completion = await client.chat.completions.create({
