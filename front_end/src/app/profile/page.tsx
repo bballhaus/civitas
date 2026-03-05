@@ -425,7 +425,7 @@ export default function ProfilePage() {
     try {
       if (editingSection === "documents") {
         if (currentUser && getAuthToken()) {
-          for (const fileInfo of profile.uploadedFiles ?? []) {
+          for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
             const file = pendingFilesRef.current.get(fileInfo.name);
             if (file) {
@@ -484,6 +484,14 @@ export default function ProfilePage() {
             alert(`Warning: Could not parse some documents. Profile saved without updates from those files.`);
           }
         }
+
+        if (currentUser && (removalsToProcess.length > 0 || filesToUpload.length > 0)) {
+          const backendProfile = await getProfileFromBackend();
+          const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+          setProfile(mapped);
+          setCachedProfile(currentUser.user_id, mapped);
+          profileToSave = mapped;
+        }
       } else {
         profileToSave = profile;
       }
@@ -524,24 +532,11 @@ export default function ProfilePage() {
     });
   };
 
-  const removeFile = async (index: number) => {
+  const removeFile = (index: number) => {
     if (!profile?.uploadedFiles) return;
     const file = profile.uploadedFiles[index];
-    if (file?.uploadedToBackend && file?.contractId) {
-      try {
-        await deleteContractDocument(file.contractId);
-      } catch (e) {
-        console.error("Delete contract failed:", e);
-        alert(`Could not remove document: ${e instanceof Error ? e.message : "Unknown error"}`);
-        return;
-      }
-    }
-    const next = profile.uploadedFiles.filter((_, i) => i !== index);
-    setProfile((prev) => (prev ? { ...prev, uploadedFiles: next } : null));
-    const existing = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-    const name = file?.name;
-    const nextStored = name ? existing.filter((f: { name: string }) => f.name !== name) : existing;
-    localStorage.setItem("uploadedFiles", JSON.stringify(nextStored));
+    const key = file.contractId || file.name;
+    setPendingRemovals((prev) => [...prev, key]);
   };
 
   function SearchFirstDropdown({
@@ -1111,30 +1106,36 @@ export default function ProfilePage() {
                   </div>
                   {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
                     <div className="mt-4 space-y-2">
-                      <h3 className="text-sm font-medium text-slate-700 mb-2">Uploaded Files ({profile.uploadedFiles.length})</h3>
-                      {profile.uploadedFiles.map((file, index) => (
-                        <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
-                          <div className="flex items-center space-x-3">
-                            <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm font-medium text-slate-900">{file.name}</p>
-                                {file.parsed && (
-                                  <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Parsed</span>
-                                )}
-                                {!file.parsed && (
-                                  <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
-                                )}
+                      <h3 className="text-sm font-medium text-slate-700 mb-2">
+                        Uploaded Files ({profile.uploadedFiles.filter((f) => !pendingRemovals.includes(f.contractId || f.name)).length})
+                      </h3>
+                      {profile.uploadedFiles.map((file, index) => {
+                        if (pendingRemovals.includes(file.contractId || file.name)) return null;
+                        return (
+                          <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
+                            <div className="flex items-center space-x-3">
+                              <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium text-slate-900">{file.name}</p>
+                                  {file.parsed && (
+                                    <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Parsed</span>
+                                  )}
+                                  {!file.parsed && (
+                                    <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(2)} KB</p>
                               </div>
                             </div>
+                            <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
+                              Remove
+                            </button>
                           </div>
-                          <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
-                            Remove
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
