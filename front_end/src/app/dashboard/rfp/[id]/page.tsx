@@ -756,18 +756,21 @@ export default function RFPDetailPage() {
               <h2 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h2>
               <div className="space-y-3">
                 {rfp.match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
-                  const pct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                  // All bars are the same full width; colored fill shows points/maxPoints ratio
+                  const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                  // Color based on fill percentage: red → orange → yellow → green
+                  const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
                   const barColor =
-                    b.status === "strong" ? "bg-emerald-500" :
-                    b.status === "partial" ? "bg-blue-400" :
-                    b.status === "weak" ? "bg-amber-400" :
-                    b.status === "missing" ? "bg-red-300" :
+                    fillRatio >= 0.75 ? "bg-emerald-500" :
+                    fillRatio >= 0.5 ? "bg-yellow-400" :
+                    fillRatio >= 0.25 ? "bg-orange-400" :
+                    fillRatio > 0 ? "bg-red-400" :
                     "bg-slate-200";
                   const textColor =
-                    b.status === "strong" ? "text-emerald-700" :
-                    b.status === "partial" ? "text-blue-700" :
-                    b.status === "weak" ? "text-amber-700" :
-                    b.status === "missing" ? "text-red-600" :
+                    fillRatio >= 0.75 ? "text-emerald-700" :
+                    fillRatio >= 0.5 ? "text-yellow-600" :
+                    fillRatio >= 0.25 ? "text-orange-600" :
+                    b.points === 0 && b.maxPoints > 0 ? "text-red-600" :
                     "text-slate-500";
 
                   return (
@@ -779,8 +782,9 @@ export default function RFPDetailPage() {
                         )}
                       </div>
                       {b.maxPoints > 0 ? (
-                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                        <div className="h-2 rounded-full overflow-hidden relative w-full">
+                          <div className="absolute inset-0 bg-slate-200 rounded-full" />
+                          <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${fillPct}%` }} />
                         </div>
                       ) : (
                         <p className={`text-xs ${textColor}`}>{b.detail}</p>
