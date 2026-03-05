@@ -243,7 +243,7 @@ export async function GET() {
 
       return {
         id: `event-${i}-${(e.event_id || "unknown").replace(/[/.]/g, "-")}`,
-        title: e.title || "Untitled",
+        title: (e.title || "Untitled").replace(/¿/g, "–"),
         agency: e.department || "Unknown Agency",
         location,
         deadline: e.end_date ? e.end_date.replace(/\s+/g, " ").trim() : "",

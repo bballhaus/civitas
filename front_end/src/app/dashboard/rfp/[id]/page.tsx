@@ -801,14 +801,10 @@ export default function RFPDetailPage() {
             <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
               <div className="flex items-start justify-between gap-2 mb-3">
                 <h2 className="text-sm font-bold text-slate-900">
-                  {rfp.match.disqualified ? "Match Analysis" : "Why this is a good match"}
+                  Match Analysis
                 </h2>
-                {summaryLoading ? (
+                {summaryLoading && (
                   <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
-                ) : (
-                  <svg className={`w-5 h-5 ${rfp.match.disqualified ? "text-red-400" : "text-blue-500"} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
                 )}
               </div>
               <p className="text-slate-700 leading-relaxed">{displaySummary}</p>

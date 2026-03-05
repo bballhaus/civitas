@@ -14,7 +14,8 @@ Your task: Write a focused analysis (150–250 words) that covers:
 - **Scope alignment** — How well the type of work described in the RFP matches the company's demonstrated experience
 
 Format your response in markdown:
-- Use **bold** for section headings
+- Do NOT include a title or heading like "Capabilities Analysis" at the top — jump straight into the content
+- Use **bold** for section headings (e.g., **What the company can fulfill**, **Potential gaps**, **Scope alignment**)
 - Use bullet points for specific items
 - Keep it scannable and factual — no encouragement or advice about improving the profile
 - If the company profile is missing, state that no profile is available and list what the RFP requires`;
