@@ -2,6 +2,9 @@ import logging
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.middleware.csrf import get_token
 from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -53,21 +56,49 @@ class SignupView(APIView):
 
         if not username or not password:
             return Response(
-                {'error': 'username and password required'},
+                {'error': 'Username and password are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not email:
+            return Response(
+                {'error': 'Email is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            validate_email(email)
+        except ValidationError:
+            return Response(
+                {'error': 'Please enter a valid email address.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            validate_password(password)
+        except ValidationError as e:
+            return Response(
+                {'error': ' '.join(e.messages)},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         User = get_user_model()
         if User.objects.filter(username__iexact=username).exists():
             return Response(
-                {'error': 'A user with that username already exists'},
+                {'error': 'A user with that username already exists.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(email__iexact=email).exists():
+            return Response(
+                {'error': 'An account with that email already exists.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         user = User.objects.create_user(
             username=username,
             password=password,
-            email=email or '',
+            email=email,
         )
         logger.info("Signup: creating profile in AWS for user_id=%s username=%s", user.id, user.username)
         get_or_create_profile(user.id)
@@ -534,10 +565,13 @@ class ContractListCreateView(generics.ListCreateAPIView):
                     data['title'] = extracted['title']
                 if not data.get('rfp_id') and extracted.get('rfp_id'):
                     data['rfp_id'] = extracted['rfp_id']
+                if not data.get('contractor_name') and extracted.get('contractor_name'):
+                    data['contractor_name'] = extracted['contractor_name']
             except ExtractionError:
                 pass
         metadata = {
             'title': data.get('title', ''),
+            'contractor_name': data.get('contractor_name', ''),
             'rfp_id': data.get('rfp_id', ''),
             'issuing_agency': data.get('issuing_agency', 'Unknown'),
             'contractor_name': data.get('contractor_name', ''),

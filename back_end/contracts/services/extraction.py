@@ -67,7 +67,7 @@ Expected schema:
 Rules:
 - rfp_id: RFP number, solicitation ID, contract number, or similar reference (e.g. "RFP-2024-001", "GS-00F-12345")
 - issuing_agency: the government agency or entity that awarded the contract (required)
-- contractor_name: the name of the COMPANY/CONTRACTOR that won this contract (the business that performed the work, NOT the government agency). Look for phrases like "awarded to", "contractor", "vendor", "company name", or the business entity name in the document.
+- contractor_name: CRITICAL - the legal name of the COMPANY/CONTRACTOR/VENDOR that won and performed this contract. This is NOT the government agency. Search carefully for: the business entity name on the cover page or letterhead, text after "awarded to", "contractor:", "vendor:", "consultant:", "firm:", "performed by:", "submitted by:", or "prepared by:". Also check for company names in signature blocks, headers, footers, or "About Us" sections. Examples: "Acme Construction LLC", "Smith Engineering Inc.", "Global IT Solutions Corp". If multiple companies appear, pick the prime contractor. Return the full legal entity name. Return null ONLY if genuinely absent.
 - title: contract/project title
 - jurisdiction: Extract state, county, and city from the document. Prefer explicit mentions (e.g. "County of Inyo", "State of California", "City of Sacramento"). When only a city is named, infer the county from California geography (e.g. Sacramento → Sacramento County, Los Angeles → Los Angeles County, Baker → Inyo County). Default state to "CA" when the document clearly refers to California. Use null only when not mentioned and cannot be inferred.
 - dates: ISO format YYYY-MM-DD when possible; award_date=when contract was awarded, start_date/end_date=period of performance

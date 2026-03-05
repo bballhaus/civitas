@@ -263,6 +263,10 @@ def refresh_profile_from_contracts(user):
             doc = getattr(c, "document", None) or ""
             created = getattr(c, "created_at", None) or ""
             uploaded_documents.append({"id": cid, "title": title, "document": doc, "created_at": created})
+    existing_name = profile_dict.get("name") or ""
+    if not existing_name and contractor_names:
+        profile_dict["name"] = sorted(contractor_names)[0]
+
     profile_dict.update(
         {
             "user_id": user.id,

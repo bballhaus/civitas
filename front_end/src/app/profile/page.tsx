@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -108,6 +108,7 @@ export default function ProfilePage() {
   const [profileLoadedFromBackend, setProfileLoadedFromBackend] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const pendingFilesRef = useRef<Map<string, File>>(new Map());
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -423,57 +424,26 @@ export default function ProfilePage() {
     let profileToSave = profile;
     try {
       if (editingSection === "documents") {
-        const storedFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-        const filesToUpload: File[] = [];
-        const namesToMarkUploaded: string[] = [];
-
         if (currentUser && getAuthToken()) {
-          for (const fileInfo of profile.uploadedFiles ?? []) {
+          for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
-            const stored = storedFiles.find((f: { name: string }) => f.name === fileInfo.name);
-            if (stored?.content) {
-              const base64Data = stored.content.split(",")[1];
-              if (base64Data) {
-                const byteCharacters = atob(base64Data);
-                const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                  byteNumbers[i] = byteCharacters.charCodeAt(i);
-                }
-                const blob = new Blob([new Uint8Array(byteNumbers)], { type: stored.type });
-                filesToUpload.push(new File([blob], stored.name, { type: stored.type }));
-                namesToMarkUploaded.push(fileInfo.name);
-              }
+            const file = pendingFilesRef.current.get(fileInfo.name);
+            if (file) {
+              await uploadContractDocument(file, file.name);
             }
           }
-          const nameToContractId: Record<string, string> = {};
-          for (const file of filesToUpload) {
-            const result = await uploadContractDocument(file, file.name);
-            if (result?.id) nameToContractId[file.name] = result.id;
-          }
-          if (namesToMarkUploaded.length > 0) {
-            setProfile((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    uploadedFiles: (prev.uploadedFiles ?? []).map((f) =>
-                      namesToMarkUploaded.includes(f.name)
-                        ? { ...f, uploadedToBackend: true, contractId: nameToContractId[f.name] ?? f.contractId }
-                        : f
-                    ),
-                  }
-                : null
-            );
-            profileToSave = {
-              ...profileToSave,
-              uploadedFiles: (profileToSave.uploadedFiles ?? []).map((f) =>
-                namesToMarkUploaded.includes(f.name)
-                  ? { ...f, uploadedToBackend: true, contractId: nameToContractId[f.name] ?? f.contractId }
-                  : f
-              ),
-            };
-          }
+          pendingFilesRef.current.clear();
+
+          const backendProfile = await getProfileFromBackend();
+          const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+          setProfile(mapped);
+          setCachedProfile(currentUser.user_id, mapped);
+          setEditingSection(null);
+          setSectionSaving(false);
+          return;
         }
 
+        const storedFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
         const unparsedFiles = profileToSave.uploadedFiles?.filter((file) => !file.parsed) || [];
         if (unparsedFiles.length > 0) {
           try {
@@ -497,10 +467,8 @@ export default function ProfilePage() {
             if (filesToParse.length > 0) {
               const extractedData = await parseDocumentsWithBackend(filesToParse);
 
-              // Merge extracted data with existing profile
               const mergedProfile = mergeProfileData(profileToSave, extractedData);
 
-              // Mark files as parsed
               const updatedFiles = (mergedProfile.uploadedFiles ?? []).map((file) =>
                 unparsedFiles.some((uf) => uf.name === file.name)
                   ? { ...file, parsed: true }
@@ -508,7 +476,6 @@ export default function ProfilePage() {
               );
               mergedProfile.uploadedFiles = updatedFiles;
 
-              // Update profile state
               setProfile(mergedProfile);
               profileToSave = mergedProfile;
             }
@@ -516,6 +483,14 @@ export default function ProfilePage() {
             console.error("Error parsing documents:", error);
             alert(`Warning: Could not parse some documents. Profile saved without updates from those files.`);
           }
+        }
+
+        if (currentUser && (removalsToProcess.length > 0 || filesToUpload.length > 0)) {
+          const backendProfile = await getProfileFromBackend();
+          const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+          setProfile(mapped);
+          setCachedProfile(currentUser.user_id, mapped);
+          profileToSave = mapped;
         }
       } else {
         profileToSave = profile;
@@ -548,42 +523,20 @@ export default function ProfilePage() {
         uploadedAt: new Date().toISOString(),
         parsed: false,
       };
+      pendingFilesRef.current.set(file.name, file);
       setProfile((prev) =>
         prev
           ? { ...prev, uploadedFiles: [...(prev.uploadedFiles ?? []), fileInfo] }
           : null
       );
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          const fileData = { ...fileInfo, content: event.target.result as string };
-          const existing = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-          existing.push(fileData);
-          localStorage.setItem("uploadedFiles", JSON.stringify(existing));
-        }
-      };
-      reader.readAsDataURL(file);
     });
   };
 
-  const removeFile = async (index: number) => {
+  const removeFile = (index: number) => {
     if (!profile?.uploadedFiles) return;
     const file = profile.uploadedFiles[index];
-    if (file?.uploadedToBackend && file?.contractId) {
-      try {
-        await deleteContractDocument(file.contractId);
-      } catch (e) {
-        console.error("Delete contract failed:", e);
-        alert(`Could not remove document: ${e instanceof Error ? e.message : "Unknown error"}`);
-        return;
-      }
-    }
-    const next = profile.uploadedFiles.filter((_, i) => i !== index);
-    setProfile((prev) => (prev ? { ...prev, uploadedFiles: next } : null));
-    const existing = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-    const name = file?.name;
-    const nextStored = name ? existing.filter((f: { name: string }) => f.name !== name) : existing;
-    localStorage.setItem("uploadedFiles", JSON.stringify(nextStored));
+    const key = file.contractId || file.name;
+    setPendingRemovals((prev) => [...prev, key]);
   };
 
   function SearchFirstDropdown({
@@ -1153,31 +1106,36 @@ export default function ProfilePage() {
                   </div>
                   {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
                     <div className="mt-4 space-y-2">
-                      <h3 className="text-sm font-medium text-slate-700 mb-2">Uploaded Files ({profile.uploadedFiles.length})</h3>
-                      {profile.uploadedFiles.map((file, index) => (
-                        <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
-                          <div className="flex items-center space-x-3">
-                            <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm font-medium text-slate-900">{file.name}</p>
-                                {file.parsed && (
-                                  <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Parsed</span>
-                                )}
-                                {!file.parsed && (
-                                  <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
-                                )}
+                      <h3 className="text-sm font-medium text-slate-700 mb-2">
+                        Uploaded Files ({profile.uploadedFiles.filter((f) => !pendingRemovals.includes(f.contractId || f.name)).length})
+                      </h3>
+                      {profile.uploadedFiles.map((file, index) => {
+                        if (pendingRemovals.includes(file.contractId || file.name)) return null;
+                        return (
+                          <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
+                            <div className="flex items-center space-x-3">
+                              <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium text-slate-900">{file.name}</p>
+                                  {file.parsed && (
+                                    <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Parsed</span>
+                                  )}
+                                  {!file.parsed && (
+                                    <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(2)} KB</p>
                               </div>
-                              <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(2)} KB</p>
                             </div>
+                            <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
+                              Remove
+                            </button>
                           </div>
-                          <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
-                            Remove
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1186,7 +1144,6 @@ export default function ProfilePage() {
                   {profile.uploadedFiles?.map((file, i) => (
                     <li key={i} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                       <span className="text-slate-700 font-medium">{file.name}</span>
-                      <span className="text-slate-500 text-sm">{(file.size / 1024).toFixed(2)} KB</span>
                     </li>
                   ))}
                 </ul>
