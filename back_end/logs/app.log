@@ -742,3 +742,125 @@ Read user data from S3 for username=testing_8
 Auth/me: returning user only (no S3) for user_id=10 username=testing_8
 Read user data from S3 for username=testing_8
 Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Token set in S3 for user_id=10 username=testing_8
+Login successful: user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Profile save: updated user JSON in S3 for user_id=10
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Token set in S3 for user_id=10 username=testing_8
+Login successful: user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: fetching user + profile from S3 for user_id=10 username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Auth/me: returning user + profile for user_id=10
+Read user data from S3 for username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Profile save: updated user JSON in S3 for user_id=10
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Profile save: updated user JSON in S3 for user_id=10
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Profile save: updated user JSON in S3 for user_id=10
