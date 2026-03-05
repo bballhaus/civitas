@@ -66,7 +66,6 @@ export interface CompanyProfileFromApi {
   uploadedFiles?: Array<{
     name: string;
     type: string;
-    size: number;
     uploadedAt: string;
     parsed?: boolean;
     uploadedToBackend?: boolean;
@@ -100,9 +99,8 @@ export function mapBackendProfileToCompanyProfile(
     strategicGoals: "",
     uploadedFiles: Array.isArray(p.uploaded_documents)
       ? p.uploaded_documents.map((d) => ({
-          name: d.title || "document",
+          name: (d.title || "document").split("/").pop() || "document",
           type: "application/octet-stream",
-          size: 0,
           uploadedAt: d.created_at || "",
           parsed: true,
           uploadedToBackend: true,
