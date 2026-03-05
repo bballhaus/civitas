@@ -5,11 +5,10 @@ const PROMPT = `You are helping a vendor/contractor understand why an RFP (Reque
 
 Given:
 1) The RFP details (title, agency, industry, capabilities, location, deadline, description snippet)
-2) Attachment-derived data (NAICS codes, certifications, clearances, set-asides, deliverables) if available — this comes from the actual RFP attachment PDFs
-3) The company's full profile (industries, capabilities, certifications, locations, agency experience, contract types, technology stack)
-4) A rule-based match summary with score, tier, and reasons
-5) A per-category score breakdown showing how points were earned
-6) Any disqualifiers (hard blockers like expired deadlines or missing clearances)
+2) The company's full profile (industries, capabilities, certifications, locations, agency experience, contract types)
+3) A rule-based match summary that lists reasons like "the deadline is still open", "industry aligns", "capabilities align: X"
+4) Optional lists of positive and negative match reasons
+5) Optional attachment-derived key requirements and constraints (e.g., certifications, clearances, set-asides, geography)
 
 Important scoring context:
 - When an RFP does NOT specify a requirement for a category (e.g., no NAICS codes, no certifications), the company earns FULL points for that category. This means "no requirement = everyone qualifies" and is expected, not a flaw.
@@ -42,20 +41,12 @@ export async function POST(req: Request) {
       currentSummary,
       positiveReasons,
       negativeReasons,
-      disqualifiers,
-      breakdown,
-      score,
-      tier,
     }: {
       rfp: Record<string, unknown>;
       profile: Record<string, unknown> | null;
       currentSummary: string;
       positiveReasons?: string[];
       negativeReasons?: string[];
-      disqualifiers?: string[];
-      breakdown?: Array<{ category: string; points: number; maxPoints: number; status: string; detail: string }>;
-      score?: number;
-      tier?: string;
     } = body;
 
     if (!rfp || !currentSummary) {
@@ -66,57 +57,15 @@ export async function POST(req: Request) {
     }
 
     const client = new Groq({ apiKey });
-
-    // Build a compact RFP summary with attachment data highlighted
-    const rfpSummary: Record<string, unknown> = {
-      title: rfp.title,
-      agency: rfp.agency,
-      industry: rfp.industry,
-      location: rfp.location,
-      capabilities: rfp.capabilities,
-      certifications: rfp.certifications,
-      estimatedValue: rfp.estimatedValue,
-    };
-
-    // Include attachment-derived fields when present
-    const rfpAny = rfp as Record<string, unknown>;
-    if (Array.isArray(rfpAny.naicsCodes) && (rfpAny.naicsCodes as string[]).length > 0)
-      rfpSummary.naicsCodes = rfpAny.naicsCodes;
-    if (Array.isArray(rfpAny.clearancesRequired) && (rfpAny.clearancesRequired as string[]).length > 0)
-      rfpSummary.clearancesRequired = rfpAny.clearancesRequired;
-    if (Array.isArray(rfpAny.setAsideTypes) && (rfpAny.setAsideTypes as string[]).length > 0)
-      rfpSummary.setAsideTypes = rfpAny.setAsideTypes;
-    if (Array.isArray(rfpAny.deliverables) && (rfpAny.deliverables as string[]).length > 0)
-      rfpSummary.deliverables = (rfpAny.deliverables as string[]).slice(0, 5);
-    if (rfpAny.attachmentRollup && typeof rfpAny.attachmentRollup === "object") {
-      const rollup = rfpAny.attachmentRollup as { summary?: string };
-      if (rollup.summary) rfpSummary.attachmentSummary = rollup.summary;
-    }
-
-    // Build compact profile summary with new enriched fields
-    let profileSummary = "No profile";
-    if (profile) {
-      const profileAny = profile as Record<string, unknown>;
-      const compactProfile: Record<string, unknown> = { ...profile };
-      // Include technology stack if present
-      if (Array.isArray(profileAny.technologyStack) && (profileAny.technologyStack as string[]).length > 0) {
-        compactProfile.technologyStack = profileAny.technologyStack;
-      }
-      // Include max single contract value if present
-      if (profileAny.maxSingleContractValue) {
-        compactProfile.maxSingleContractValue = profileAny.maxSingleContractValue;
-      }
-      profileSummary = JSON.stringify(compactProfile);
-    }
-
-    const input = `RFP: ${JSON.stringify(rfpSummary)}
-Profile: ${profileSummary}
-Score: ${score ?? "unknown"}/100 (Tier: ${tier ?? "unknown"})
+    const input = `RFP: ${JSON.stringify(rfp)}
+Profile: ${profile ? JSON.stringify(profile) : "No profile"}
 Rule-based summary: ${currentSummary}
-Positive reasons: ${JSON.stringify(positiveReasons ?? [])}
-Negative reasons: ${JSON.stringify(negativeReasons ?? [])}
-Disqualifiers: ${JSON.stringify(disqualifiers ?? [])}
-Score breakdown: ${JSON.stringify(breakdown ?? [])}`;
+Positive reasons: ${
+      Array.isArray(positiveReasons) ? JSON.stringify(positiveReasons) : "[]"
+    }
+Negative reasons: ${
+      Array.isArray(negativeReasons) ? JSON.stringify(negativeReasons) : "[]"
+    }`;
 
     const completion = await client.chat.completions.create({
       model: "llama-3.1-8b-instant",
