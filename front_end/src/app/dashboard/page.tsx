@@ -1176,6 +1176,9 @@ function RFPDetailPanel({
   const [requirementsSummary, setRequirementsSummary] = useState<string | null>(null);
   const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
   const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
+  const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
+  const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
+  const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
 
   useEffect(() => {
     if (cachedSummary) {
@@ -1291,6 +1294,67 @@ function RFPDetailPanel({
     fetchRequirementsSummary();
     return () => { cancelled = true; };
   }, [rfp.id, rfp.description, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.contractType, rfp.capabilities, rfp.certifications, rfp.estimatedValue]);
+
+  // Fetch capabilities analysis (compares RFP requirements against company profile)
+  useEffect(() => {
+    let cancelled = false;
+    setCapabilitiesAnalysisLoading(true);
+    setCapabilitiesAnalysisError(false);
+
+    async function fetchCapabilitiesAnalysis() {
+      try {
+        const res = await fetch("/api/capabilities-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rfp: {
+              title: rfp.title,
+              agency: rfp.agency,
+              industry: rfp.industry,
+              location: rfp.location,
+              capabilities: rfp.capabilities,
+              certifications: rfp.certifications,
+              contractType: rfp.contractType,
+              naicsCodes: (rfp as any).naicsCodes,
+              estimatedValue: rfp.estimatedValue,
+              description: (rfp.description || "").slice(0, 3000),
+              attachmentRollup: (rfp as any).attachmentRollup ?? null,
+            },
+            profile: profile
+              ? {
+                  companyName: profile.companyName,
+                  industry: profile.industry,
+                  capabilities: profile.capabilities,
+                  certifications: profile.certifications,
+                  workCities: profile.workCities,
+                  workCounties: profile.workCounties,
+                  agencyExperience: profile.agencyExperience,
+                  contractTypes: profile.contractTypes,
+                  technologyStack: profile.technologyStack,
+                }
+              : null,
+            breakdown: match.breakdown,
+          }),
+        });
+        if (cancelled) return;
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (cancelled) return;
+        setCapabilitiesAnalysis(data.analysis ?? null);
+      } catch (err) {
+        console.error("[capabilities-analysis] Fetch failed:", err);
+        if (!cancelled) {
+          setCapabilitiesAnalysisError(true);
+          setCapabilitiesAnalysis(null);
+        }
+      } finally {
+        if (!cancelled) setCapabilitiesAnalysisLoading(false);
+      }
+    }
+
+    fetchCapabilitiesAnalysis();
+    return () => { cancelled = true; };
+  }, [rfp.id, profile]);
 
   const summary = llmSummary ?? initialSummary;
   const isLoadingSummary = llmSummary === null && !summaryError;
@@ -1423,14 +1487,10 @@ function RFPDetailPanel({
           <div className={`rounded-xl border-2 ${match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
             <div className="flex items-start justify-between gap-2 mb-3">
               <h4 className="text-sm font-bold text-slate-900">
-                {match.disqualified ? "Match Analysis" : "Why this is a good match"}
+                Match Analysis
               </h4>
-              {isLoadingSummary ? (
+              {isLoadingSummary && (
                 <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
-              ) : (
-                <svg className={`w-5 h-5 ${match.disqualified ? "text-red-400" : "text-blue-500"} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
               )}
             </div>
             <p className="text-slate-700 leading-relaxed">{summary}</p>
@@ -1484,6 +1544,20 @@ function RFPDetailPanel({
           </div>
         )}
 
+        {/* Capabilities Analysis - AI comparison of company profile vs RFP requirements */}
+        <div className="p-6 md:p-8 border-t border-slate-100">
+          <h4 className="text-sm font-bold text-slate-900 mb-3">Capabilities Analysis</h4>
+          {capabilitiesAnalysisLoading ? (
+            <p className="text-slate-500 text-sm animate-pulse">Analyzing capabilities against requirements…</p>
+          ) : capabilitiesAnalysis ? (
+            <MarkdownContent content={capabilitiesAnalysis} />
+          ) : capabilitiesAnalysisError ? (
+            <p className="text-xs text-amber-600">Capabilities analysis unavailable.</p>
+          ) : (
+            <p className="text-slate-500 text-sm">No company profile available for analysis.</p>
+          )}
+        </div>
+
         {/* About this RFP - AI summary of contract requirements */}
         <div className="p-6 md:p-8 border-t border-slate-100">
           <h4 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h4>
@@ -1499,34 +1573,16 @@ function RFPDetailPanel({
           )}
         </div>
 
-        {/* Tags */}
-        <div className="p-6 md:p-8 border-t border-slate-100">
-          <h4 className="text-sm font-bold text-slate-900 mb-3">Details</h4>
-          <div className="flex flex-wrap gap-2">
-            {rfp.naicsCodes?.map((n) => (
-              <span key={n} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600">
-                NAICS {n}
-              </span>
-            ))}
-            {rfp.capabilities?.map((c) => (
-              <span key={c} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-600">
-                {c}
-              </span>
-            ))}
-            {(!rfp.naicsCodes?.length && !rfp.capabilities?.length) && (
-              <span className="text-sm text-slate-500">See description for full details</span>
+        {/* Contact info */}
+        {(rfp.contactEmail || rfp.contactName) && (
+          <div className="p-6 md:p-8 border-t border-slate-100">
+            <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Contact</h5>
+            {rfp.contactName && <p className="text-sm text-slate-700">{rfp.contactName}</p>}
+            {rfp.contactEmail && (
+              <a href={`mailto:${rfp.contactEmail}`} className="text-sm text-[#2563eb] hover:underline">{rfp.contactEmail}</a>
             )}
           </div>
-          {(rfp.contactEmail || rfp.contactName) && (
-            <div className="mt-4 pt-4 border-t border-slate-100">
-              <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Contact</h5>
-              {rfp.contactName && <p className="text-sm text-slate-700">{rfp.contactName}</p>}
-              {rfp.contactEmail && (
-                <a href={`mailto:${rfp.contactEmail}`} className="text-sm text-[#2563eb] hover:underline">{rfp.contactEmail}</a>
-              )}
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </article>
   );

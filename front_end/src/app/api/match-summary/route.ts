@@ -10,7 +10,18 @@ Given:
 4) Optional lists of positive and negative match reasons
 5) Optional attachment-derived key requirements and constraints (e.g., certifications, clearances, set-asides, geography)
 
-Your task: Write a short, natural 1-3 sentence summary explaining why this RFP is a good match (or why it might not be). Use the rule-based summary and reason lists as a starting point but make it more personalized and readable. When attachment-derived requirements are provided, explicitly mention important constraints (like certifications, clearances, set-asides, or geography) and whether the company appears to meet them. Reference specific overlaps. Keep it conversational and under 80 words. No bullet points.`;
+Important scoring context:
+- When an RFP does NOT specify a requirement for a category (e.g., no NAICS codes, no certifications), the company earns FULL points for that category. This means "no requirement = everyone qualifies" and is expected, not a flaw.
+- A high score on a generic RFP (few specific requirements) is normal — the company isn't penalized for requirements that don't exist.
+- Focus explanations on categories where there IS a specific RFP requirement and how the company matches or doesn't match.
+
+Your task: Write a short, natural 2-4 sentence summary explaining why this RFP is or isn't a good match for the company. Be specific — name the overlapping capabilities, industries, certifications, or NAICS codes that drive the score. When attachment-derived data is present, reference specific requirements from the attachments. If disqualified, explain clearly why. If a strong match, explain exactly which company strengths align with which RFP requirements. If weak, explain which specific RFP requirements the company doesn't meet.
+
+Rules:
+- Do NOT suggest profile updates, improvements, or ways to strengthen the match
+- Do NOT use filler phrases like "let's take a closer look", "to better understand", or "review the breakdown"
+- Focus entirely on the specific alignment (or misalignment) between the company and the RFP
+- Keep it conversational and under 100 words. No bullet points.`;
 
 export async function POST(req: Request) {
   try {

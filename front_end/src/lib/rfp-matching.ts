@@ -116,6 +116,45 @@ function toTokenSet(values: string[]): Set<string> {
   return new Set(tokens);
 }
 
+// Stop words for description matching — filtered to prevent high-frequency
+// non-domain words from inflating coverage scores. Only used in the description
+// matching section, NOT in structured field matching (capabilities, industry, etc.).
+const STOP_WORDS = new Set([
+  // Articles & determiners
+  "the", "an", "this", "that", "these", "those", "each", "every",
+  "any", "all", "both", "few", "more", "most", "other", "some", "such", "no",
+  // Pronouns
+  "it", "its", "they", "them", "their", "we", "our", "you", "your", "he",
+  "she", "his", "her", "who", "whom", "which", "what",
+  // Prepositions
+  "of", "in", "to", "for", "with", "on", "at", "from", "by", "about",
+  "as", "into", "through", "during", "before", "after", "above", "below",
+  "between", "under", "over", "up",
+  // Conjunctions
+  "and", "but", "or", "nor", "so", "yet", "if", "when", "while",
+  "because", "although", "unless", "until", "than",
+  // Common verbs (non-domain)
+  "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+  "do", "does", "did", "will", "would", "shall", "should", "may", "might",
+  "can", "could", "must", "need", "get", "make", "made", "let",
+  // RFP/procurement boilerplate
+  "services", "service", "contractor", "contract", "contracts",
+  "provide", "provided", "providing", "required", "requires", "requirement",
+  "requirements", "including", "include", "includes", "within", "upon",
+  "pursuant", "accordance", "applicable", "appropriate", "ensure",
+  "responsible", "related", "also", "per", "not",
+  "state", "department", "agency", "work", "proposal",
+  // Generic abstract nouns in every RFP
+  "management", "information", "based", "following", "described",
+  "period", "date", "time", "days", "years", "year",
+  "section", "item", "items", "number", "order", "part",
+  "total", "amount", "price", "cost",
+  // Miscellaneous high-frequency low-signal
+  "new", "use", "used", "using", "well", "one", "two", "first",
+  "second", "only", "very", "just", "how", "where", "then",
+  "there", "here", "now", "way", "own", "same", "able",
+]);
+
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 && b.size === 0) return 0;
   let intersection = 0;
@@ -702,7 +741,7 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
 
   let score = 0;
 
-  // --- Capabilities (max 20 pts) ---
+  // --- Capabilities (max 15 pts) ---
   // Empty = 50% (relevance unknown, not a positive signal)
   const capSimilarity = synonymAwareJaccard(rfpCapTokens, profileCapsTokens);
   const capOverlap = synonymAwareOverlap(rfp.capabilities ?? [], profileCapsTokens);
@@ -710,39 +749,39 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     if (capSimilarity > 0 || capOverlap.length > 0) {
       const pts = scoreFromSimilarity(
         clamp(capSimilarity + capOverlap.length * 0.05, 0, 1),
-        20
+        15
       );
       score += pts;
       const detail = capOverlap.length > 0
         ? `Capabilities align: ${capOverlap.slice(0, 3).join(", ")}`
         : "Capabilities align with your profile.";
       positiveReasons.push(detail);
-      breakdown.push({ category: "Capabilities", points: Math.round(pts), maxPoints: 20, status: pts >= 14 ? "strong" : "partial", detail });
+      breakdown.push({ category: "Capabilities", points: Math.round(pts), maxPoints: 15, status: pts >= 11 ? "strong" : "partial", detail });
     } else {
       negativeReasons.push("Limited capability overlap with your profile.");
-      breakdown.push({ category: "Capabilities", points: 0, maxPoints: 20, status: "missing", detail: "No capability overlap detected." });
+      breakdown.push({ category: "Capabilities", points: 0, maxPoints: 15, status: "missing", detail: "No capability overlap detected." });
     }
   } else {
-    score += 10;
-    breakdown.push({ category: "Capabilities", points: 10, maxPoints: 20, status: "weak", detail: "No specific capabilities listed — not a strong relevance signal." });
+    score += 8;
+    breakdown.push({ category: "Capabilities", points: 8, maxPoints: 15, status: "weak", detail: "No specific capabilities listed — not a strong relevance signal." });
   }
 
-  // --- Industry (max 15 pts) ---
+  // --- Industry (max 12 pts) ---
   // Empty = 50% (relevance unknown)
   const industrySimilarity = synonymAwareJaccard(rfpIndustryTokens, profileIndustryTokens);
   if ((rfp.industry ?? "").trim()) {
     if (industrySimilarity > 0) {
-      const pts = scoreFromSimilarity(industrySimilarity, 15);
+      const pts = scoreFromSimilarity(industrySimilarity, 12);
       score += pts;
       positiveReasons.push("Industry aligns with your profile.");
-      breakdown.push({ category: "Industry", points: Math.round(pts), maxPoints: 15, status: pts >= 10 ? "strong" : "partial", detail: "Industry match found." });
+      breakdown.push({ category: "Industry", points: Math.round(pts), maxPoints: 12, status: pts >= 8 ? "strong" : "partial", detail: "Industry match found." });
     } else {
       negativeReasons.push(`Industry (${rfp.industry}) not reflected in your profile.`);
-      breakdown.push({ category: "Industry", points: 0, maxPoints: 15, status: "weak", detail: `Industry "${rfp.industry}" not in your profile.` });
+      breakdown.push({ category: "Industry", points: 0, maxPoints: 12, status: "weak", detail: `Industry "${rfp.industry}" not in your profile.` });
     }
   } else {
-    score += 8;
-    breakdown.push({ category: "Industry", points: 8, maxPoints: 15, status: "weak", detail: "No specific industry listed — not a strong relevance signal." });
+    score += 6;
+    breakdown.push({ category: "Industry", points: 6, maxPoints: 12, status: "weak", detail: "No specific industry listed — not a strong relevance signal." });
   }
 
   // --- NAICS Codes (max 10 pts) ---
@@ -792,7 +831,7 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     breakdown.push({ category: "Certifications", points: 10, maxPoints: 10, status: "strong", detail: "No certifications required — you're eligible." });
   }
 
-  // --- Location (max 10 pts) ---
+  // --- Location (max 8 pts) ---
   // Use geographic proximity instead of pure token Jaccard
   if ((rfp.location ?? "").trim().length > 0) {
     const proxScore = locationProximityScore(rfp.location, profile.workCities ?? [], profile.workCounties ?? []);
@@ -801,20 +840,20 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     const locScore = Math.max(proxScore, tokenLocScore);
 
     if (locScore > 0) {
-      const pts = 10 * locScore;
+      const pts = 8 * locScore;
       score += pts;
       const locDetail = proxScore >= 0.75 ? "Work location is in your metro area." : "Work location aligns with your service area.";
       positiveReasons.push("Location aligns with your service area.");
-      breakdown.push({ category: "Location", points: Math.round(pts), maxPoints: 10, status: locScore >= 0.75 ? "strong" : "partial", detail: locDetail });
+      breakdown.push({ category: "Location", points: Math.round(pts), maxPoints: 8, status: locScore >= 0.75 ? "strong" : "partial", detail: locDetail });
     } else if (profileLocationTokens.size > 0 || (profile.workCities ?? []).length > 0) {
       negativeReasons.push("Location may be outside your service area.");
-      breakdown.push({ category: "Location", points: 0, maxPoints: 10, status: "weak", detail: `"${rfp.location}" is not in your listed service areas.` });
+      breakdown.push({ category: "Location", points: 0, maxPoints: 8, status: "weak", detail: `"${rfp.location}" is not in your listed service areas.` });
     } else {
-      breakdown.push({ category: "Location", points: 0, maxPoints: 10, status: "neutral", detail: "No service areas listed in your profile." });
+      breakdown.push({ category: "Location", points: 0, maxPoints: 8, status: "neutral", detail: "No service areas listed in your profile." });
     }
   } else {
-    score += 10;
-    breakdown.push({ category: "Location", points: 10, maxPoints: 10, status: "strong", detail: "No location restriction." });
+    score += 8;
+    breakdown.push({ category: "Location", points: 8, maxPoints: 8, status: "strong", detail: "No location restriction." });
   }
 
   // --- Agency Experience (max 10 pts) ---
@@ -848,42 +887,54 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     breakdown.push({ category: "Contract Type", points: 5, maxPoints: 5, status: "strong", detail: "No contract type specified." });
   }
 
-  // --- Description / Title text match (max 20 pts) ---
+  // --- Description / Title text match (max 30 pts) ---
   // Highest weight — the best signal for actual content relevance.
   // Uses COVERAGE metric instead of Jaccard: what fraction of profile keywords
   // appear in the RFP description? Jaccard fails here because both token sets
   // are large (200+ tokens) so even 20 overlapping tokens give tiny ratios.
+  // Stop words are filtered from both sides so only domain-relevant terms count.
+  const profileCompanyTokens = profile.companyName
+    ? new Set(tokenize(profile.companyName).filter((t) => !STOP_WORDS.has(t)))
+    : new Set<string>();
+  const profileTechTokens = (profile.technologyStack ?? []).length > 0
+    ? new Set(profile.technologyStack!.flatMap((t) => tokenize(t)).filter((t) => !STOP_WORDS.has(t)))
+    : new Set<string>();
   const profileTextTokens = new Set<string>([
     ...expandWithSynonyms(profileIndustryTokens),
     ...expandWithSynonyms(profileCapsTokens),
     ...expandWithSynonyms(profileCertTokens),
     ...profileAgencyTokens,
+    ...profileCompanyTokens,
+    ...expandWithSynonyms(profileTechTokens),
   ]);
+  // Filter stop words from both sides for description matching only
+  const profileTextFiltered = new Set([...profileTextTokens].filter((t) => !STOP_WORDS.has(t)));
+  const rfpDescFiltered = new Set([...rfpDescTokens].filter((t) => !STOP_WORDS.has(t)));
   // Coverage: what fraction of the PROFILE tokens appear in the RFP description
-  const descOverlapTokens = [...profileTextTokens].filter((t) => rfpDescTokens.has(t));
-  const descCoverage = descOverlapTokens.length / Math.max(1, profileTextTokens.size);
+  const descOverlapTokens = [...profileTextFiltered].filter((t) => rfpDescFiltered.has(t));
+  const descCoverage = descOverlapTokens.length / Math.max(1, profileTextFiltered.size);
   // Also compute reverse coverage: what fraction of RFP description's meaningful tokens match profile
-  const rfpInProfile = [...rfpDescTokens].filter((t) => profileTextTokens.has(t));
-  const reverseCoverage = rfpInProfile.length / Math.max(1, rfpDescTokens.size);
+  const rfpInProfile = [...rfpDescFiltered].filter((t) => profileTextFiltered.has(t));
+  const reverseCoverage = rfpInProfile.length / Math.max(1, rfpDescFiltered.size);
   // Use the geometric mean of both coverages to balance the signal
   const descRelevance = Math.sqrt(descCoverage * reverseCoverage);
   // Also keep Jaccard as a floor (prevents zero-scoring when coverage is asymmetric)
-  const descJaccard = jaccardSimilarity(rfpDescTokens, profileTextTokens);
+  const descJaccard = jaccardSimilarity(rfpDescFiltered, profileTextFiltered);
   const descScore = Math.max(descRelevance, descJaccard);
 
   if (descScore > 0.01) {
-    const pts = scoreFromSimilarity(Math.min(descScore * 3, 1), 20); // scale up: 0.33 coverage → full points
+    const pts = scoreFromSimilarity(Math.min(descScore * 2.5, 1), 30); // scale up: 0.40 coverage → full points
     score += pts;
-    if (pts >= 14) {
+    if (pts >= 21) {
       positiveReasons.push("RFP description strongly matches your profile keywords.");
-    } else if (pts >= 6) {
+    } else if (pts >= 10) {
       positiveReasons.push("Description language matches your profile keywords.");
     } else {
       positiveReasons.push("Some description keywords overlap with your profile.");
     }
-    breakdown.push({ category: "Description Match", points: Math.round(pts), maxPoints: 20, status: pts >= 14 ? "strong" : pts >= 6 ? "partial" : "weak", detail: `${descOverlapTokens.length} profile keywords found in RFP description.` });
+    breakdown.push({ category: "Description Match", points: Math.round(pts), maxPoints: 30, status: pts >= 21 ? "strong" : pts >= 10 ? "partial" : "weak", detail: `${descOverlapTokens.length} profile keywords found in RFP description.` });
   } else {
-    breakdown.push({ category: "Description Match", points: 0, maxPoints: 20, status: "weak", detail: "RFP description has little keyword overlap with your profile." });
+    breakdown.push({ category: "Description Match", points: 0, maxPoints: 30, status: "weak", detail: "RFP description has little keyword overlap with your profile." });
   }
 
   // --- Technology Stack overlap (informational, 0 scored points) ---
@@ -980,57 +1031,60 @@ export function generateMatchSummary(_rfp: RFP, match: RFPMatch): string {
   const strengths = positiveReasons;
   const gaps = negativeReasons;
 
-  // Pull top scored categories from breakdown for specificity
-  const topCategories = breakdown
-    .filter((b) => b.maxPoints > 0 && b.status === "strong")
-    .map((b) => b.category);
-  const weakCategories = breakdown
-    .filter((b) => b.maxPoints > 0 && (b.status === "missing" || b.status === "weak"))
-    .map((b) => b.category);
+  // Build specific insights from breakdown scores
+  const scored = breakdown.filter((b) => b.maxPoints > 0);
+  const topScored = scored
+    .filter((b) => b.points > 0)
+    .sort((a, b) => (b.points / b.maxPoints) - (a.points / a.maxPoints));
+  const topNames = topScored.map((b) => b.category.toLowerCase());
+
+  // Identify the biggest contributor to the score
+  const descEntry = scored.find((b) => b.category === "Description Match");
+  const descPts = descEntry?.points ?? 0;
+  const descIsTop = descPts >= 15; // description drove a big chunk of the score
 
   if (disqualified && disqualifiers.length > 0) {
     const dq = disqualifiers[0].replace(/\.$/, "");
     return `Not eligible: ${dq.charAt(0).toLowerCase() + dq.slice(1)}.`;
   }
 
+  // Build a reason string from the top 2 specific strengths
+  const specificReasons = strengths.slice(0, 2).map(fmt).join(", and ");
+
   if (tier === "excellent") {
-    if (strengths.length >= 2) {
-      return `Strong match in ${topCategories.slice(0, 3).join(", ").toLowerCase()}. ${fmt(strengths[0])}.`;
+    if (descIsTop && specificReasons) {
+      return `Excellent fit — the RFP description closely matches your profile. ${specificReasons.charAt(0).toUpperCase() + specificReasons.slice(1)}.`;
     }
-    return strengths.length > 0
-      ? `Excellent fit: ${fmt(strengths[0])}. Well-aligned across key categories.`
-      : "Strong overall alignment with your profile across multiple categories.";
+    if (specificReasons) {
+      return `Excellent fit: ${specificReasons}. Strong alignment across ${topNames.slice(0, 3).join(", ")}.`;
+    }
+    return `Strong alignment across ${topNames.slice(0, 3).join(", ")}.`;
   }
 
   if (tier === "strong") {
-    if (strengths.length > 0 && gaps.length > 0) {
-      return `${fmt(strengths[0])}, but ${fmt(gaps[0])}.`;
+    if (descIsTop && specificReasons) {
+      return `Good fit — RFP scope aligns with your experience. ${specificReasons.charAt(0).toUpperCase() + specificReasons.slice(1)}.`;
     }
-    return strengths.length > 0
-      ? `Good fit: ${fmt(strengths[0])}. Review breakdown for details.`
-      : "Good overall alignment with your profile.";
+    if (specificReasons) {
+      return `Good fit: ${specificReasons}.`;
+    }
+    return `Good alignment in ${topNames.slice(0, 3).join(", ")}.`;
   }
 
   if (tier === "moderate") {
-    if (strengths.length > 0 && weakCategories.length > 0) {
-      return `${fmt(strengths[0])}, but gaps in ${weakCategories.slice(0, 2).join(" and ").toLowerCase()}.`;
+    if (specificReasons) {
+      return `Partial fit: ${specificReasons}, but limited overlap in other areas.`;
     }
-    if (strengths.length > 0) {
-      return `Partial fit: ${fmt(strengths[0])}. Other areas don't align.`;
-    }
-    return "Some overlap found, but key areas like capabilities and industry don't align.";
+    return `Some overlap in ${topNames.slice(0, 2).join(" and ") || "a few areas"}, but limited overall alignment.`;
   }
 
   // Low tier
   if (score > 0) {
-    if (weakCategories.length > 0) {
-      return `Low match — gaps in ${weakCategories.slice(0, 3).join(", ").toLowerCase()}. May not be the right fit.`;
+    if (specificReasons) {
+      return `Low match: ${specificReasons}, but most categories don't align.`;
     }
-    if (gaps.length > 0) {
-      return `Low match: ${fmt(gaps[0])}. Profile updates may help.`;
-    }
-    return "Minimal overlap with your profile. Review breakdown for details.";
+    return "Minimal overlap with your profile across most categories.";
   }
 
-  return "Complete your profile for personalized match scores.";
+  return "No significant overlap with your profile.";
 }
