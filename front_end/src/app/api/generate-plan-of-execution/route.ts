@@ -86,7 +86,7 @@ ${currentPlan}
 ---
 
 User feedback:
-${feedback?.trim() ?? ""}
+${trimmedFeedback}
 
 Produce the full revised plan:`;
     } else {

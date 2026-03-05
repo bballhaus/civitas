@@ -95,7 +95,7 @@ export default function RFPDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    if (!rfpData || !profileLoaded) return;
+    if (!rfpData) return;
     const rfp: RFP = rfpData;
 
     let cancelled = false;
@@ -137,10 +137,6 @@ export default function RFPDetailPage() {
             currentSummary: initialSummary,
             positiveReasons: match.positiveReasons,
             negativeReasons: match.negativeReasons,
-            disqualifiers: match.disqualifiers,
-            breakdown: match.breakdown,
-            score: match.score,
-            tier: match.tier,
           }),
         });
         if (cancelled) return;

@@ -289,7 +289,7 @@ export default function ProfilePage() {
             : file
         );
         mergedProfile.uploadedFiles = updatedFiles;
-
+        
         // Update profile state
         setProfile(mergedProfile);
 
@@ -466,16 +466,13 @@ export default function ProfilePage() {
             }
             if (filesToParse.length > 0) {
               const extractedData = await parseDocumentsWithBackend(filesToParse);
-
               const mergedProfile = mergeProfileData(profileToSave, extractedData);
-
               const updatedFiles = (mergedProfile.uploadedFiles ?? []).map((file) =>
                 unparsedFiles.some((uf) => uf.name === file.name)
                   ? { ...file, parsed: true }
                   : file
               );
               mergedProfile.uploadedFiles = updatedFiles;
-
               setProfile(mergedProfile);
               profileToSave = mergedProfile;
             }
