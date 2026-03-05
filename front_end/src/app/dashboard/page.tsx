@@ -1446,9 +1446,7 @@ function RFPDetailPanel({
             <h4 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h4>
             <div className="space-y-2">
               {match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
-                const largestMax = Math.max(...match.breakdown.map((x) => x.maxPoints), 1);
-                const bgPct = (b.maxPoints / largestMax) * 100;
-                const fillPct = (b.points / largestMax) * 100;
+                const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
                 const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
                 const barColor =
                   fillRatio >= 0.75 ? "bg-emerald-500" :
@@ -1468,9 +1466,9 @@ function RFPDetailPanel({
                     <span className="text-xs font-medium text-slate-700 w-28 shrink-0 truncate" title={b.category}>{b.category}</span>
                     {b.maxPoints > 0 ? (
                       <>
-                        <div className="h-2 rounded-full overflow-hidden relative" style={{ width: `${bgPct}%`, flex: `0 0 ${bgPct}%` }}>
+                        <div className="h-2 rounded-full overflow-hidden relative flex-1">
                           <div className="absolute inset-0 bg-slate-200 rounded-full" />
-                          <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: fillPct > 0 ? `${(fillPct / bgPct) * 100}%` : '0%' }} />
+                          <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${fillPct}%` }} />
                         </div>
                         <span className={`text-xs font-bold w-12 text-right shrink-0 ${textColor}`}>
                           {b.points}/{b.maxPoints}
