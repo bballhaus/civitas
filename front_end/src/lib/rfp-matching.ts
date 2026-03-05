@@ -724,7 +724,7 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     }
   } else {
     score += 10;
-    breakdown.push({ category: "Capabilities", points: 10, maxPoints: 20, status: "neutral", detail: "No specific capabilities listed — not a strong relevance signal." });
+    breakdown.push({ category: "Capabilities", points: 10, maxPoints: 20, status: "weak", detail: "No specific capabilities listed — not a strong relevance signal." });
   }
 
   // --- Industry (max 15 pts) ---
@@ -742,7 +742,7 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     }
   } else {
     score += 8;
-    breakdown.push({ category: "Industry", points: 8, maxPoints: 15, status: "neutral", detail: "No specific industry listed — not a strong relevance signal." });
+    breakdown.push({ category: "Industry", points: 8, maxPoints: 15, status: "weak", detail: "No specific industry listed — not a strong relevance signal." });
   }
 
   // --- NAICS Codes (max 10 pts) ---
@@ -761,7 +761,7 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     }
   } else {
     score += 5;
-    breakdown.push({ category: "NAICS Codes", points: 5, maxPoints: 10, status: "neutral", detail: "No NAICS codes listed — not a strong relevance signal." });
+    breakdown.push({ category: "NAICS Codes", points: 5, maxPoints: 10, status: "weak", detail: "No NAICS codes listed — not a strong relevance signal." });
   }
 
   // --- Certifications (max 10 pts) ---
