@@ -1149,11 +1149,8 @@ export default function ProfilePage() {
                                     <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
                                   )}
                                 </div>
-                                <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(2)} KB</p>
-                              </div>
                               <p className="text-xs text-slate-500">{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}</p>
                             </div>
-               
                           </div>
                           <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
                             Remove
