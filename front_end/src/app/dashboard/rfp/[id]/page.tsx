@@ -7,6 +7,7 @@ import {
   type RFP,
   type RFPMatch,
   type CompanyProfile,
+  type ScoreBreakdown,
   computeMatch,
   generateMatchSummary,
 } from "@/lib/rfp-matching";
@@ -19,6 +20,7 @@ export default function RFPDetailPage() {
   const id = params?.id ? decodeURIComponent(String(params.id)) : "";
   const [rfpData, setRfpData] = useState<RFP | null>(null);
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
@@ -38,7 +40,7 @@ export default function RFPDetailPage() {
   const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
   const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
 
-  const rfp: RFPWithMatch | null = rfpData
+  const rfp: RFPWithMatch | null = rfpData && profileLoaded
     ? { ...rfpData, match: computeMatch(rfpData, profile) }
     : null;
 
@@ -58,6 +60,7 @@ export default function RFPDetailPage() {
         // ignore
       }
     }
+    setProfileLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -160,7 +163,7 @@ export default function RFPDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [rfpData?.id, profile]);
+  }, [rfpData?.id, profile, profileLoaded]);
 
   useEffect(() => {
     if (!rfpData || !rfpData.description?.trim()) return;
@@ -480,38 +483,43 @@ export default function RFPDetailPage() {
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-amber-50 text-amber-600">
                 {rfp.capabilities[0] || rfp.contractType || "Contract"}
               </span>
-              <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700">
-                {rfp.match.score}% match
-              </span>
+              {rfp.match.disqualified ? (
+                <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-bold bg-red-100 text-red-700">
+                  <span className="mr-1">✗</span> Not Eligible
+                </span>
+              ) : (
+                <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-bold ${
+                  rfp.match.tier === "excellent" ? "bg-emerald-500 text-white" :
+                  rfp.match.tier === "strong" ? "bg-blue-500 text-white" :
+                  rfp.match.tier === "moderate" ? "bg-amber-400 text-amber-900" :
+                  "bg-slate-200 text-slate-600"
+                }`}>
+                  {rfp.match.tier === "excellent" && <span className="mr-1">★</span>}
+                  {rfp.match.score}% · {rfp.match.tier.charAt(0).toUpperCase() + rfp.match.tier.slice(1)}
+                </span>
+              )}
             </div>
             <p className="text-sm text-slate-600">{rfp.agency} · Due {rfp.deadline} · {rfp.estimatedValue}</p>
           </div>
 
-          {/* Groq-generated summary */}
-          <div className="p-6 md:p-8 border-b border-slate-100">
-            <div className="rounded-xl border-2 border-blue-200 bg-white p-5">
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <h2 className="text-sm font-bold text-slate-900">Why this is a good match</h2>
-                {summaryLoading ? (
-                  <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
-                ) : (
-                  <svg className="w-5 h-5 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-              </div>
-              <p className="text-slate-700 leading-relaxed">{displaySummary}</p>
-              {summaryError && (
-                <p className="mt-2 text-xs text-amber-600">
-                  AI summary unavailable. Showing rule-based summary.
-                </p>
-              )}
+          {/* Disqualifier banner */}
+          {rfp.match.disqualified && rfp.match.disqualifiers.length > 0 && (
+            <div className="px-6 md:px-8 py-4 border-b border-red-100 bg-red-50">
+              <h2 className="text-sm font-bold text-red-800 mb-2">Not Eligible</h2>
+              <ul className="space-y-1">
+                {rfp.match.disqualifiers.map((d, i) => (
+                  <li key={i} className="text-sm text-red-700 flex items-start gap-2">
+                    <span className="text-red-500 shrink-0 mt-0.5">✗</span>
+                    {d}
+                  </li>
+                ))}
+              </ul>
             </div>
-          </div>
+          )}
 
-          {/* Action buttons */}
+          {/* Generate Proposal & Plan */}
           <div className="p-6 md:p-8 border-b border-slate-100 space-y-3">
-            <h2 className="text-sm font-bold text-slate-900 mb-4">Actions</h2>
+            <h2 className="text-sm font-bold text-slate-900 mb-4">Generate Proposal &amp; Plan</h2>
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
@@ -714,6 +722,76 @@ export default function RFPDetailPage() {
             )}
           </div>
 
+          {/* Groq-generated summary */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
+              <div className="flex items-start justify-between gap-2 mb-3">
+                <h2 className="text-sm font-bold text-slate-900">
+                  {rfp.match.disqualified ? "Match Analysis" : "Why this is a good match"}
+                </h2>
+                {summaryLoading ? (
+                  <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
+                ) : (
+                  <svg className={`w-5 h-5 ${rfp.match.disqualified ? "text-red-400" : "text-blue-500"} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                )}
+              </div>
+              <p className="text-slate-700 leading-relaxed">{displaySummary}</p>
+              {summaryError && (
+                <p className="mt-2 text-xs text-amber-600">
+                  AI summary unavailable. Showing rule-based summary.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Score Breakdown */}
+          {rfp.match.breakdown.length > 0 && !rfp.match.disqualified && (
+            <div className="p-6 md:p-8 border-b border-slate-100">
+              <h2 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h2>
+              <div className="space-y-3">
+                {rfp.match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
+                  // All bars are the same full width; colored fill shows points/maxPoints ratio
+                  const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                  // Color based on fill percentage: red → orange → yellow → green
+                  const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
+                  const barColor =
+                    fillRatio >= 0.75 ? "bg-emerald-500" :
+                    fillRatio >= 0.5 ? "bg-yellow-400" :
+                    fillRatio >= 0.25 ? "bg-orange-400" :
+                    fillRatio > 0 ? "bg-red-400" :
+                    "bg-slate-200";
+                  const textColor =
+                    fillRatio >= 0.75 ? "text-emerald-700" :
+                    fillRatio >= 0.5 ? "text-yellow-600" :
+                    fillRatio >= 0.25 ? "text-orange-600" :
+                    b.points === 0 && b.maxPoints > 0 ? "text-red-600" :
+                    "text-slate-500";
+
+                  return (
+                    <div key={i}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-slate-700">{b.category}</span>
+                        {b.maxPoints > 0 && (
+                          <span className={`text-xs font-bold ${textColor}`}>{b.points}/{b.maxPoints}</span>
+                        )}
+                      </div>
+                      {b.maxPoints > 0 ? (
+                        <div className="h-2 rounded-full overflow-hidden relative w-full">
+                          <div className="absolute inset-0 bg-slate-200 rounded-full" />
+                          <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${fillPct}%` }} />
+                        </div>
+                      ) : (
+                        <p className={`text-xs ${textColor}`}>{b.detail}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* About this RFP - AI summary of contract requirements */}
           <div className="p-6 md:p-8 border-b border-slate-100">
             <h2 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h2>
@@ -730,7 +808,7 @@ export default function RFPDetailPage() {
           </div>
 
           {/* Details & link */}
-          <div className="p-6 md:p-8">
+          <div className="p-6 md:p-8 border-b border-slate-100">
             <h2 className="text-sm font-bold text-slate-900 mb-3">Details</h2>
             <div className="flex flex-wrap gap-2 mb-4">
               {rfp.naicsCodes?.map((n) => (
@@ -758,6 +836,7 @@ export default function RFPDetailPage() {
               </a>
             )}
           </div>
+
         </article>
       </main>
     </div>

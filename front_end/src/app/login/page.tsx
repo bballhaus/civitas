@@ -67,7 +67,7 @@ export default function LoginPage() {
         user_id: typeof data?.user_id === "number" ? data.user_id : 0,
         username: typeof data?.username === "string" ? data.username : username,
       });
-      router.push("/dashboard");
+      router.push("/home");
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("fetch")) {
         setError(

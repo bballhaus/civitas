@@ -711,3 +711,108 @@ Read user data from S3 for username=testing_8
 Auth/me: returning user only (no S3) for user_id=10 username=testing_8
 Read user data from S3 for username=testing_8
 Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Token set in S3 for user_id=10 username=testing_8
+Login successful: user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: fetching user + profile from S3 for user_id=10 username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Auth/me: returning user + profile for user_id=10
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Token set in S3 for user_id=10 username=testing_8
+Login successful: user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: returning user only (no S3) for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Auth/me: fetching user + profile from S3 for user_id=10 username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Auth/me: returning user + profile for user_id=10
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Profile save: updated user JSON in S3 for user_id=10
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Profile save: updated user JSON in S3 for user_id=10
+Read user data from S3 for username=testing_8
+S3 upload failed for key=uploads/10/e5fdd17aee2a452a81c03c44cc221acf/Apex_Final_DWR_Proposal.pdf: upload_fileobj() got an unexpected keyword argument 'ContentType'
+create_contract: S3 upload failed for user_id=10; saving contract without document link
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Profile save: updated user JSON in S3 for user_id=10
+Read user data from S3 for username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+S3 upload failed for key=uploads/10/cf5765c4d76c41c3bb19f2ed2ef8f987/Apex_Final_CDCR_Proposal.pdf: upload_fileobj() got an unexpected keyword argument 'ContentType'
+create_contract: S3 upload failed for user_id=10; saving contract without document link
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Read user data from S3 for username=testing_8
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+Saved user data to S3 bucket=civitas-uploads key=users/testing_8.json
+Profile saved to S3 for user_id=10 username=testing_8
+Read user data from S3 for username=testing_8
+get_or_create_profile: loading from S3 (user_id=10)
+Read user data from S3 for username=testing_8
+Retrieved profile from S3 for user_id=10 username=testing_8

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 
-const PROMPT = `You are helping a vendor/contractor understand why an RFP (Request for Proposal) is a good match for their company.
+const PROMPT = `You are helping a vendor/contractor understand why an RFP (Request for Proposal) is or isn't a good match for their company.
 
 Given:
 1) The RFP details (title, agency, industry, capabilities, location, deadline, description snippet)
@@ -63,7 +63,7 @@ Negative reasons: ${
         { role: "user", content: input },
       ],
       temperature: 0.3,
-      max_tokens: 150,
+      max_tokens: 200,
     });
 
     const summary =

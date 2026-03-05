@@ -1,0 +1,93 @@
+{
+  "0890/0000038160": {
+    "naics_codes": [],
+    "certifications_required": [
+      "Small Business (SB)",
+      "Disabled Veterans Business Enterprise (DVBE)"
+    ],
+    "clearances_required": [],
+    "set_aside_types": [
+      "Small Business",
+      "DVBE"
+    ],
+    "capabilities_required": [],
+    "contract_value_estimate": "Unknown",
+    "contract_duration": "April 1, 2026 through March 31, 2029",
+    "location_details": [
+      "Sacramento, CA",
+      "Stockton, CA 95215"
+    ],
+    "onsite_required": null,
+    "key_requirements_summary": "The State of California, Secretary of State, requires the services of a Contractor to provide a Vote by Mail (VBM) Ballot Tracking System (BTS) Managed Software-as-a-Service (MSaaS), related services, resources, and tools for the 58 counties in the State of California on a monthly subscription fee basis.",
+    "deliverables": [
+      "Monthly cleaning services",
+      "Fire alarm inspection reports"
+    ],
+    "evaluation_criteria": [
+      "Lowest responsive bid",
+      "Best value",
+      "Technical score 60%, Cost 40%"
+    ],
+    "attachment_text_rollup": "=== RFQ__25-029_-_Ballot_Tracking_System.pdf ===\n©\nContract Services | Management Services Division | 1500 11th Street, Suite 460\nSacramento, CA 95814 | Tel 916.653.5974 | www.sos.ca.gov\nRequest for Quotation (RFQ)\nFor Information Technology Services\nBallot Tracking System\nQuotes must be delivered to Secretary of\nQUOTE DUE DATE: 3/3/2026\nState’s Office before 4:00 PM on the due date\nSupplier name and address: SOLICITATION NO. REV. # DATE REQUISITION OR CONTROL #\n25-029\n______\n2/23/2026 __________________________________________\nFor further information contact: ARE YOU CLAIMING PREFERENCE AS A SMALL\nBUSINESS?\nSecretary of State\nYES ________ NO ________\nContract Services Unit\nIF YES, MANUFACTURER?\nContact: contractservices@sos.ca.gov\nYES ________ NO ________\nPhone: Fax: ARE YOU A NON-SMALL BUSINESS CLAIMING AT\nShip To: (see below or bid document)\nLEAST 25% SMALL BUSINESS SUBCONTRACTOR\nPREFERENCE?\nYES ________ NO ________\nSECTION 14838 ET SEQ. OF THE CALIFORNIA\nName (Print): Mail bids to the following address: GOVERNMENT CODE REQUIRES THAT A 5%\nSecretary of State PREFERENCE BE GIVEN TO BIDDERS WHO QUALIFY\n_______________________________\nAS A SMALL BUSINESS AS A NON-SMALL BUSINESS\nAttn: Contract Services\nCLAIMINIG AT LEAST 25% CALIFORNIA CERTIFIED\nTitle: 1500 11th Street SMALL BUSINESS PARTICIPATION FOR\nREQUIREMENTS SEE TITLE 2, CALIFORNIA CODE OF\n_______________________________ Sacramento, CA 95814 REGULATIONS SECTION 1896 ET SEQ. THE\nREQUIREMENTS FOR NONPROFIT VETERAN SERVICE\nSignature: Hand delivered bids shall be AGENCIES QUALIFYING AS A SMALL BUSINESS ARE\nCONTAINED IN SECTION 999.50 ET SEQ. OF THE\n_______________________ delivered to MILITARY AND VETERANS CODE.\nDate:___________ Secretary of State Loading Dock\nLocated near 1025 P Street at mid-\nFederal Employer Identification Number:\nblock between 10th and 11th.\n_______________________________\nRing bell upon arriving\nHours: 9 a.m. – 4 p.m., except for\nState Holidays\nBidder offers and agrees if this response is accepted within 45 calendar days following the date the response is due to furnish all the items upon which prices are quoted, at the prices set\nopposite each item, delivered at the designated point(s) by the method of delivery and within the times specified and subject to the attached General Provisions. DECLARATIONS UNDER\nPENALTY OF PERJURY; By signing above, with inclusion of the date of signature, the above signed bidder DECLARES UNDER PENALTY OF PERJURY under the laws of the State of\nCalifornia as follows: (1) (STATEMENT OF COMPLIANCE). The above signed as complied with the non-discrimination program requirements of Government Code 12990 and Title 2,\nCalifornia Administrative Code Section 8103, and such declaration is true and correct. (2) The National Labor Relations Board declaration set forth in Paragraph 48 of the General\nProvisions is true and correct. (3) If a claim is made for the Small Business or Disabled Veterans Business preference, the information set forth within is true and correct.\nDESCRIPTION\nThe purpose of this Request for Quote for Information Technology (RFQ) Services is to provide a Vote by Mail (VBM)\nBallot Tracking System (BTS) Managed Software-as-a-Service (MSaaS), related services, resources, and tools for the 58\ncounties in the State of California on a monthly subscription fee basis.\nThe following are incorporated as part of this Request for Quote for IT Services:\n1. Requirements, including quote details and cost proposal and all attachments.\n2. State’s Standard Agreement (STD 213); see Section I General Information, Sub-section G.22 of this RFQ.\n3. Bidder Instructions DGS PD 451 Rev. 11/9/2011) can be located at: https://www.dgs.ca.gov/PD/Search-\nResults?search=Bidders%20Instructions&divisionid=7bce8ca3ed8a4aedbdeaf52f5e77df36&activeFilters=division-or-\noffice-facets; the General Provisions – Cloud – Computing Services DGS PD 402-ITGP (Cloud) (Revised and Effective\n2/20/2025) can be located at:\nhttps://www.dgs.ca.gov/PD/Search-\nResults?search=General%20Provisions&divisionid=7bce8ca3ed8a4aedbdeaf52f5e77df36&activeFilters=division-or-\noffice-facets\n\nSecretary of State\nRFQ #25-029\nPage 2 of 62\nTable of Contents\nI. General Information\nA. Purpose………………………………………………………………………………….……..4\nB. Availability……………………………………………………………………………….…….4\nC. Period of Performance……………………………………………………………….……..5\nD. Key Action Dates……………………………………………………………………….……5\nE. RFQ Response Guidelines…………………………………………………………….…….5\nF. RFQ Response Content……………………………………………………………….…….7\nII. Evaluation Information\nA. Evaluation Criteria……………………………………………………………………….....13\nB. Award of Contract……………………………………………………………….………...16\nC. Disposition of Bids………………………………………………………………………..….17\nD. Protests…………………………………………………………………………………..……17\nIII. Exhibit A - Scope of Work\n1. Purpose…………………………………………………………………………………….....19\n2. Time/Period of Performance………………………………………………………….….19\n3. Background……………………………………………………………………………….…19\n4. Requirements………………………………………………………………………………..20\n5. Contra\n\n[... truncated ...]",
+    "pdfs_processed": [
+      "RFQ__25-029_-_Ballot_Tracking_System.pdf"
+    ],
+    "total_pdfs_available": 1
+  },
+  "3790/0000037817": {
+    "naics_codes": [
+      "561720"
+    ],
+    "certifications_required": [
+      "Small Business (SB)",
+      "DVBE",
+      "California Business License",
+      "articles of incorporation"
+    ],
+    "clearances_required": [],
+    "set_aside_types": [
+      "Small Business",
+      "DVBE"
+    ],
+    "capabilities_required": [
+      "Portable storage container rentals"
+    ],
+    "contract_value_estimate": null,
+    "contract_duration": "April 1, 2026 through July 15, 2028",
+    "location_details": [
+      "Huntington State Beach",
+      "Lake Perris State Recreational Area",
+      "Huntington State Beach, California",
+      "Lake Perris SRA at 17801 Lake Perris Drive, Perris, CA 92571",
+      "837 Asilomar Avenue, Pacific Grove, CA 93950",
+      "Sacramento, CA 95814",
+      "Pacific Grove, CA 93950",
+      "California",
+      "Lake Perris State Recreation Area"
+    ],
+    "onsite_required": null,
+    "key_requirements_summary": "The Department of Parks and Recreation is seeking a contractor to provide portable storage container rentals for the Lifeguard Training Program equipment.",
+    "deliverables": [
+      "Portable storage container rentals",
+      "Delivery, pick-up, and moving of locations",
+      "Six (6) Storage Containers (16’ X 8’ X 8’)",
+      "Portable storage container rentals services",
+      "Monthly cleaning services"
+    ],
+    "evaluation_criteria": [
+      "Unknown",
+      "Lowest responsive bid"
+    ],
+    "attachment_text_rollup": "=== Bidder_Checklist_and_Required_Forms_Rev._1-28-2026.pdf ===\nDepartment of Parks and Recreation\nIFB Solicitation #C25067012\nBidder’s Checklist - Submittal Documents – A\n☐ Exhibit B, Attachment 1 – Service Contracts Bid Form\n☐ Disabled Veteran Business Enterprise Declaration (DGS PD 843)\n☐ Bidder Declaration (GSPD-05-105)\n☐ Commercially Useful Function (DPR 87)\n☐ Darfur Contracting Act Certification (DPR 74)\n☐ Payee Data Record (STD 204)\n☐ Payee Data Record Supplement (STD 205)\n☐ Contractor Certification Clauses (CCC-04/2017)\n☐ California Civil Rights Laws Attachment (DGS OLS 04)\n☐ Artificial Intelligence (AI) Disclosure Form (DPR 97B)\n☐ TACPA STD 830\n☐ TACPA DGS PD 525\n☐ TACPA DGS PD 526\n\nState of California -Natural Resources Agency\nDEPARTMENT OF PARKS AND RECREATION\nExhibit B, Attachment 1\nPage 1 of 2\nSERVICE CONTRACTS BID FORM\nIFB RELEASE DATE\nFriday, January 23, 2026\nUNIT\nTraining Section\nDEPARTMENT OF PARKS AND RECREATION PROJECT\nPortable Storage Container Rentals\nAdministrative Division,Training Section\nBIDS DUE\nTuesday, February 10, 2026, at 12:00:00\nPM PST (Noon)\nCONTRACT NUMBER\nC25067012\nThe undersigned hereby proposes to furnish services, materials, or equipment, or to perform all work required in\naccordancewiththebiddocumentsfortheforegoingtitledproject,andsuchaddendatheretoasmaybeissuedpriortobid\nopeningdate.\nNondiscriminationComplianceStatement\nThe prospective contractor's signature affixed hereon and dated shall constitute a certification under penaltyof perjuryunder\nthe laws of the State of California that the bidder has, unless exempted, complied with the nondiscrimination program\nrequirementsofGovernmentCodeSection12990andTitle2,CaliforniaCodeofRegulationsSection8103.\nDisabledVeteranBusinessEnterpriseParticipation\nIn accordance with Public Contract Code Section 10115, the Department of Parks and Recreation has establishedcriteria to\nimplement the disabled veteran business enterprise (DVBE) program goal which bidder must meet; provided, however, the\nDVBE participation requirement is included herein and made part of the bid documents. (See DVBE Notice included in\nsolicitationfordetails.)\nSmallBusinessPreference\nA five percent preference will be granted to any bidder currently certified by the Department of General Services as a\nCaliforniaSmallBusiness. (SeeSmallBusinessNoticeincludedinsolicitationfordetails.)\nFIRM NAME PHONE NO. FAX NO.\nADDRESS CITY/STATE/ZIP CODE\nLICENSE CLASSIFICATION FEDERAL EMPLOYER ID NO. ARE YOU CLAIMING PREFERENCE AS A SMALL BUSINESS?\nYes. Small Business Certification No. No\nSTATUS OF BUSINESS(check appropriate box.)\nIndividual.\nCorporation. State in which incorporated:\nPartnership. Full names of partners:\nThe undersigned is duly authorized to submit this bid on behalf of the company. DATE\nBIDDER'S SIGNATURE(Signature)\nBIDDER'S PRINTED NAME TITLE\nTHE STATE RESERVES THE RIGHT TO WAIVE ANY IRREGULARITY IN ANY BID OR TO REJECT ANY OR ALL BIDS.\nDPR 940B (Rev. 5/2011)(Excel 5/5/2011)\n\nSTATE OF CALIFORNIA · DEPARTMENT OF PARKS AND RECREATION\nPortable Storage Container Rentals\nService Contract Bid Form\nExhibit B, Attachment I\nPage 1 of 1\n(Rev. 1-28-2026)\nPortable Storage Unit Container Rentals for April 1, 2026 through July 15, 2028, for the Lifeguard Training Program equipment to take place at Huntington State Beach with additional services needed to provide delivery, pick-up and\nmoving of locations. All according to the Scope of Work/Specifications, hereby attached and made a part of this contract.\nIN CASE OF DISCREPANCY BETWEEN THE UNIT PRICE AND THE TOTAL SET FORTH FOR A UNIT BASED ITEM, THE UNIT PRICE SHALL PREVAIL.\nCONTRACTOR’S NAME (Please Print): CONTRACT NO.\nC25067012\nITEM ESTIMATED UNIT OF ITEM PRICE Each or Total (In\nNO. QUANTITY MEASURE EA Monthly (In Figures)\n(Each) Figures) if\napplicable for\n1. 6 EA, Monthly 16' long x 8' wide x 8' tall - Double Doors - #7000 capacity $ $\n/ interior dimensions. 8’ swinging doors at both ends. April –\nJuly, ONLY of each year in the Terms of this agreement Multiple by twelve\n(12)Months\n2. 1 Lump Sum Delivery fees – Huntington Beach (outlined in the scope of N/A $\nwork) April – July, 2026\n3. 1 Lump Sum Pick-Up fees - Lake Perris State Recreational Area (outlined N/A $\nin the scope of work) April – July 2026\n4. 1 Lump Sum Delivery fees – Huntington Beach (outlined in the scope of N/A $\nwork) April – July, 2027\n5. 1 Lump Sum Pick-Up fees - Lake Perris State Recreational Area (outlined N/A $\nin the scope of work) April – July 2027\n6. 1 Lump Sum Delivery fees – Huntington Beach (outlined in the scope of N/A $\nwork) April – July, 2028\n7. 1 Lump Sum Pick-Up fees - Lake Perris State Recreational Area (outlined N/A $\nin the scope of work) April – July 2028\nGrand Total with Delivery and Pick-Up fees Total Price: $______________________\nGrand Total with Delivery and Set up Fees Written: _____________________________________________________________________\n\nSTATE OF CALIFORNIA – DEPARTMENT OF GENERAL SERVICESPROCUREMENT DIVISION\nDISABLED VE\n\n[... truncated ...]",
+    "pdfs_processed": [
+      "Bidder_Checklist_and_Required_Forms_Rev._1-28-2026.pdf",
+      "C25067012_-_IFB_Bid_-_Instruction_Manual_Rev_-_2-5-2026.pdf",
+      "C25067012_Abstract_of_Bids_DPR012_signed.pdf",
+      "C25067012_-_Notice_of_Intent_to_Award_Posting.pdf",
+      "C25067012_Addendum_s.pdf",
+      "C25067012_Addendum_s_2-3-2026.pdf",
+      "C25067012_Addendum_s_2-5-2026.pdf"
+    ],
+    "total_pdfs_available": 7
+  }
+}
