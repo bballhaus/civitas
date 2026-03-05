@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getApiBase, getAuthToken, uploadContractDocument } from "@/lib/api";
@@ -33,26 +33,36 @@ export default function UploadPage() {
   const [progress, setProgress] = useState(0);
   const [dupMessage, setDupMessage] = useState("");
   const [isLoggedIn, setIsLoggedIn] = useState(true);
+  const [dragging, setDragging] = useState(false);
+  const dragCounter = useRef(0);
 
   useEffect(() => {
     setIsLoggedIn(!!getAuthToken());
   }, []);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = e.target.files;
-    if (!selectedFiles) return;
+  const ACCEPTED_EXTENSIONS = [".pdf", ".doc", ".docx", ".txt"];
 
-    const fileArray = Array.from(selectedFiles);
+  const addFiles = (incoming: File[]) => {
+    const accepted = incoming.filter((f) =>
+      ACCEPTED_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext))
+    );
+    if (accepted.length === 0) return;
     setDupMessage("");
     setFiles((prev) => {
       const existingNames = new Set(prev.map((f) => f.name));
-      const newFiles = fileArray.filter((f) => !existingNames.has(f.name));
-      const skipped = fileArray.length - newFiles.length;
+      const newFiles = accepted.filter((f) => !existingNames.has(f.name));
+      const skipped = accepted.length - newFiles.length;
       if (skipped > 0) {
         setDupMessage(`${skipped} duplicate file(s) already uploaded — skipped.`);
       }
       return [...prev, ...newFiles];
     });
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = e.target.files;
+    if (!selectedFiles) return;
+    addFiles(Array.from(selectedFiles));
   };
 
   const removeFile = (index: number) => {
@@ -202,7 +212,30 @@ export default function UploadPage() {
 
         {/* Upload Area */}
         <div className="bg-white rounded-lg border border-slate-200 p-8 mb-6">
-          <div className="border-2 border-dashed border-slate-300 rounded-lg p-12 text-center hover:border-[#3C89C6] transition-colors">
+          <div
+            className={`relative border-2 border-dashed rounded-lg p-12 text-center transition-colors ${
+              dragging
+                ? "border-[#3C89C6] bg-slate-100"
+                : "border-slate-300 hover:border-[#3C89C6]"
+            }`}
+            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current++; if (!isProcessing) setDragging(true); }}
+            onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current--; if (dragCounter.current <= 0) { dragCounter.current = 0; setDragging(false); } }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              dragCounter.current = 0;
+              setDragging(false);
+              if (isProcessing) return;
+              const droppedFiles = Array.from(e.dataTransfer.files);
+              addFiles(droppedFiles);
+            }}
+          >
+            {dragging && (
+              <div className="absolute inset-0 bg-slate-200/60 rounded-lg flex items-center justify-center z-10 pointer-events-none">
+                <p className="text-2xl font-bold text-[#3C89C6]">Drop files here</p>
+              </div>
+            )}
             <input
               type="file"
               id="file-upload"
@@ -216,7 +249,7 @@ export default function UploadPage() {
               htmlFor="file-upload"
               className={`cursor-pointer flex flex-col items-center ${
                 isProcessing ? "opacity-50 cursor-not-allowed" : ""
-              }`}
+              } ${dragging ? "opacity-30" : ""}`}
             >
               <svg
                 className="w-16 h-16 text-slate-400 mb-4"
@@ -232,7 +265,7 @@ export default function UploadPage() {
                 />
               </svg>
               <span className="text-lg font-medium text-slate-700 mb-2">
-                Click to upload files
+                Drag &amp; drop files here, or click to upload
               </span>
               <span className="text-sm text-slate-500">
                 PDF, DOC, DOCX, TXT (Multiple files supported)
