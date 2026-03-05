@@ -1,14 +1,27 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 
-const PROMPT = `You are helping a vendor/contractor understand why an RFP (Request for Proposal) is a good match for their company.
+const PROMPT = `You are helping a vendor/contractor understand why an RFP (Request for Proposal) is or isn't a good match for their company.
 
 Given:
 1) The RFP details (title, agency, industry, capabilities, location, deadline, description snippet)
 2) The company's full profile (industries, capabilities, certifications, locations, agency experience, contract types)
 3) A rule-based match summary that lists reasons like "the deadline is still open", "industry aligns", "capabilities align: X"
+4) Optional lists of positive and negative match reasons
+5) Optional attachment-derived key requirements and constraints (e.g., certifications, clearances, set-asides, geography)
 
-Your task: Write a short, natural 1-3 sentence summary explaining why this RFP is a good match. Use the rule-based summary as a starting point but make it more personalized and readable. Reference specific overlaps. Keep it conversational and under 80 words. No bullet points.`;
+Important scoring context:
+- When an RFP does NOT specify a requirement for a category (e.g., no NAICS codes, no certifications), the company earns FULL points for that category. This means "no requirement = everyone qualifies" and is expected, not a flaw.
+- A high score on a generic RFP (few specific requirements) is normal — the company isn't penalized for requirements that don't exist.
+- Focus explanations on categories where there IS a specific RFP requirement and how the company matches or doesn't match.
+
+Your task: Write a short, natural 2-4 sentence summary explaining why this RFP is or isn't a good match for the company. Be specific — name the overlapping capabilities, industries, certifications, or NAICS codes that drive the score. When attachment-derived data is present, reference specific requirements from the attachments. If disqualified, explain clearly why. If a strong match, explain exactly which company strengths align with which RFP requirements. If weak, explain which specific RFP requirements the company doesn't meet.
+
+Rules:
+- Do NOT suggest profile updates, improvements, or ways to strengthen the match
+- Do NOT use filler phrases like "let's take a closer look", "to better understand", or "review the breakdown"
+- Focus entirely on the specific alignment (or misalignment) between the company and the RFP
+- Keep it conversational and under 100 words. No bullet points.`;
 
 export async function POST(req: Request) {
   try {
@@ -26,10 +39,14 @@ export async function POST(req: Request) {
       rfp,
       profile,
       currentSummary,
+      positiveReasons,
+      negativeReasons,
     }: {
       rfp: Record<string, unknown>;
       profile: Record<string, unknown> | null;
       currentSummary: string;
+      positiveReasons?: string[];
+      negativeReasons?: string[];
     } = body;
 
     if (!rfp || !currentSummary) {
@@ -42,7 +59,13 @@ export async function POST(req: Request) {
     const client = new Groq({ apiKey });
     const input = `RFP: ${JSON.stringify(rfp)}
 Profile: ${profile ? JSON.stringify(profile) : "No profile"}
-Rule-based summary: ${currentSummary}`;
+Rule-based summary: ${currentSummary}
+Positive reasons: ${
+      Array.isArray(positiveReasons) ? JSON.stringify(positiveReasons) : "[]"
+    }
+Negative reasons: ${
+      Array.isArray(negativeReasons) ? JSON.stringify(negativeReasons) : "[]"
+    }`;
 
     const completion = await client.chat.completions.create({
       model: "llama-3.1-8b-instant",
@@ -51,7 +74,7 @@ Rule-based summary: ${currentSummary}`;
         { role: "user", content: input },
       ],
       temperature: 0.3,
-      max_tokens: 150,
+      max_tokens: 200,
     });
 
     const summary =

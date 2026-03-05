@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 
-const PROMPT = `You are an expert government contracting consultant. Given the full text of an RFP (Request for Proposal) description, produce a clear, structured summary of the contract's requirements.
+const PROMPT = `You are an expert government contracting consultant. Given the full text of an RFP (Request for Proposal) description and any pre-extracted key requirements from attachments, produce a clear, structured summary of the contract's requirements.
 
 You will be given:
 1) RFP title, agency, and other metadata
 2) The full RFP description text
+3) Optionally, an attachmentRollup object containing about-RFP summary text, key requirement bullets, and combined constraints extracted from attachments
 
 Your task: Write a concise summary (approximately 150–250 words) that captures:
 - **Scope & deliverables** – What the contractor must deliver
@@ -46,6 +47,7 @@ export async function POST(req: Request) {
     }
 
     const description = (rfp.description as string) || "";
+    const attachmentRollup = (rfp as any).attachmentRollup;
     if (!description.trim()) {
       return NextResponse.json(
         { error: "RFP description is required" },
@@ -54,6 +56,18 @@ export async function POST(req: Request) {
     }
 
     const client = new Groq({ apiKey });
+
+    // When attachment data is present, it's the most valuable context — give it more room
+    const hasAttachments = attachmentRollup && (attachmentRollup.text || attachmentRollup.summary);
+    const descriptionSlice = hasAttachments ? 3000 : 6000;
+    const attachmentSlice = 3000;
+
+    // Build structured attachment context for the LLM
+    const naicsCodes = Array.isArray(rfp.naicsCodes) ? (rfp.naicsCodes as string[]).join(", ") : "";
+    const clearances = Array.isArray((rfp as any).clearancesRequired) ? ((rfp as any).clearancesRequired as string[]).join(", ") : "";
+    const setAsides = Array.isArray((rfp as any).setAsideTypes) ? ((rfp as any).setAsideTypes as string[]).join(", ") : "";
+    const deliverables = Array.isArray((rfp as any).deliverables) ? ((rfp as any).deliverables as string[]).join(", ") : "";
+
     const input = `RFP context:
 Title: ${rfp.title ?? "N/A"}
 Agency: ${rfp.agency ?? "N/A"}
@@ -63,10 +77,21 @@ Deadline: ${rfp.deadline ?? "N/A"}
 Contract type: ${rfp.contractType ?? "N/A"}
 Capabilities sought: ${Array.isArray(rfp.capabilities) ? (rfp.capabilities as string[]).join(", ") : "N/A"}
 Certifications: ${Array.isArray(rfp.certifications) ? (rfp.certifications as string[]).join(", ") : "N/A"}
+NAICS codes: ${naicsCodes || "N/A"}
+Clearances required: ${clearances || "N/A"}
+Set-aside types: ${setAsides || "N/A"}
+Deliverables: ${deliverables || "N/A"}
 Estimated value: ${rfp.estimatedValue ?? "N/A"}
+Contract duration: ${(rfp as any).contractDuration ?? "N/A"}
 
 Full description:
-${description.slice(0, 6000)}
+${description.slice(0, descriptionSlice)}
+
+Attachment-derived summary and constraints (if any):
+${hasAttachments ? JSON.stringify(attachmentRollup).slice(0, attachmentSlice) : "None provided"}
+
+Attachment-derived summary and constraints (if any):
+${attachmentRollup ? JSON.stringify(attachmentRollup).slice(0, 2000) : "None provided"}
 
 Summarize the contract requirements:`;
 

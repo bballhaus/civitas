@@ -3,7 +3,16 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getApiBase, getAuthToken, uploadContractDocument } from "@/lib/api";
+import {
+  getApiBase,
+  getAuthToken,
+  uploadContractDocument,
+  getProfileFromBackend,
+  mapBackendProfileToCompanyProfile,
+  getEmptyCompanyProfile,
+  getCachedUser,
+  setCachedProfile,
+} from "@/lib/api";
 
 interface ExtractedData {
   companyName: string;
@@ -141,32 +150,45 @@ export default function UploadPage() {
       if (isLoggedIn) {
         for (let i = 0; i < files.length; i++) {
           await uploadContractDocument(files[i], files[i].name);
-          setProgress(50 + Math.round((40 * (i + 1)) / files.length));
+          setProgress(10 + Math.round((70 * (i + 1)) / files.length));
         }
+
+        setProgress(85);
+        const backendProfile = await getProfileFromBackend();
+        const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+        const cachedUser = getCachedUser();
+        if (cachedUser) setCachedProfile(cachedUser.user_id, mapped);
+
+        setProgress(100);
+        setTimeout(() => {
+          router.push("/profile");
+        }, 500);
+      } else {
+        setProgress(10);
+        const extractedData = await parseDocumentsWithBackend(files);
+        setProgress(90);
+
+        const fileInfo = files.map((file) => ({
+          name: file.name,
+          type: file.type || "application/octet-stream",
+          size: file.size,
+          uploadedAt: new Date().toISOString(),
+          parsed: true,
+        }));
+
+        const profileData = {
+          ...extractedData,
+          uploadedFiles: fileInfo,
+        };
+
+        localStorage.setItem("companyProfile", JSON.stringify(profileData));
+        localStorage.setItem("uploadedFiles", JSON.stringify(fileInfo.map((f) => ({ ...f, content: "" }))));
+
+        setProgress(100);
+        setTimeout(() => {
+          router.push("/profile");
+        }, 500);
       }
-
-      setProgress(90);
-
-      const fileInfo = files.map((file) => ({
-        name: file.name,
-        type: file.type || "application/octet-stream",
-        uploadedAt: new Date().toISOString(),
-        parsed: true,
-      }));
-
-      const profileData = {
-        ...extractedData,
-        uploadedFiles: fileInfo,
-      };
-
-      localStorage.setItem("companyProfile", JSON.stringify(profileData));
-      localStorage.setItem("uploadedFiles", JSON.stringify(fileInfo.map((f) => ({ ...f, content: "" }))));
-
-      setProgress(100);
-
-      setTimeout(() => {
-        router.push("/profile");
-      }, 500);
     } catch (error) {
       console.error("Error processing files:", error);
       alert(`Error processing files: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`);
@@ -185,12 +207,6 @@ export default function UploadPage() {
               <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
               <span className="text-2xl font-bold text-slate-900">Civitas</span>
             </Link>
-          <Link
-            href="/profile"
-            className="px-4 py-2 bg-[#3C89C6] text-white font-medium rounded-md hover:bg-[#2d6fa0] transition-colors"
-          >
-            Save Profile
-          </Link>
         </div>
       </nav>
 

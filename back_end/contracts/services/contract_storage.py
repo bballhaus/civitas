@@ -34,6 +34,7 @@ def _s3_key(user_id, contract_id, filename):
 def _contract_attrs():
     return [
         "title",
+        "contractor_name",
         "document_s3_key",
         "document",
         "rfp_id",
@@ -79,6 +80,7 @@ def _stored_to_contract(stored, user_id):
         "contract_id": cid,
         "user_id": user_id,
         "title": stored.get("title") or "",
+        "contractor_name": stored.get("contractor_name") or "",
         "document": doc_url,
         "document_s3_key": doc_key,
         "rfp_id": stored.get("rfp_id") or "",
@@ -110,6 +112,7 @@ def _contract_to_stored(c, contract_id):
         "id": contract_id,
         "contract_id": contract_id,
         "title": c.get("title") or "",
+        "contractor_name": c.get("contractor_name") or "",
         "document": c.get("document") or "",
         "document_s3_key": c.get("document_s3_key"),
         "rfp_id": c.get("rfp_id") or "",
@@ -341,6 +344,7 @@ def contract_dict_to_object(c):
     o = ContractObj()
     o.id = c.get("id") or c.get("contract_id")
     o.title = c.get("title") or ""
+    o.contractor_name = c.get("contractor_name") or ""
     o.document = c.get("document") or ""
     o.rfp_id = c.get("rfp_id") or ""
     o.issuing_agency = c.get("issuing_agency") or ""

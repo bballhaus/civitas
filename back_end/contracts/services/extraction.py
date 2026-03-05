@@ -46,8 +46,13 @@ EXTRACTION_SCHEMA = {
         "industry_tags": ["string"],
         "min_past_performance": "string|null",
         "contract_value_estimate": "string|null",
+        "contract_value_max": "string|null",
         "timeline_duration": "string|null",
         "work_description": "string|null",
+        "technology_stack": ["string"],
+        "team_size": "string|null",
+        "scope_keywords": ["string"],
+        "contract_type": "string|null",
     },
 }
 
@@ -62,7 +67,7 @@ Expected schema:
 Rules:
 - rfp_id: RFP number, solicitation ID, contract number, or similar reference (e.g. "RFP-2024-001", "GS-00F-12345")
 - issuing_agency: the government agency or entity that awarded the contract (required)
-- contractor_name: the name of the COMPANY/CONTRACTOR that won this contract (the business that performed the work, NOT the government agency). Look for phrases like "awarded to", "contractor", "vendor", "company name", or the business entity name in the document.
+- contractor_name: CRITICAL - the legal name of the COMPANY/CONTRACTOR/VENDOR that won and performed this contract. This is NOT the government agency. Search carefully for: the business entity name on the cover page or letterhead, text after "awarded to", "contractor:", "vendor:", "consultant:", "firm:", "performed by:", "submitted by:", or "prepared by:". Also check for company names in signature blocks, headers, footers, or "About Us" sections. Examples: "Acme Construction LLC", "Smith Engineering Inc.", "Global IT Solutions Corp". If multiple companies appear, pick the prime contractor. Return the full legal entity name. Return null ONLY if genuinely absent.
 - title: contract/project title
 - jurisdiction: Extract state, county, and city from the document. Prefer explicit mentions (e.g. "County of Inyo", "State of California", "City of Sacramento"). When only a city is named, infer the county from California geography (e.g. Sacramento → Sacramento County, Los Angeles → Los Angeles County, Baker → Inyo County). Default state to "CA" when the document clearly refers to California. Use null only when not mentioned and cannot be inferred.
 - dates: ISO format YYYY-MM-DD when possible; award_date=when contract was awarded, start_date/end_date=period of performance
@@ -70,8 +75,13 @@ Rules:
 - required_clearances: security clearances required (indicates clearances the user holds)
 - contract_value_estimate: total contract value in dollars as string (e.g. "500000" or "$500,000")
 - work_description: 1-3 sentences describing the type of work, scope, or services performed (e.g. "Fire station design and construction", "IT support and maintenance")
-- industry_tags: relevant sectors (e.g. construction, IT, healthcare, facilities)
+- industry_tags: relevant sectors (e.g. construction, IT, healthcare, facilities, environmental, transportation)
 - naics_codes: North American Industry Classification codes if mentioned
+- contract_value_max: if a value range is given, this is the upper bound (e.g. for "not to exceed $500,000" put "500000")
+- technology_stack: specific technologies, frameworks, platforms, tools, or equipment used (e.g. "AWS", "Java", "SAP", "Salesforce", "AutoCAD", "pdfplumber"). Include both software and specialized equipment.
+- team_size: number of people involved if mentioned (e.g. "5 FTEs", "team of 12", "3 technicians")
+- scope_keywords: 3-5 keyword tags describing the type of work (e.g. ["janitorial services", "HVAC maintenance", "web development", "hazardous waste disposal"])
+- contract_type: type of contract if mentioned (e.g. "Fixed Price", "Time & Materials", "Cost Plus Fixed Fee", "IDIQ", "BPA")
 
 Document text:
 ---
@@ -234,8 +244,13 @@ def _normalize_result(data: dict[str, Any]) -> dict[str, Any]:
             "industry_tags": features.get("industry_tags") or [],
             "min_past_performance": features.get("min_past_performance"),
             "contract_value_estimate": features.get("contract_value_estimate"),
+            "contract_value_max": features.get("contract_value_max"),
             "timeline_duration": features.get("timeline_duration"),
             "work_description": features.get("work_description"),
+            "technology_stack": features.get("technology_stack") or [],
+            "team_size": features.get("team_size"),
+            "scope_keywords": features.get("scope_keywords") or [],
+            "contract_type": features.get("contract_type"),
         },
     }
 

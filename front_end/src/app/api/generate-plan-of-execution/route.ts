@@ -66,7 +66,8 @@ export async function POST(req: Request) {
     }
 
     const client = new Groq({ apiKey });
-    const isRefinement = Boolean(feedback?.trim());
+    const trimmedFeedback = (feedback ?? "").trim();
+    const isRefinement = trimmedFeedback.length > 0;
 
     let systemPrompt = PROMPT;
     let userInput: string;
@@ -85,7 +86,7 @@ ${currentPlan}
 ---
 
 User feedback:
-${feedback?.trim() ?? ""}
+${trimmedFeedback}
 
 Produce the full revised plan:`;
     } else {
