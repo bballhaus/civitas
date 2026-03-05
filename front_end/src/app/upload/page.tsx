@@ -13,6 +13,7 @@ import {
   getCachedUser,
   setCachedProfile,
 } from "@/lib/api";
+import { MeshBackground } from "@/components/MeshBackground";
 
 interface ExtractedData {
   companyName: string;
@@ -199,7 +200,8 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
+      <MeshBackground />
       {/* Navigation */}
       <nav className="sticky top-0 bg-white border-b border-slate-200 z-10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
@@ -211,7 +213,7 @@ export default function UploadPage() {
       </nav>
 
       {/* Main Content */}
-      <div className="max-w-4xl mx-auto px-6 py-12">
+      <div className="relative max-w-4xl mx-auto px-6 py-12">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold text-slate-900 mb-2">
             Upload Your Past Contracts & Documents

@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getApiBase, setCachedUser, setAuthToken } from "@/lib/api";
+import { MeshBackground } from "@/components/MeshBackground";
 
 const API_BASE = getApiBase();
 
@@ -87,8 +88,9 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff] flex items-center justify-center p-4">
+      <MeshBackground />
+      <div className="relative w-full max-w-md">
         <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-8">
           <h1 className="text-2xl font-semibold text-slate-800 mb-1">
             Create account
@@ -203,12 +205,6 @@ export default function SignupPage() {
             </Link>
           </p>
         </div>
-
-        <p className="mt-4 text-center text-xs text-slate-400">
-          <Link href="/" className="hover:text-slate-600">
-            ← Back to home
-          </Link>
-        </p>
       </div>
     </div>
   );
