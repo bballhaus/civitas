@@ -39,6 +39,9 @@ export default function RFPDetailPage() {
   const [requirementsSummary, setRequirementsSummary] = useState<string | null>(null);
   const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
   const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
+  const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
+  const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
+  const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
 
   const rfp: RFPWithMatch | null = rfpData && profileLoaded
     ? { ...rfpData, match: computeMatch(rfpData, profile) }
@@ -219,6 +222,73 @@ export default function RFPDetailPage() {
       cancelled = true;
     };
   }, [rfpData?.id]);
+
+  // Fetch capabilities analysis (compares RFP requirements against company profile)
+  useEffect(() => {
+    if (!rfpData || !profileLoaded) return;
+    const rfp: RFP = rfpData;
+    const match = computeMatch(rfp, profile);
+
+    let cancelled = false;
+    setCapabilitiesAnalysisLoading(true);
+    setCapabilitiesAnalysisError(false);
+
+    async function fetchCapabilitiesAnalysis() {
+      try {
+        const res = await fetch("/api/capabilities-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rfp: {
+              title: rfp.title,
+              agency: rfp.agency,
+              industry: rfp.industry,
+              location: rfp.location,
+              capabilities: rfp.capabilities,
+              certifications: rfp.certifications,
+              contractType: rfp.contractType,
+              naicsCodes: (rfp as any).naicsCodes,
+              estimatedValue: rfp.estimatedValue,
+              description: (rfp.description || "").slice(0, 3000),
+              attachmentRollup: (rfp as any).attachmentRollup ?? null,
+            },
+            profile: profile
+              ? {
+                  companyName: profile.companyName,
+                  industry: profile.industry,
+                  capabilities: profile.capabilities,
+                  certifications: profile.certifications,
+                  workCities: profile.workCities,
+                  workCounties: profile.workCounties,
+                  agencyExperience: profile.agencyExperience,
+                  contractTypes: profile.contractTypes,
+                  technologyStack: profile.technologyStack,
+                }
+              : null,
+            breakdown: match.breakdown,
+          }),
+        });
+        if (cancelled) return;
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (cancelled) return;
+        setCapabilitiesAnalysis(data.analysis ?? null);
+      } catch (err) {
+        console.error("[capabilities-analysis] Fetch failed:", err);
+        if (!cancelled) {
+          setCapabilitiesAnalysisError(true);
+          setCapabilitiesAnalysis(null);
+        }
+      } finally {
+        if (!cancelled) setCapabilitiesAnalysisLoading(false);
+      }
+    }
+
+    fetchCapabilitiesAnalysis();
+    return () => {
+      cancelled = true;
+    };
+  }, [rfpData?.id, profile, profileLoaded]);
 
   const downloadAsDocx = async (
     content: string,
@@ -795,6 +865,20 @@ export default function RFPDetailPage() {
               </div>
             </div>
           )}
+
+          {/* Capabilities Analysis - AI comparison of company profile vs RFP requirements */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <h2 className="text-sm font-bold text-slate-900 mb-3">Capabilities Analysis</h2>
+            {capabilitiesAnalysisLoading ? (
+              <p className="text-slate-500 text-sm animate-pulse">Analyzing capabilities against requirements…</p>
+            ) : capabilitiesAnalysis ? (
+              <MarkdownContent content={capabilitiesAnalysis} />
+            ) : capabilitiesAnalysisError ? (
+              <p className="text-xs text-amber-600">Capabilities analysis unavailable.</p>
+            ) : (
+              <p className="text-slate-500 text-sm">No company profile available for analysis.</p>
+            )}
+          </div>
 
           {/* About this RFP - AI summary of contract requirements */}
           <div className="p-6 md:p-8 border-b border-slate-100">
