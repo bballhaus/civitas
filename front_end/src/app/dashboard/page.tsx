@@ -1057,10 +1057,13 @@ export default function DashboardPage() {
               const reasonSnippet = generateMatchSummary(rfp, match);
 
               return (
-                <Link
+                <div
                   key={rfp.id}
-                  href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
-                  className={`block w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md ${
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedRfpId(rfp.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedRfpId(rfp.id); } }}
+                  className={`block w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md cursor-pointer ${
                     match.disqualified ? "opacity-60 " : ""
                   }${isSelected ? "border-[#2563eb] shadow-md" : "border-transparent hover:border-slate-200"}`}
                 >
@@ -1092,11 +1095,6 @@ export default function DashboardPage() {
                         Strong Match
                       </span>
                     )}
-                    {match.disqualified && (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-red-50 text-red-600">
-                        <span className="text-red-500">✗</span> Not Eligible
-                      </span>
-                    )}
                     {isSaved && (
                       <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
                         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
@@ -1114,7 +1112,7 @@ export default function DashboardPage() {
                       {reasonSnippet}
                     </p>
                   )}
-                </Link>
+                </div>
               );
             })}
           </div>
@@ -1136,10 +1134,7 @@ export default function DashboardPage() {
               generateSummary={generateMatchSummary}
               MatchBadge={MatchBadge}
               isSaved={savedRfpIds.has(selectedRfp.id)}
-              hasExpressedInterest={expressedInterestRfpIds.has(selectedRfp.id)}
               onSave={() => handleSaveRfp(selectedRfp.id)}
-              onNotInterested={() => handleNotInterested(selectedRfp.id)}
-              onExpressInterest={() => handleExpressInterest(selectedRfp.id)}
               cachedSummary={summaryCache[selectedRfp.id]}
               onSummaryReady={handleSummaryReady}
             />
@@ -1160,10 +1155,7 @@ function RFPDetailPanel({
   generateSummary,
   MatchBadge,
   isSaved,
-  hasExpressedInterest,
   onSave,
-  onNotInterested,
-  onExpressInterest,
   cachedSummary,
   onSummaryReady,
 }: {
@@ -1172,10 +1164,7 @@ function RFPDetailPanel({
   generateSummary: (rfp: RFP, match: RFPMatch) => string;
   MatchBadge: React.ComponentType<{ score: number; tier?: RFPMatch["tier"]; disqualified?: boolean }>;
   isSaved: boolean;
-  hasExpressedInterest: boolean;
   onSave: () => void;
-  onNotInterested: () => void;
-  onExpressInterest: () => void;
   cachedSummary?: string;
   onSummaryReady: (rfpId: string, summary: string) => void;
 }) {
@@ -1328,30 +1317,15 @@ function RFPDetailPanel({
                 </svg>
                 {isSaved ? "Saved" : "Save"}
               </button>
-              <button
-                type="button"
-                onClick={onNotInterested}
-                className="text-sm text-slate-500 hover:text-slate-700 hover:bg-slate-100 flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors"
+              <Link
+                href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                Not Interested
-              </button>
-              <button
-                type="button"
-                onClick={onExpressInterest}
-                className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
-                  hasExpressedInterest
-                    ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
-                    : "bg-[#2563eb] text-white hover:bg-[#1d4ed8]"
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                {hasExpressedInterest ? "Interest expressed" : "Express Interest"}
-              </button>
+                Generate Proposal &amp; Plan
+              </Link>
             </div>
           </div>
 
@@ -1373,11 +1347,6 @@ function RFPDetailPanel({
               {rfp.capabilities[0] || rfp.contractType || "Contract"}
             </span>
             <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
-            {match.disqualified && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-red-50 text-red-600">
-                <span className="text-red-500">✗</span> Not Eligible
-              </span>
-            )}
           </div>
 
           {/* Key details with icons */}

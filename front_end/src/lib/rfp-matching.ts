@@ -119,63 +119,158 @@ function scoreFromSimilarity(sim: number, maxPoints: number) {
 // Domain synonym map — expands tokens so related concepts match
 // ---------------------------------------------------------------------------
 
-const SYNONYM_MAP: Record<string, string[]> = {
-  // IT / Software
-  cloud: ["aws", "azure", "gcp", "saas", "iaas", "paas", "serverless", "hosting"],
-  aws: ["cloud", "amazon"],
-  azure: ["cloud", "microsoft"],
-  gcp: ["cloud", "google"],
-  software: ["application", "platform", "development", "programming", "coding"],
-  database: ["sql", "nosql", "mongodb", "postgresql", "oracle", "data"],
-  devops: ["cicd", "pipeline", "deployment", "containerization", "kubernetes", "docker"],
-  kubernetes: ["container", "docker", "orchestration", "devops"],
+// Domain synonym groups — each group is a cluster of related terms.
+// Any token in a group expands to include all other tokens in that group.
+// This is more maintainable than a bidirectional map and ensures full coverage.
+const SYNONYM_GROUPS: string[][] = [
+  // ── IT / Software ──
+  ["cloud", "aws", "azure", "gcp", "saas", "iaas", "paas", "serverless", "hosting"],
+  ["software", "application", "platform", "development", "programming", "coding", "engineering"],
+  ["database", "sql", "nosql", "mongodb", "postgresql", "oracle", "mysql", "dynamodb"],
+  ["devops", "cicd", "pipeline", "deployment", "containerization", "kubernetes", "docker", "terraform"],
+  ["web", "frontend", "backend", "fullstack", "javascript", "react", "angular", "html", "css"],
+  ["mobile", "ios", "android", "flutter", "native"],
+  ["api", "integration", "interface", "microservices", "rest", "graphql", "webhook"],
+  ["erp", "sap", "oracle", "workday", "peoplesoft"],
+  ["crm", "salesforce", "dynamics"],
 
-  // Cybersecurity
-  cybersecurity: ["siem", "soc", "penetration", "vulnerability", "firewall", "encryption", "infosec"],
-  siem: ["cybersecurity", "monitoring", "logging", "splunk"],
-  soc: ["cybersecurity", "monitoring", "incident"],
-  penetration: ["pentest", "security", "vulnerability", "assessment"],
+  // ── Cybersecurity ──
+  ["cybersecurity", "infosec", "security", "firewall", "encryption", "compliance"],
+  ["siem", "splunk", "monitoring", "logging", "detection"],
+  ["soc", "incident", "response", "threat", "intelligence"],
+  ["penetration", "pentest", "vulnerability", "assessment", "ethical", "hacking"],
+  ["zero", "trust", "identity", "access", "authentication", "authorization"],
+  ["nist", "fisma", "fedramp", "rmf", "ato"],
 
-  // Construction
-  construction: ["demolition", "renovation", "grading", "pavement", "building", "excavation"],
-  demolition: ["construction", "removal", "clearing"],
-  renovation: ["construction", "remodel", "rehabilitation", "restoration"],
-  hvac: ["heating", "ventilation", "cooling", "mechanical", "facilities"],
-  plumbing: ["piping", "water", "sewer", "facilities"],
-  electrical: ["wiring", "power", "lighting", "facilities"],
+  // ── Data / AI / Analytics ──
+  ["data", "analytics", "reporting", "visualization", "tableau", "powerbi", "looker"],
+  ["warehouse", "etl", "pipeline", "lake", "databricks", "snowflake", "redshift"],
+  ["machine", "learning", "model", "prediction", "classification", "regression"],
+  ["artificial", "intelligence", "neural", "deep", "nlp", "llm", "generative"],
+  ["forecast", "statistical", "analysis", "modeling"],
 
-  // Engineering
-  engineering: ["design", "structural", "civil", "mechanical", "architect"],
-  architect: ["design", "engineering", "planning"],
+  // ── Construction / Capital ──
+  ["construction", "building", "demolition", "renovation", "grading", "pavement", "excavation"],
+  ["renovation", "remodel", "rehabilitation", "restoration", "retrofit"],
+  ["roofing", "waterproofing", "insulation", "siding", "exterior"],
+  ["concrete", "masonry", "steel", "structural", "foundation"],
+  ["paving", "asphalt", "road", "highway", "bridge", "infrastructure"],
 
-  // Professional services
-  consulting: ["advisory", "strategy", "assessment", "analysis"],
-  management: ["project", "program", "coordination", "oversight"],
+  // ── Engineering ──
+  ["engineering", "design", "structural", "civil", "mechanical", "environmental"],
+  ["architect", "architectural", "design", "planning", "blueprint"],
+  ["survey", "surveying", "geotechnical", "geological", "topographic"],
+  ["drafting", "cad", "autocad", "revit", "bim"],
 
-  // Data / AI
-  analytics: ["data", "reporting", "dashboard", "visualization", "tableau", "powerbi"],
-  machine: ["learning", "model", "prediction", "classification"],
-  artificial: ["intelligence", "neural", "deep"],
+  // ── Facilities / Maintenance ──
+  ["facilities", "maintenance", "repair", "upkeep", "preventive", "corrective"],
+  ["janitorial", "cleaning", "custodial", "sanitation", "housekeeping"],
+  ["landscaping", "grounds", "irrigation", "vegetation", "outdoor", "horticulture"],
+  ["hvac", "heating", "ventilation", "cooling", "mechanical", "climate"],
+  ["plumbing", "piping", "water", "sewer", "drainage"],
+  ["electrical", "wiring", "power", "lighting", "generator", "solar", "energy"],
+  ["elevator", "escalator", "conveyance", "lift"],
+  ["pest", "control", "extermination", "fumigation"],
+  ["waste", "refuse", "recycling", "disposal", "trash", "hazardous"],
 
-  // Facilities
-  maintenance: ["repair", "upkeep", "preventive", "custodial", "janitorial"],
-  janitorial: ["cleaning", "custodial", "sanitation", "maintenance"],
-  landscaping: ["grounds", "irrigation", "vegetation", "outdoor"],
+  // ── Fleet / Transportation ──
+  ["vehicle", "fleet", "automotive", "motor"],
+  ["bus", "truck", "transit", "transportation", "shuttle", "freight"],
+  ["charging", "electric", "station", "battery"],
+  ["logistics", "shipping", "delivery", "distribution", "warehousing", "supply", "chain"],
 
-  // Fleet
-  vehicle: ["fleet", "transportation", "automotive"],
-  fleet: ["vehicle", "bus", "truck", "transit"],
-  charging: ["electric", "station"],
-};
+  // ── Professional Services ──
+  ["consulting", "advisory", "strategy", "assessment", "analysis", "recommendation"],
+  ["management", "project", "program", "coordination", "oversight", "pmo"],
+  ["staffing", "temporary", "augmentation", "resource", "recruiting", "labor", "personnel"],
+  ["audit", "compliance", "risk", "regulatory", "governance"],
+  ["legal", "attorney", "counsel", "litigation", "arbitration"],
+  ["accounting", "financial", "bookkeeping", "payroll", "budgeting"],
+
+  // ── Training / Education ──
+  ["training", "workshop", "curriculum", "instruction", "education", "course", "learning", "certification"],
+  ["elearning", "lms", "virtual", "classroom", "webinar", "online"],
+
+  // ── Healthcare / Social Services ──
+  ["healthcare", "medical", "clinical", "patient", "hospital", "nursing", "pharmacy"],
+  ["behavioral", "mental", "health", "psychology", "counseling", "therapy", "substance"],
+  ["social", "services", "case", "outreach", "community"],
+  ["hipaa", "medical", "records", "ehr", "emr", "health", "informatics"],
+
+  // ── Supplies / Equipment ──
+  ["supply", "supplies", "equipment", "materials", "parts", "furnish", "procurement", "hardware"],
+  ["furniture", "office", "workspace", "ergonomic", "modular"],
+  ["uniform", "clothing", "protective", "ppe", "safety", "gear"],
+
+  // ── Telecom / Network ──
+  ["network", "infrastructure", "wan", "lan", "fiber", "wireless", "telecom", "telecommunications"],
+  ["voip", "pbx", "telephone", "communications", "unified"],
+  ["cable", "cabling", "structured", "fiber", "optic"],
+
+  // ── Environmental / Scientific ──
+  ["environmental", "remediation", "abatement", "contamination", "hazmat"],
+  ["testing", "laboratory", "inspection", "quality", "assurance", "calibration"],
+  ["research", "development", "scientific", "study", "investigation"],
+
+  // ── Certifications (abbreviation ↔ full name) ──
+  ["iso", "9001", "quality", "management", "system"],
+  ["iso", "27001", "information", "security"],
+  ["cmmi", "capability", "maturity"],
+  ["pci", "dss", "payment", "card"],
+  ["soc2", "soc", "trust", "criteria"],
+  ["itar", "export", "arms", "regulation"],
+  ["gsa", "schedule", "contract", "government"],
+];
+
+// Build a fast lookup map from the groups
+const SYNONYM_MAP: Record<string, Set<string>> = {};
+for (const group of SYNONYM_GROUPS) {
+  for (const term of group) {
+    if (!SYNONYM_MAP[term]) {
+      SYNONYM_MAP[term] = new Set<string>();
+    }
+    for (const other of group) {
+      if (other !== term) {
+        SYNONYM_MAP[term].add(other);
+      }
+    }
+  }
+}
+
+// Optional fallback: use the `synonyms` npm package for general English words
+// not covered by domain groups. Filter to noun senses only to avoid noise.
+let _synonymsLib: ((word: string) => Record<string, string[]> | null) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  _synonymsLib = require("synonyms");
+} catch {
+  // Package not available — domain map only
+}
+
+function getSynonyms(token: string): Set<string> {
+  const domain = SYNONYM_MAP[token];
+  if (domain && domain.size > 0) return domain;
+
+  // Fallback to general English synonyms (nouns only, skip generic words)
+  if (_synonymsLib) {
+    const SKIP = new Set(["system", "group", "unit", "part", "point", "line", "set", "body", "field", "plan", "area", "order", "form"]);
+    if (SKIP.has(token)) return new Set();
+    const result = _synonymsLib(token);
+    if (result?.n) {
+      const nouns = result.n.filter((s: string) => s !== token && s.length > 2 && !SKIP.has(s));
+      if (nouns.length > 0) return new Set(nouns.slice(0, 6));
+    }
+  }
+
+  return new Set();
+}
 
 function expandWithSynonyms(tokens: Set<string>): Set<string> {
   const expanded = new Set(tokens);
   for (const token of tokens) {
-    const synonyms = SYNONYM_MAP[token];
-    if (synonyms) {
-      for (const syn of synonyms) {
-        expanded.add(syn);
-      }
+    const synonyms = getSynonyms(token);
+    for (const syn of synonyms) {
+      expanded.add(syn);
     }
   }
   return expanded;
@@ -617,40 +712,68 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
 // ---------------------------------------------------------------------------
 
 export function generateMatchSummary(_rfp: RFP, match: RFPMatch): string {
-  const { positiveReasons, negativeReasons, score, disqualified, disqualifiers, tier } = match;
+  const { positiveReasons, negativeReasons, score, disqualified, disqualifiers, tier, breakdown } = match;
+
+  const fmt = (r: string) => {
+    const s = r.replace(/\.$/, "");
+    return s.charAt(0).toLowerCase() + s.slice(1);
+  };
+
+  // Filter out generic "Deadline is still open" from content reasons
+  const strengths = positiveReasons.filter((r) => r !== "Deadline is still open.");
+  const gaps = negativeReasons;
+
+  // Pull top scored categories from breakdown for specificity
+  const topCategories = breakdown
+    .filter((b) => b.maxPoints > 0 && b.status === "strong")
+    .map((b) => b.category);
+  const weakCategories = breakdown
+    .filter((b) => b.maxPoints > 0 && (b.status === "missing" || b.status === "weak"))
+    .map((b) => b.category);
 
   if (disqualified && disqualifiers.length > 0) {
-    return `Not eligible: ${disqualifiers[0].toLowerCase()}`;
+    const dq = disqualifiers[0].replace(/\.$/, "");
+    return `Not eligible: ${dq.charAt(0).toLowerCase() + dq.slice(1)}.`;
   }
 
-  if (tier === "excellent" && positiveReasons.length > 0) {
-    const topReasons = positiveReasons.filter((r) => r !== "Deadline is still open.").slice(0, 3);
-    if (topReasons.length === 0) return "Strong overall alignment with your profile.";
-    const first = topReasons[0].charAt(0).toLowerCase() + topReasons[0].slice(1);
-    const rest = topReasons.slice(1).map((r) => r.charAt(0).toLowerCase() + r.slice(1)).join(". ");
-    return `Excellent fit: ${first}.${rest ? ` ${rest}.` : ""} Worth a close look.`;
+  if (tier === "excellent") {
+    if (strengths.length >= 2) {
+      return `Strong match in ${topCategories.slice(0, 3).join(", ").toLowerCase()}. ${fmt(strengths[0])}.`;
+    }
+    return strengths.length > 0
+      ? `Excellent fit: ${fmt(strengths[0])}. Well-aligned across key categories.`
+      : "Strong overall alignment with your profile across multiple categories.";
   }
 
-  if (tier === "strong" && positiveReasons.length > 0) {
-    const top = positiveReasons.filter((r) => r !== "Deadline is still open.").slice(0, 2);
-    if (top.length === 0) return "Good overall alignment with your profile.";
-    const first = top[0].charAt(0).toLowerCase() + top[0].slice(1);
-    const extra = top.length > 1 ? ` Also: ${top[1].charAt(0).toLowerCase() + top[1].slice(1)}.` : "";
-    return `Strong potential: ${first}.${extra}`;
+  if (tier === "strong") {
+    if (strengths.length > 0 && gaps.length > 0) {
+      return `${fmt(strengths[0])}, but ${fmt(gaps[0])}.`;
+    }
+    return strengths.length > 0
+      ? `Good fit: ${fmt(strengths[0])}. Review breakdown for details.`
+      : "Good overall alignment with your profile.";
   }
 
-  if (tier === "moderate" && positiveReasons.length > 0) {
-    const align = positiveReasons.filter((r) => r !== "Deadline is still open.")[0];
-    if (!align) return "Some alignment found. Review details for fit.";
-    const hint = negativeReasons.length > 0
-      ? " Consider updating your profile to improve match accuracy."
-      : "";
-    return `Some alignment: ${align.charAt(0).toLowerCase() + align.slice(1)}.${hint}`;
+  if (tier === "moderate") {
+    if (strengths.length > 0 && weakCategories.length > 0) {
+      return `${fmt(strengths[0])}, but gaps in ${weakCategories.slice(0, 2).join(" and ").toLowerCase()}.`;
+    }
+    if (strengths.length > 0) {
+      return `Partial fit: ${fmt(strengths[0])}. Other areas don't align.`;
+    }
+    return "Some overlap found, but key areas like capabilities and industry don't align.";
   }
 
-  if (score > 0 && positiveReasons.length > 0) {
-    return `Limited alignment. ${positiveReasons[0]}`;
+  // Low tier
+  if (score > 0) {
+    if (weakCategories.length > 0) {
+      return `Low match — gaps in ${weakCategories.slice(0, 3).join(", ").toLowerCase()}. May not be the right fit.`;
+    }
+    if (gaps.length > 0) {
+      return `Low match: ${fmt(gaps[0])}. Profile updates may help.`;
+    }
+    return "Minimal overlap with your profile. Review breakdown for details.";
   }
 
-  return "Complete your profile for personalized match insights.";
+  return "Complete your profile for personalized match scores.";
 }
