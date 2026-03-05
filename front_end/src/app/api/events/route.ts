@@ -154,20 +154,20 @@ function inferCapabilities(title: string, description: string): string[] {
   if (text.match(/\b(system\s+integrat|enterprise\s+integrat)\b/)) caps.push("System Integration");
   if (text.match(/\b(ai|artificial\s+intelligence|machine\s+learning|ml\b|neural|nlp)\b/)) caps.push("AI/ML Services");
 
-  // Construction / Engineering
-  if (text.match(/\b(construction|building\s+construct|general\s+contractor|demolition)\b/)) caps.push("Building Construction");
-  if (text.match(/\b(road|highway|paving|asphalt|bridge|pavement|striping|culvert)\b/)) caps.push("Road & Highway Construction");
-  if (text.match(/\b(concrete|masonry|foundation|structural)\b/)) caps.push("Concrete & Masonry");
-  if (text.match(/\b(renovation|remodel|rehabilitat|restoration|retrofit|siding\s+replace)\b/)) caps.push("Renovation & Remodeling");
+  // Construction / Engineering — broadened patterns to catch typical RFP language
+  if (text.match(/\b(construction|general\s+contractor|demolition|grading|excavat)\b/)) caps.push("Building Construction");
+  if (text.match(/\b(road|highway|paving|asphalt|bridge|pavement|striping|culvert|guardrail|sidewalk|curb|gutter)\b/)) caps.push("Road & Highway Construction");
+  if (text.match(/\b(concrete|masonry|foundation|structural|rebar|formwork)\b/)) caps.push("Concrete & Masonry");
+  if (text.match(/\b(renovation|remodel|rehabilitat|restoration|retrofit|siding|roofing|roof\s+replace|replace\w*\s+service|upgrade|moderniz)\b/)) caps.push("Renovation & Remodeling");
   if (text.match(/\b(demolition|deconstruct|abate)\b/)) caps.push("Demolition");
-  if (text.match(/\b(civil\s+engineer|structural\s+engineer|geotechnical|survey)\b/)) caps.push("Civil Engineering");
-  if (text.match(/\b(electrical|wiring|power|lighting|generator|solar|high\s+voltage)\b/)) caps.push("Electrical Systems");
-  if (text.match(/\b(plumbing|piping|water\s+system|sewer|drainage)\b/)) caps.push("Plumbing & Piping");
+  if (text.match(/\b(civil\s+engineer|structural\s+engineer|geotechnical|survey|engineer\w*\s+service)\b/)) caps.push("Civil Engineering");
+  if (text.match(/\b(electrical|wiring|power\s+distribut|lighting|generator|solar|high\s+voltage|switchgear|panel)\b/)) caps.push("Electrical Systems");
+  if (text.match(/\b(plumbing|piping|water\s+system|sewer|drain|storm\s*water|catch\s*basin|inlet)\b/)) caps.push("Plumbing & Piping");
 
   // Facilities / Maintenance
   if (text.match(/\b(janitorial|cleaning|custodial|sanitation|housekeeping)\b/)) caps.push("Janitorial & Cleaning");
   if (text.match(/\b(hvac|heating|ventilation|cooling|air\s+balanc|chiller|refrigerat)\b/)) caps.push("HVAC Services");
-  if (text.match(/\b(facilit.*maintenance|preventive\s+maintenance|equipment\s+maintenance|repair\s+service|maintenance\s+and\s+repair)\b/)) caps.push("Facilities Maintenance & Repair");
+  if (text.match(/\b(facilit.*maintenance|preventive\s+maintenance|equipment\s+maintenance|repair\s+service|maintenance\s+and\s+repair|repair|replac\w+\s+and\s+repair)\b/)) caps.push("Facilities Maintenance & Repair");
   if (text.match(/\b(landscap|grounds|irrigation|vegetation|horticultur|tree\s+trim)\b/)) caps.push("Landscaping & Grounds");
   if (text.match(/\b(pest\s+control|extermination|fumigat)\b/)) caps.push("Pest Control");
   if (text.match(/\b(waste|refuse|recycl|disposal|trash|garbage|hazardous\s+waste)\b/)) caps.push("Waste Management & Disposal");

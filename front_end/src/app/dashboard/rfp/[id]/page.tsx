@@ -756,7 +756,11 @@ export default function RFPDetailPage() {
               <h2 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h2>
               <div className="space-y-3">
                 {rfp.match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
-                  const pct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                  // Find the largest maxPoints across all categories to scale bars proportionally
+                  const largestMax = Math.max(...rfp.match.breakdown.map((x) => x.maxPoints), 1);
+                  // Bar widths are relative to the category with the most points
+                  const bgPct = (b.maxPoints / largestMax) * 100; // gray background = max potential
+                  const fillPct = (b.points / largestMax) * 100;  // colored fill = actual score
                   const barColor =
                     b.status === "strong" ? "bg-emerald-500" :
                     b.status === "partial" ? "bg-blue-400" :
@@ -779,8 +783,9 @@ export default function RFPDetailPage() {
                         )}
                       </div>
                       {b.maxPoints > 0 ? (
-                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                        <div className="h-2 rounded-full overflow-hidden relative" style={{ width: `${bgPct}%` }}>
+                          <div className="absolute inset-0 bg-slate-100 rounded-full" />
+                          <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: fillPct > 0 ? `${(fillPct / bgPct) * 100}%` : '0%' }} />
                         </div>
                       ) : (
                         <p className={`text-xs ${textColor}`}>{b.detail}</p>
