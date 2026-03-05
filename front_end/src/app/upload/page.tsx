@@ -179,12 +179,6 @@ export default function UploadPage() {
               <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
               <span className="text-2xl font-bold text-slate-900">Civitas</span>
             </Link>
-          <Link
-            href="/profile"
-            className="px-4 py-2 bg-[#3C89C6] text-white font-medium rounded-md hover:bg-[#2d6fa0] transition-colors"
-          >
-            Save Profile
-          </Link>
         </div>
       </nav>
 

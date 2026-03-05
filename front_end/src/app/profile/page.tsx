@@ -667,13 +667,17 @@ export default function ProfilePage() {
   if (profile === null) {
     return (
       <div className="min-h-screen bg-slate-50">
-        <AppHeader rightContent={<Link href="/profile" className={btnPrimary}>Save Profile</Link>} />
+        <AppHeader />
         <div className="max-w-3xl mx-auto px-6 py-16 text-center">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">No profile yet</h1>
           <p className="text-slate-600 mb-6">Create or save your company profile to see a summary here.</p>
-          <Link href="/profile" className={"inline-flex px-6 py-3 " + btnPrimary}>
+          <button
+            type="button"
+            onClick={() => setProfile(getEmptyCompanyProfile())}
+            className={"inline-flex px-6 py-3 " + btnPrimary}
+          >
             Create profile
-          </Link>
+          </button>
         </div>
       </div>
     );
