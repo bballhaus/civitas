@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getApiBase, setCachedUser, setAuthToken } from "@/lib/api";
+import { MeshBackground } from "@/components/MeshBackground";
 
 const API_BASE = getApiBase();
 
@@ -82,8 +83,16 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff] flex items-center justify-center p-4">
+      <MeshBackground />
+      <div className="relative w-full max-w-md">
+        <div className="mb-8 text-center">
+          <div className="flex items-center justify-center gap-3 mr-5">
+            <img src="/logo.png" alt="Civitas logo" className="h-16 w-16 mix-blend-multiply" />
+            <span className="text-4xl font-extrabold tracking-tight text-slate-900">Civitas</span>
+          </div>
+          <p className="text-slate-500 text-sm mt-2">AI-powered government contract matching</p>
+        </div>
         <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-8">
           <h1 className="text-2xl font-semibold text-slate-800 mb-1">
             Sign in
@@ -156,12 +165,6 @@ export default function LoginPage() {
             </Link>
           </p>
         </div>
-
-        <p className="mt-4 text-center text-xs text-slate-400">
-          <Link href="/" className="hover:text-slate-600">
-            ← Back to home
-          </Link>
-        </p>
       </div>
     </div>
   );
