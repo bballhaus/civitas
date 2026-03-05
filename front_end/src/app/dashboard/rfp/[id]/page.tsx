@@ -761,17 +761,19 @@ export default function RFPDetailPage() {
                   // Bar widths are relative to the category with the most points
                   const bgPct = (b.maxPoints / largestMax) * 100; // gray background = max potential
                   const fillPct = (b.points / largestMax) * 100;  // colored fill = actual score
+                  // Color based on fill percentage: red → orange → yellow → green
+                  const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
                   const barColor =
-                    b.status === "strong" ? "bg-emerald-500" :
-                    b.status === "partial" ? "bg-blue-400" :
-                    b.status === "weak" ? "bg-amber-400" :
-                    b.status === "missing" ? "bg-red-300" :
+                    fillRatio >= 0.75 ? "bg-emerald-500" :
+                    fillRatio >= 0.5 ? "bg-yellow-400" :
+                    fillRatio >= 0.25 ? "bg-orange-400" :
+                    fillRatio > 0 ? "bg-red-400" :
                     "bg-slate-200";
                   const textColor =
-                    b.status === "strong" ? "text-emerald-700" :
-                    b.status === "partial" ? "text-blue-700" :
-                    b.status === "weak" ? "text-amber-700" :
-                    b.status === "missing" ? "text-red-600" :
+                    fillRatio >= 0.75 ? "text-emerald-700" :
+                    fillRatio >= 0.5 ? "text-yellow-600" :
+                    fillRatio >= 0.25 ? "text-orange-600" :
+                    b.points === 0 && b.maxPoints > 0 ? "text-red-600" :
                     "text-slate-500";
 
                   return (
