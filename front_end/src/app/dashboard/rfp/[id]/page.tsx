@@ -784,7 +784,7 @@ export default function RFPDetailPage() {
                       </div>
                       {b.maxPoints > 0 ? (
                         <div className="h-2 rounded-full overflow-hidden relative" style={{ width: `${bgPct}%` }}>
-                          <div className="absolute inset-0 bg-slate-100 rounded-full" />
+                          <div className="absolute inset-0 bg-slate-200 rounded-full" />
                           <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: fillPct > 0 ? `${(fillPct / bgPct) * 100}%` : '0%' }} />
                         </div>
                       ) : (
