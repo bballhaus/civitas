@@ -472,10 +472,13 @@ class ContractListCreateView(generics.ListCreateAPIView):
                     data['title'] = extracted['title']
                 if not data.get('rfp_id') and extracted.get('rfp_id'):
                     data['rfp_id'] = extracted['rfp_id']
+                if not data.get('contractor_name') and extracted.get('contractor_name'):
+                    data['contractor_name'] = extracted['contractor_name']
             except ExtractionError:
                 pass
         metadata = {
             'title': data.get('title', ''),
+            'contractor_name': data.get('contractor_name', ''),
             'rfp_id': data.get('rfp_id', ''),
             'issuing_agency': data.get('issuing_agency', 'Unknown'),
             'jurisdiction_state': jur.get('state', 'CA'),

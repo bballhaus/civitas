@@ -62,7 +62,7 @@ Expected schema:
 Rules:
 - rfp_id: RFP number, solicitation ID, contract number, or similar reference (e.g. "RFP-2024-001", "GS-00F-12345")
 - issuing_agency: the government agency or entity that awarded the contract (required)
-- contractor_name: the name of the COMPANY/CONTRACTOR that won this contract (the business that performed the work, NOT the government agency). Look for phrases like "awarded to", "contractor", "vendor", "company name", or the business entity name in the document.
+- contractor_name: CRITICAL - the legal name of the COMPANY/CONTRACTOR/VENDOR that won and performed this contract. This is NOT the government agency. Search carefully for: the business entity name on the cover page or letterhead, text after "awarded to", "contractor:", "vendor:", "consultant:", "firm:", "performed by:", "submitted by:", or "prepared by:". Also check for company names in signature blocks, headers, footers, or "About Us" sections. Examples: "Acme Construction LLC", "Smith Engineering Inc.", "Global IT Solutions Corp". If multiple companies appear, pick the prime contractor. Return the full legal entity name. Return null ONLY if genuinely absent.
 - title: contract/project title
 - jurisdiction: Extract state, county, and city from the document. Prefer explicit mentions (e.g. "County of Inyo", "State of California", "City of Sacramento"). When only a city is named, infer the county from California geography (e.g. Sacramento → Sacramento County, Los Angeles → Los Angeles County, Baker → Inyo County). Default state to "CA" when the document clearly refers to California. Use null only when not mentioned and cannot be inferred.
 - dates: ISO format YYYY-MM-DD when possible; award_date=when contract was awarded, start_date/end_date=period of performance
@@ -70,8 +70,8 @@ Rules:
 - required_clearances: security clearances required (indicates clearances the user holds)
 - contract_value_estimate: total contract value in dollars as string (e.g. "500000" or "$500,000")
 - work_description: 1-3 sentences describing the type of work, scope, or services performed (e.g. "Fire station design and construction", "IT support and maintenance")
-- industry_tags: relevant sectors (e.g. construction, IT, healthcare, facilities)
-- naics_codes: North American Industry Classification codes if mentioned
+- industry_tags: IMPORTANT - classify the contract into one or more industry sectors. Infer from the type of work described, the agency, and the services rendered. Use tags like: "Construction", "IT Services", "Consulting", "Engineering", "Healthcare", "Education", "Logistics", "Manufacturing", "Research & Development", "Security", "Facilities Management", "Environmental", "Transportation", "Telecommunications", "Professional Services", "Financial Services". Always return at least one tag. If the work involves software, IT systems, or technology, include "IT Services". If it involves building, renovation, or infrastructure, include "Construction".
+- naics_codes: North American Industry Classification codes if mentioned or inferable from the work described
 
 Document text:
 ---

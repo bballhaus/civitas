@@ -3,7 +3,16 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getApiBase, getAuthToken, uploadContractDocument } from "@/lib/api";
+import {
+  getApiBase,
+  getAuthToken,
+  uploadContractDocument,
+  getProfileFromBackend,
+  mapBackendProfileToCompanyProfile,
+  getEmptyCompanyProfile,
+  getCachedUser,
+  setCachedProfile,
+} from "@/lib/api";
 
 interface ExtractedData {
   companyName: string;
@@ -113,35 +122,45 @@ export default function UploadPage() {
         setProgress(10);
         for (let i = 0; i < files.length; i++) {
           await uploadContractDocument(files[i], files[i].name);
-          setProgress(10 + Math.round((40 * (i + 1)) / files.length));
+          setProgress(10 + Math.round((70 * (i + 1)) / files.length));
         }
+
+        setProgress(85);
+        const backendProfile = await getProfileFromBackend();
+        const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+        const cachedUser = getCachedUser();
+        if (cachedUser) setCachedProfile(cachedUser.user_id, mapped);
+
+        setProgress(100);
+        setTimeout(() => {
+          router.push("/profile");
+        }, 500);
+      } else {
+        setProgress(10);
+        const extractedData = await parseDocumentsWithBackend(files);
+        setProgress(90);
+
+        const fileInfo = files.map((file) => ({
+          name: file.name,
+          type: file.type || "application/octet-stream",
+          size: file.size,
+          uploadedAt: new Date().toISOString(),
+          parsed: true,
+        }));
+
+        const profileData = {
+          ...extractedData,
+          uploadedFiles: fileInfo,
+        };
+
+        localStorage.setItem("companyProfile", JSON.stringify(profileData));
+        localStorage.setItem("uploadedFiles", JSON.stringify(fileInfo.map((f) => ({ ...f, content: "" }))));
+
+        setProgress(100);
+        setTimeout(() => {
+          router.push("/profile");
+        }, 500);
       }
-
-      setProgress(50);
-      const extractedData = await parseDocumentsWithBackend(files);
-      setProgress(90);
-
-      const fileInfo = files.map((file) => ({
-        name: file.name,
-        type: file.type || "application/octet-stream",
-        size: file.size,
-        uploadedAt: new Date().toISOString(),
-        parsed: true,
-      }));
-
-      const profileData = {
-        ...extractedData,
-        uploadedFiles: fileInfo,
-      };
-
-      localStorage.setItem("companyProfile", JSON.stringify(profileData));
-      localStorage.setItem("uploadedFiles", JSON.stringify(fileInfo.map((f) => ({ ...f, content: "" }))));
-
-      setProgress(100);
-
-      setTimeout(() => {
-        router.push("/profile");
-      }, 500);
     } catch (error) {
       console.error("Error processing files:", error);
       alert(`Error processing files: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`);

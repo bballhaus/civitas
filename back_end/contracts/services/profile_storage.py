@@ -197,6 +197,7 @@ def refresh_profile_from_contracts(user):
     counties = set()
     capabilities_set = set()
     agencies = set()
+    contractor_names = set()
     total_val = Decimal("0")
     for c in contract_list:
         rc = getattr(c, "required_certifications", None) or (
@@ -229,6 +230,11 @@ def refresh_profile_from_contracts(user):
         val = getattr(c, "contract_value_estimate", None) or (
             c.get("contract_value_estimate") if isinstance(c, dict) else None
         )
+        cn = getattr(c, "contractor_name", None) or (
+            c.get("contractor_name") if isinstance(c, dict) else None
+        )
+        if cn and str(cn).strip():
+            contractor_names.add(str(cn).strip())
         certs.update(rc or [])
         clearances_set.update(rcl or [])
         naics.update(naics_list or [])
@@ -259,6 +265,10 @@ def refresh_profile_from_contracts(user):
             doc = getattr(c, "document", None) or ""
             created = getattr(c, "created_at", None) or ""
             uploaded_documents.append({"id": cid, "title": title, "document": doc, "created_at": created})
+    existing_name = profile_dict.get("name") or ""
+    if not existing_name and contractor_names:
+        profile_dict["name"] = sorted(contractor_names)[0]
+
     profile_dict.update(
         {
             "user_id": user.id,
