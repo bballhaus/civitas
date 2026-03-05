@@ -133,17 +133,18 @@ export default function UploadPage() {
     setProgress(0);
 
     try {
+      setProgress(10);
+      const extractedData = await parseDocumentsWithBackend(files);
+      setProgress(50);
+
       const isLoggedIn = !!getAuthToken();
       if (isLoggedIn) {
-        setProgress(10);
         for (let i = 0; i < files.length; i++) {
           await uploadContractDocument(files[i], files[i].name);
-          setProgress(10 + Math.round((40 * (i + 1)) / files.length));
+          setProgress(50 + Math.round((40 * (i + 1)) / files.length));
         }
       }
 
-      setProgress(50);
-      const extractedData = await parseDocumentsWithBackend(files);
       setProgress(90);
 
       const fileInfo = files.map((file) => ({

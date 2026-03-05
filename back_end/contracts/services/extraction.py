@@ -87,6 +87,8 @@ def _extract_text_from_pdf(file) -> str:
 
     text_parts = []
     try:
+        if hasattr(file, "seek"):
+            file.seek(0)
         with pdfplumber.open(file) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text()
@@ -101,12 +103,59 @@ def _extract_text_from_pdf(file) -> str:
     return text
 
 
+def _extract_text_from_docx(file) -> str:
+    """Extract text from a DOCX file."""
+    try:
+        from docx import Document
+    except ImportError:
+        raise ExtractionError(
+            "python-docx not installed. Run: pip install python-docx"
+        ) from None
+
+    try:
+        if hasattr(file, "seek"):
+            file.seek(0)
+        doc = Document(file)
+        text_parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    except Exception as e:
+        raise ExtractionError(f"Failed to extract text from DOCX: {e}") from e
+
+    text = "\n\n".join(text_parts).strip()
+    if not text:
+        raise ExtractionError("No text could be extracted from the DOCX")
+    return text
+
+
+def _extract_text_from_txt(file) -> str:
+    """Extract text from a plain text file."""
+    try:
+        if hasattr(file, "seek"):
+            file.seek(0)
+        if hasattr(file, "read"):
+            raw = file.read()
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        else:
+            with open(file, "r", encoding="utf-8") as f:
+                text = f.read()
+    except Exception as e:
+        raise ExtractionError(f"Failed to read text file: {e}") from e
+
+    text = text.strip()
+    if not text:
+        raise ExtractionError("The text file is empty")
+    return text
+
+
 def _extract_text(file) -> str:
-    """Extract text from an uploaded file. Supports PDF."""
-    name = getattr(file, "name", "") or ""
-    if name.lower().endswith(".pdf"):
+    """Extract text from an uploaded file. Supports PDF, DOCX, and TXT."""
+    name = (getattr(file, "name", "") or "").lower()
+    if name.endswith(".pdf"):
         return _extract_text_from_pdf(file)
-    raise ExtractionError(f"Unsupported file type. Supported: PDF. Got: {name}")
+    if name.endswith(".docx") or name.endswith(".doc"):
+        return _extract_text_from_docx(file)
+    if name.endswith(".txt"):
+        return _extract_text_from_txt(file)
+    raise ExtractionError(f"Unsupported file type. Supported: PDF, DOCX, TXT. Got: {name}")
 
 
 def _call_groq(text: str) -> dict[str, Any]:

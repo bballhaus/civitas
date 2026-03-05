@@ -59,6 +59,7 @@ __pycache__/
 
 # logs, databases, coverage
 /back_end/*.log
+/back_end/logs/
 /back_end/*.coverage
 /back_end/.coverage.*
 /back_end/.cache/
