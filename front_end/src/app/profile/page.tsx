@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -108,11 +108,7 @@ export default function ProfilePage() {
   const [profileLoadedFromBackend, setProfileLoadedFromBackend] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
-  const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
-
-  useEffect(() => {
-    setPendingRemovals([]);
-  }, [editingSection]);
+  const pendingFilesRef = useRef<Map<string, File>>(new Map());
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -428,85 +424,26 @@ export default function ProfilePage() {
     let profileToSave = profile;
     try {
       if (editingSection === "documents") {
-        const removalsToProcess = [...pendingRemovals];
-        const removedNames = new Set<string>();
-
-        for (const key of removalsToProcess) {
-          const file = profile.uploadedFiles?.find(
-            (f) => (f.contractId || f.name) === key
-          );
-          if (file) removedNames.add(file.name);
-          if (file?.uploadedToBackend && file?.contractId) {
-            await deleteContractDocument(file.contractId);
-          }
-        }
-
-        if (removedNames.size > 0) {
-          const localFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-          localStorage.setItem(
-            "uploadedFiles",
-            JSON.stringify(localFiles.filter((f: { name: string }) => !removedNames.has(f.name)))
-          );
-        }
-
-        profileToSave = {
-          ...profileToSave,
-          uploadedFiles: (profileToSave.uploadedFiles ?? []).filter(
-            (f) => !removalsToProcess.includes(f.contractId || f.name)
-          ),
-        };
-
-        const storedFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-        const filesToUpload: File[] = [];
-        const namesToMarkUploaded: string[] = [];
-
         if (currentUser && getAuthToken()) {
           for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
-            const stored = storedFiles.find((f: { name: string }) => f.name === fileInfo.name);
-            if (stored?.content) {
-              const base64Data = stored.content.split(",")[1];
-              if (base64Data) {
-                const byteCharacters = atob(base64Data);
-                const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                  byteNumbers[i] = byteCharacters.charCodeAt(i);
-                }
-                const blob = new Blob([new Uint8Array(byteNumbers)], { type: stored.type });
-                filesToUpload.push(new File([blob], stored.name, { type: stored.type }));
-                namesToMarkUploaded.push(fileInfo.name);
-              }
+            const file = pendingFilesRef.current.get(fileInfo.name);
+            if (file) {
+              await uploadContractDocument(file, file.name);
             }
           }
-          const nameToContractId: Record<string, string> = {};
-          for (const file of filesToUpload) {
-            const result = await uploadContractDocument(file, file.name);
-            if (result?.id) nameToContractId[file.name] = result.id;
-          }
-          if (namesToMarkUploaded.length > 0) {
-            setProfile((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    uploadedFiles: (prev.uploadedFiles ?? []).map((f) =>
-                      namesToMarkUploaded.includes(f.name)
-                        ? { ...f, uploadedToBackend: true, contractId: nameToContractId[f.name] ?? f.contractId }
-                        : f
-                    ),
-                  }
-                : null
-            );
-            profileToSave = {
-              ...profileToSave,
-              uploadedFiles: (profileToSave.uploadedFiles ?? []).map((f) =>
-                namesToMarkUploaded.includes(f.name)
-                  ? { ...f, uploadedToBackend: true, contractId: nameToContractId[f.name] ?? f.contractId }
-                  : f
-              ),
-            };
-          }
+          pendingFilesRef.current.clear();
+
+          const backendProfile = await getProfileFromBackend();
+          const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+          setProfile(mapped);
+          setCachedProfile(currentUser.user_id, mapped);
+          setEditingSection(null);
+          setSectionSaving(false);
+          return;
         }
 
+        const storedFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
         const unparsedFiles = profileToSave.uploadedFiles?.filter((file) => !file.parsed) || [];
         if (unparsedFiles.length > 0) {
           try {
@@ -586,21 +523,12 @@ export default function ProfilePage() {
         uploadedAt: new Date().toISOString(),
         parsed: false,
       };
+      pendingFilesRef.current.set(file.name, file);
       setProfile((prev) =>
         prev
           ? { ...prev, uploadedFiles: [...(prev.uploadedFiles ?? []), fileInfo] }
           : null
       );
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          const fileData = { ...fileInfo, content: event.target.result as string };
-          const existing = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-          existing.push(fileData);
-          localStorage.setItem("uploadedFiles", JSON.stringify(existing));
-        }
-      };
-      reader.readAsDataURL(file);
     });
   };
 
@@ -1216,7 +1144,6 @@ export default function ProfilePage() {
                   {profile.uploadedFiles?.map((file, i) => (
                     <li key={i} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                       <span className="text-slate-700 font-medium">{file.name}</span>
-                      <span className="text-slate-500 text-sm">{(file.size / 1024).toFixed(2)} KB</span>
                     </li>
                   ))}
                 </ul>
