@@ -506,6 +506,11 @@ export default function RFPDetailPage() {
     setPlanLoading(true);
     setPlanError(null);
     if (!trimmed) setPlanOfExecution(null);
+
+    // Mark in progress as soon as the button is pressed (even if POE generation fails or doesn't finish)
+    setInProgressRfpIds((prev) => new Set([...prev, id]));
+    updateUserRfpStatus({ mark_in_progress: id }).catch(() => {});
+
     try {
       const res = await fetch("/api/generate-plan-of-execution", {
         method: "POST",
@@ -525,12 +530,6 @@ export default function RFPDetailPage() {
       const data = await res.json();
       setPlanOfExecution(data.plan ?? "");
       setPlanFeedback("");
-      try {
-        await updateUserRfpStatus({ mark_in_progress: id });
-        setInProgressRfpIds((prev) => new Set([...prev, id]));
-      } catch {
-        // ignore
-      }
     } catch (err) {
       setPlanError(
         err instanceof Error ? err.message : "Failed to generate plan"
