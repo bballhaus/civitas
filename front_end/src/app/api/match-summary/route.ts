@@ -15,13 +15,16 @@ Important scoring context:
 - A high score on a generic RFP (few specific requirements) is normal — the company isn't penalized for requirements that don't exist.
 - Focus explanations on categories where there IS a specific RFP requirement and how the company matches or doesn't match.
 
-Your task: Write a short, natural 2-4 sentence summary explaining why this RFP is or isn't a good match for the company. Be specific — name the overlapping capabilities, industries, certifications, or NAICS codes that drive the score. When attachment-derived data is present, reference specific requirements from the attachments. If disqualified, explain clearly why. If a strong match, explain exactly which company strengths align with which RFP requirements. If weak, explain which specific RFP requirements the company doesn't meet.
+Your task: Write two plain text paragraphs (no headings or "Part 1/Part 2" labels).
+
+First paragraph: A very brief summary of what the RFP is actually asking for (scope, key requirements, type of work, agency/context). Do not mention the company yet. 1–2 sentences.
+
+Second paragraph: Why this RFP is or isn't a good match for the company. Be specific — name overlapping capabilities, industries, certifications, or NAICS codes that drive the score. When attachment-derived data is present, reference specific requirements from the attachments. If disqualified, explain clearly why. If a strong match, explain exactly which company strengths align with which RFP requirements. If weak, explain which specific RFP requirements the company doesn't meet. 2–4 sentences.
 
 Rules:
 - Do NOT suggest profile updates, improvements, or ways to strengthen the match
 - Do NOT use filler phrases like "let's take a closer look", "to better understand", or "review the breakdown"
-- Focus entirely on the specific alignment (or misalignment) between the company and the RFP
-- Keep it conversational and under 100 words. No bullet points.`;
+- Output exactly two paragraphs of plain text. No bullet points, no labels.`;
 
 export async function POST(req: Request) {
   try {
@@ -89,7 +92,7 @@ Negative reasons: ${
         { role: "user", content: input },
       ],
       temperature: 0.3,
-      max_tokens: 200,
+      max_tokens: 280,
     });
 
     const summary =

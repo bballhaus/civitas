@@ -115,6 +115,8 @@ export default function HomePage() {
   const [rfps, setRfps] = useState<RFP[]>([]);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [expressedIds, setExpressedIds] = useState<Set<string>>(new Set());
+  const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
+  const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
 
@@ -125,13 +127,15 @@ export default function HomePage() {
 
   useEffect(() => {
     let cancelled = false;
-    getCurrentUser()
+    getCurrentUser(true)
       .then((data) => {
         if (cancelled) return;
         if (data) {
           const cached = getCachedProfile(data.user_id);
           const companyName = cached?.companyName?.trim();
           setDisplayName(companyName || data.username || "there");
+          setAppliedRfpIds(new Set(data.applied_rfp_ids ?? []));
+          setInProgressRfpIds(new Set(data.in_progress_rfp_ids ?? []));
         } else {
           router.replace("/login");
           return;
@@ -157,10 +161,12 @@ export default function HomePage() {
   }, [authChecked]);
 
   const savedRfps = rfps.filter((r) => savedIds.has(r.id));
-  const appliedRfps = rfps.filter((r) => expressedIds.has(r.id));
+  const appliedRfps = rfps.filter((r) => appliedRfpIds.has(r.id));
+  const inProgressRfps = rfps.filter((r) => inProgressRfpIds.has(r.id));
   const relevantForDeadlines = [
     ...savedRfps,
     ...appliedRfps.filter((r) => !savedIds.has(r.id)),
+    ...inProgressRfps.filter((r) => !savedIds.has(r.id) && !appliedRfpIds.has(r.id)),
   ];
   const now = new Date();
   const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -199,6 +205,11 @@ export default function HomePage() {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   );
+  const iconInProgress = (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+    </svg>
+  );
   const iconDeadline = (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -211,7 +222,7 @@ export default function HomePage() {
 
       <AppHeader />
 
-      <main className="relative max-w-5xl mx-auto px-6 py-10">
+      <main className="relative max-w-7xl mx-auto px-6 md:px-10 py-10">
         <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-slate-900 mb-1">
@@ -236,7 +247,7 @@ export default function HomePage() {
         </div>
 
         {/* Quick stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-10">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
           <StatCard
             label="Saved"
             value={savedIds.size}
@@ -246,21 +257,28 @@ export default function HomePage() {
           />
           <StatCard
             label="Applied"
-            value={expressedIds.size}
-            subtext="Interest expressed"
+            value={appliedRfpIds.size}
+            subtext="Marked as applied"
             accent="emerald"
             icon={iconApplied}
           />
           <StatCard
+            label="In progress"
+            value={inProgressRfpIds.size}
+            subtext="POA / plan generated"
+            accent="violet"
+            icon={iconInProgress}
+          />
+          <StatCard
             label="Due in 30 days"
             value={dueIn30Count}
-            subtext="From saved or applied"
+            subtext="From saved, applied, or in progress"
             accent="amber"
             icon={iconDeadline}
           />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Saved RFPs */}
           <div className={`${CARD_CLASS} border-l-4 border-l-blue-500`}>
             <div className="px-5 py-4 bg-gradient-to-r from-blue-50/80 to-white/80 border-b border-slate-100 font-bold text-slate-900 flex items-center gap-2">
@@ -327,10 +345,10 @@ export default function HomePage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </span>
-              Applied / Expressed interest
-              {expressedIds.size > 0 && (
+              Applied
+              {appliedRfpIds.size > 0 && (
                 <span className="text-sm font-semibold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full">
-                  {expressedIds.size}
+                  {appliedRfpIds.size}
                 </span>
               )}
             </div>
@@ -339,7 +357,7 @@ export default function HomePage() {
                 <p className="text-sm text-slate-500">Loading&hellip;</p>
               ) : appliedRfps.length === 0 ? (
                 <p className="text-sm text-slate-600">
-                  {"You haven't expressed interest in any RFPs yet. Use \"Express interest\" on the dashboard when you find a good match."}
+                  You haven&apos;t marked any RFPs as applied yet. Use &quot;I&apos;ve applied&quot; on the dashboard when you&apos;ve submitted an application.
                 </p>
               ) : (
                 <ul className="space-y-2">
@@ -364,6 +382,58 @@ export default function HomePage() {
                 <Link
                   href="/dashboard"
                   className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-emerald-600 hover:text-emerald-700 hover:underline"
+                >
+                  View all on dashboard &rarr;
+                </Link>
+              )}
+            </div>
+          </div>
+
+          {/* In progress (POA / plan of action generated) */}
+          <div className={`${CARD_CLASS} border-l-4 border-l-violet-500`}>
+            <div className="px-5 py-4 bg-gradient-to-r from-violet-50/80 to-white/80 border-b border-slate-100 font-bold text-slate-900 flex items-center gap-2">
+              <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white shadow-md">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                </svg>
+              </span>
+              In progress
+              {inProgressRfpIds.size > 0 && (
+                <span className="text-sm font-semibold text-violet-600 bg-violet-100 px-2 py-0.5 rounded-full">
+                  {inProgressRfpIds.size}
+                </span>
+              )}
+            </div>
+            <div className="p-4">
+              {loading ? (
+                <p className="text-sm text-slate-500">Loading&hellip;</p>
+              ) : inProgressRfps.length === 0 ? (
+                <p className="text-sm text-slate-600">
+                  No RFPs in progress yet. Generate a Plan of Execution on the dashboard to track them here.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {inProgressRfps.slice(0, 5).map((rfp) => (
+                    <li key={rfp.id}>
+                      <Link
+                        href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
+                        className="block p-3 rounded-xl border border-slate-100 hover:border-violet-200 hover:bg-violet-50/50 transition-all hover:shadow-sm border-l-2 border-l-violet-400"
+                      >
+                        <p className="font-semibold text-slate-900 text-sm line-clamp-2">
+                          {rfp.title}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
+                        </p>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {inProgressRfps.length > 5 && (
+                <Link
+                  href="/dashboard"
+                  className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-violet-600 hover:text-violet-700 hover:underline"
                 >
                   View all on dashboard &rarr;
                 </Link>
