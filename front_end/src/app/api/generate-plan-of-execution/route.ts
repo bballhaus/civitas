@@ -98,7 +98,7 @@ ${profile ? JSON.stringify(profile, null, 2) : "No company profile provided. Cre
     }
 
     const completion = await client.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userInput },
