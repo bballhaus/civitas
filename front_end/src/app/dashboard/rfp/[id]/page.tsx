@@ -124,6 +124,11 @@ export default function RFPDetailPage() {
               certifications: rfp.certifications,
               contractType: rfp.contractType,
               description: (rfp.description || "").slice(0, 1500),
+              naicsCodes: (rfp as any).naicsCodes,
+              clearancesRequired: (rfp as any).clearancesRequired,
+              setAsideTypes: (rfp as any).setAsideTypes,
+              deliverables: (rfp as any).deliverables,
+              attachmentRollup: (rfp as any).attachmentRollup ?? null,
             },
             profile: profile
               ? {
@@ -244,6 +249,9 @@ export default function RFPDetailPage() {
               certifications: rfp.certifications,
               contractType: rfp.contractType,
               naicsCodes: (rfp as any).naicsCodes,
+              clearancesRequired: (rfp as any).clearancesRequired,
+              setAsideTypes: (rfp as any).setAsideTypes,
+              deliverables: (rfp as any).deliverables,
               estimatedValue: rfp.estimatedValue,
               description: (rfp.description || "").slice(0, 3000),
               attachmentRollup: (rfp as any).attachmentRollup ?? null,

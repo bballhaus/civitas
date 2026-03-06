@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import path from "path";
-import fs from "fs";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 
 interface ScrapedEvent {
   event_id: string;
@@ -34,19 +33,33 @@ interface AttachmentExtraction {
   total_pdfs_available?: number;
 }
 
-// Load attachment extractions (graceful — returns empty object if file missing)
-function loadAttachmentExtractions(): Record<string, AttachmentExtraction> {
+const s3 = new S3Client({
+  region: process.env.AWS_REGION || "us-east-1",
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
+  },
+});
+const S3_BUCKET = process.env.AWS_S3_BUCKET || "civitas-uploads";
+
+async function fetchS3Json<T>(key: string): Promise<T | null> {
   try {
-    const extractionsPath = path.join(
-      process.cwd(), "..", "webscraping", "attachment_extractions.json"
-    );
-    if (!fs.existsSync(extractionsPath)) return {};
-    const content = fs.readFileSync(extractionsPath, "utf-8");
-    return JSON.parse(content);
-  } catch {
-    console.warn("Could not load attachment_extractions.json — using metadata only");
-    return {};
+    const cmd = new GetObjectCommand({ Bucket: S3_BUCKET, Key: key });
+    const resp = await s3.send(cmd);
+    const body = await resp.Body?.transformToString("utf-8");
+    if (!body) return null;
+    return JSON.parse(body) as T;
+  } catch (err) {
+    console.warn(`Could not fetch s3://${S3_BUCKET}/${key}:`, err);
+    return null;
   }
+}
+
+async function loadAttachmentExtractions(): Promise<Record<string, AttachmentExtraction>> {
+  const data = await fetchS3Json<Record<string, AttachmentExtraction>>(
+    "scrapes/caleprocure/attachment_extractions.json"
+  );
+  return data ?? {};
 }
 
 // Infer location from description (look for explicit City/County fields first, then pattern match)
@@ -197,12 +210,18 @@ function inferCapabilities(title: string, description: string): string[] {
 
 export async function GET() {
   try {
-    const jsonPath = path.join(process.cwd(), "..", "webscraping", "all_events_detailed.json");
-    const fileContent = fs.readFileSync(jsonPath, "utf-8");
-    const data = JSON.parse(fileContent);
+    const data = await fetchS3Json<{ events: ScrapedEvent[] }>(
+      "scrapes/caleprocure/all_events.json"
+    );
+    if (!data) {
+      return NextResponse.json(
+        { error: "Could not load events from S3" },
+        { status: 500 }
+      );
+    }
 
     // Load attachment extractions (empty object if file doesn't exist)
-    const extractions = loadAttachmentExtractions();
+    const extractions = await loadAttachmentExtractions();
     const extractionCount = Object.keys(extractions).length;
     if (extractionCount > 0) {
       console.log(`Loaded ${extractionCount} attachment extractions`);
