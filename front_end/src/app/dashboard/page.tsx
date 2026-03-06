@@ -1275,6 +1275,7 @@ function RFPDetailPanel({
   const [summaryError, setSummaryError] = useState(false);
   const [requirementsSummary, setRequirementsSummary] = useState<string | null>(null);
   const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
+  const [expandedBreakdownCategory, setExpandedBreakdownCategory] = useState<string | null>(null);
   const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
   const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
   const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
@@ -1723,6 +1724,124 @@ function RFPDetailPanel({
           </div>
         )}
 
+<<<<<<< generate-buttons
+=======
+        {/* Capabilities Analysis */}
+        <div className="p-5 md:p-6 border-t border-slate-100">
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Capabilities Analysis</h3>
+          {capabilitiesAnalysisLoading ? (
+            <p className="text-slate-500 text-sm animate-pulse">Analyzing capabilities against requirements…</p>
+          ) : capabilitiesAnalysis ? (
+            <MarkdownContent content={capabilitiesAnalysis} />
+          ) : capabilitiesAnalysisError ? (
+            <p className="text-xs text-amber-600">Capabilities analysis unavailable.</p>
+          ) : (
+            <p className="text-slate-500 text-sm">No company profile available for analysis.</p>
+          )}
+        </div>
+
+        {/* Score Breakdown */}
+        {match.breakdown.length > 0 && !match.disqualified && (
+          <div className="p-6 md:p-8 border-t border-slate-100">
+            <h4 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h4>
+            <div className="space-y-2">
+              {match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
+                const pct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                const barColor =
+                  b.status === "strong" ? "bg-emerald-500" :
+                  b.status === "partial" ? "bg-blue-400" :
+                  b.status === "weak" ? "bg-amber-400" :
+                  b.status === "missing" ? "bg-red-300" :
+                  "bg-slate-200";
+                const textColor =
+                  b.status === "strong" ? "text-emerald-700" :
+                  b.status === "partial" ? "text-blue-700" :
+                  b.status === "weak" ? "text-amber-700" :
+                  b.status === "missing" ? "text-red-600" :
+                  "text-slate-500";
+                const isExpanded = expandedBreakdownCategory === b.category;
+                const hasTokens = (b.rfpTokens && b.rfpTokens.length > 0) || (b.profileTokens && b.profileTokens.length > 0);
+
+                return (
+                  <div key={i}>
+                    <div
+                      className={`flex items-center gap-3 ${hasTokens ? "cursor-pointer rounded-md px-1 -mx-1 hover:bg-slate-50 transition-colors" : ""}`}
+                      onClick={() => hasTokens && setExpandedBreakdownCategory(isExpanded ? null : b.category)}
+                    >
+                      <span className="text-xs font-medium text-slate-700 w-28 shrink-0 truncate" title={b.category}>{b.category}</span>
+                      {b.maxPoints > 0 ? (
+                        <>
+                          <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className={`text-xs font-bold w-12 text-right shrink-0 ${textColor}`}>
+                            {b.points}/{b.maxPoints}
+                          </span>
+                        </>
+                      ) : (
+                        <span className={`text-xs ${textColor} flex-1`}>{b.detail}</span>
+                      )}
+                      {hasTokens && (
+                        <svg className={`w-3 h-3 text-slate-400 shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                      )}
+                    </div>
+                    {isExpanded && hasTokens && (
+                      <div className="mt-2 mb-1 ml-1 p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-2">
+                        {b.rfpTokens && b.rfpTokens.length > 0 && (
+                          <div>
+                            <span className="font-semibold text-slate-600">RFP requires:</span>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {b.rfpTokens.map((t, j) => (
+                                <span key={j} className={`px-2 py-0.5 rounded-full ${b.matchedTokens?.includes(t) ? "bg-emerald-100 text-emerald-700 font-medium" : "bg-slate-200 text-slate-600"}`}>{t}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {b.profileTokens && b.profileTokens.length > 0 && (
+                          <div>
+                            <span className="font-semibold text-slate-600">Your profile:</span>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {b.profileTokens.map((t, j) => (
+                                <span key={j} className={`px-2 py-0.5 rounded-full ${b.matchedTokens?.includes(t) ? "bg-emerald-100 text-emerald-700 font-medium" : "bg-blue-50 text-blue-600"}`}>{t}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {b.matchedTokens && b.matchedTokens.length > 0 && (
+                          <div className="pt-1 border-t border-slate-200">
+                            <span className="font-semibold text-emerald-700">Matched:</span>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {b.matchedTokens.map((t, j) => (
+                                <span key={j} className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium">{t}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* About this RFP - AI summary of contract requirements */}
+        <div className="p-6 md:p-8 border-t border-slate-100">
+          <h4 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h4>
+          {requirementsSummaryLoading ? (
+            <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
+          ) : requirementsSummary ? (
+            <MarkdownContent content={requirementsSummary} />
+          ) : (
+            <p className="text-sm text-slate-700 leading-relaxed">{rfp.description}</p>
+          )}
+          {requirementsSummaryError && (
+            <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
+          )}
+        </div>
+
+>>>>>>> main
         {/* Contact */}
         {(rfp.contactEmail || rfp.contactName) && (
           <div className="p-5 md:p-6 border-t border-slate-100">
