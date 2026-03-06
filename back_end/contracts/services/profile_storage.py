@@ -24,6 +24,8 @@ PROFILE_ATTRS = [
     "work_counties",
     "capabilities",
     "agency_experience",
+    "size_status",
+    "contract_types",
     "created_at",
     "updated_at",
     "uploaded_documents",  # list of { id, title, document, created_at } sustained in profile

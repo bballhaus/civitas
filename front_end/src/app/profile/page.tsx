@@ -110,6 +110,7 @@ export default function ProfilePage() {
   const [dupMessage, setDupMessage] = useState("");
   const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
   const pendingFilesRef = useRef<Map<string, File>>(new Map());
+  const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -331,7 +332,13 @@ export default function ProfilePage() {
       .then((data) => {
         if (!data) {
           setCurrentUser(null);
-          setProfile(null);
+          // Fall back to localStorage profile for unauthenticated users
+          const saved = localStorage.getItem("companyProfile");
+          if (saved) {
+            try { setProfile(JSON.parse(saved)); } catch { setProfile(null); }
+          } else {
+            setProfile(null);
+          }
           setInitialLoadDone(true);
           setLoadingProfile(false);
           return;
@@ -417,6 +424,8 @@ export default function ProfilePage() {
     work_counties: p.workCounties ?? [],
     capabilities: p.capabilities ?? [],
     agency_experience: p.agencyExperience ?? [],
+    size_status: p.sizeStatus ?? [],
+    contract_types: p.contractTypes ?? [],
   });
 
   const saveSection = async () => {
@@ -488,14 +497,16 @@ export default function ProfilePage() {
           }
         }
 
-        if (pendingRemovals.length > 0) {
-          profileToSave = {
-            ...profileToSave,
-            uploadedFiles: (profileToSave.uploadedFiles ?? []).filter(
-              (f) => !pendingRemovals.includes(f.contractId || f.name)
-            ),
-          };
+        if (currentUser && (pendingRemovals.length > 0 || pendingFilesRef.current.size > 0)) {
+          for (const key of pendingRemovals) {
+            try { await deleteContractDocument(key); } catch (e) { console.warn("Failed to delete", key, e); }
+          }
           setPendingRemovals([]);
+          const backendProfile = await getProfileFromBackend();
+          const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+          setProfile(mapped);
+          setCachedProfile(currentUser.user_id, mapped);
+          profileToSave = mapped;
         }
       } else {
         profileToSave = profile;
