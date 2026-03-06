@@ -42,6 +42,9 @@ export interface ScoreBreakdown {
   maxPoints: number;
   status: "strong" | "partial" | "weak" | "missing" | "neutral";
   detail: string;
+  matchedTokens?: string[];
+  rfpTokens?: string[];
+  profileTokens?: string[];
 }
 
 export interface RFPMatch {
@@ -435,13 +438,13 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
         ? `Capabilities align: ${capOverlap.slice(0, 3).join(", ")}`
         : "Capabilities align with your profile.";
       positiveReasons.push(detail);
-      breakdown.push({ category: "Capabilities", points: Math.round(pts), maxPoints: 25, status: pts >= 18 ? "strong" : "partial", detail });
+      breakdown.push({ category: "Capabilities", points: Math.round(pts), maxPoints: 25, status: pts >= 18 ? "strong" : "partial", detail, matchedTokens: capOverlap, rfpTokens: rfp.capabilities ?? [], profileTokens: profile.capabilities ?? [] });
     } else {
       negativeReasons.push("Limited capability overlap with your profile.");
-      breakdown.push({ category: "Capabilities", points: 0, maxPoints: 25, status: "missing", detail: "No capability overlap detected." });
+      breakdown.push({ category: "Capabilities", points: 0, maxPoints: 25, status: "missing", detail: "No capability overlap detected.", rfpTokens: rfp.capabilities ?? [], profileTokens: profile.capabilities ?? [] });
     }
   } else {
-    breakdown.push({ category: "Capabilities", points: 0, maxPoints: 25, status: "neutral", detail: "RFP does not specify required capabilities." });
+    breakdown.push({ category: "Capabilities", points: 0, maxPoints: 25, status: "neutral", detail: "RFP does not specify required capabilities.", rfpTokens: [], profileTokens: profile.capabilities ?? [] });
   }
 
   // --- Industry (max 20 pts) ---
@@ -450,10 +453,10 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     const pts = scoreFromSimilarity(industrySimilarity, 20);
     score += pts;
     positiveReasons.push("Industry aligns with your profile.");
-    breakdown.push({ category: "Industry", points: Math.round(pts), maxPoints: 20, status: pts >= 14 ? "strong" : "partial", detail: "Industry match found." });
+    breakdown.push({ category: "Industry", points: Math.round(pts), maxPoints: 20, status: pts >= 14 ? "strong" : "partial", detail: "Industry match found.", rfpTokens: [rfp.industry], profileTokens: profile.industry ?? [] });
   } else if ((rfp.industry ?? "").trim()) {
     negativeReasons.push(`Industry (${rfp.industry}) not reflected in your profile.`);
-    breakdown.push({ category: "Industry", points: 0, maxPoints: 20, status: "weak", detail: `Industry "${rfp.industry}" not in your profile.` });
+    breakdown.push({ category: "Industry", points: 0, maxPoints: 20, status: "weak", detail: `Industry "${rfp.industry}" not in your profile.`, rfpTokens: [rfp.industry], profileTokens: profile.industry ?? [] });
   }
 
   // --- NAICS Codes (max 15 pts) ---
@@ -464,13 +467,13 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
       const pts = 15 * ratio;
       score += pts;
       positiveReasons.push(`NAICS overlap: ${naicsOverlap.slice(0, 3).join(", ")}`);
-      breakdown.push({ category: "NAICS Codes", points: Math.round(pts), maxPoints: 15, status: ratio >= 0.75 ? "strong" : "partial", detail: `${naicsOverlap.length}/${rfp.naicsCodes.length} codes match.` });
+      breakdown.push({ category: "NAICS Codes", points: Math.round(pts), maxPoints: 15, status: ratio >= 0.75 ? "strong" : "partial", detail: `${naicsOverlap.length}/${rfp.naicsCodes.length} codes match.`, matchedTokens: naicsOverlap, rfpTokens: rfp.naicsCodes, profileTokens: profileNaics });
     } else {
       negativeReasons.push("No NAICS code overlap.");
-      breakdown.push({ category: "NAICS Codes", points: 0, maxPoints: 15, status: "missing", detail: "None of the RFP's NAICS codes match your profile." });
+      breakdown.push({ category: "NAICS Codes", points: 0, maxPoints: 15, status: "missing", detail: "None of the RFP's NAICS codes match your profile.", rfpTokens: rfp.naicsCodes, profileTokens: profileNaics });
     }
   } else {
-    breakdown.push({ category: "NAICS Codes", points: 0, maxPoints: 15, status: "neutral", detail: "RFP does not list NAICS codes." });
+    breakdown.push({ category: "NAICS Codes", points: 0, maxPoints: 15, status: "neutral", detail: "RFP does not list NAICS codes.", rfpTokens: [], profileTokens: profileNaics });
   }
 
   // --- Certifications (max 12 pts) ---
@@ -481,13 +484,13 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
       const pts = 12 * ratio;
       score += pts;
       positiveReasons.push(`Certification match: ${certOverlap.slice(0, 2).join(", ")}`);
-      breakdown.push({ category: "Certifications", points: Math.round(pts), maxPoints: 12, status: ratio >= 0.75 ? "strong" : "partial", detail: `${certOverlap.length}/${rfp.certifications.length} certifications match.` });
+      breakdown.push({ category: "Certifications", points: Math.round(pts), maxPoints: 12, status: ratio >= 0.75 ? "strong" : "partial", detail: `${certOverlap.length}/${rfp.certifications.length} certifications match.`, matchedTokens: certOverlap, rfpTokens: rfp.certifications, profileTokens: profile.certifications ?? [] });
     } else {
       negativeReasons.push("RFP lists certifications you may not have.");
-      breakdown.push({ category: "Certifications", points: 0, maxPoints: 12, status: "missing", detail: "None of the listed certifications found in your profile." });
+      breakdown.push({ category: "Certifications", points: 0, maxPoints: 12, status: "missing", detail: "None of the listed certifications found in your profile.", rfpTokens: rfp.certifications, profileTokens: profile.certifications ?? [] });
     }
   } else {
-    breakdown.push({ category: "Certifications", points: 0, maxPoints: 12, status: "neutral", detail: "RFP does not list required certifications." });
+    breakdown.push({ category: "Certifications", points: 0, maxPoints: 12, status: "neutral", detail: "RFP does not list required certifications.", rfpTokens: [], profileTokens: profile.certifications ?? [] });
   }
 
   // --- Location (max 10 pts) ---
@@ -497,12 +500,14 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
       const pts = scoreFromSimilarity(locationSimilarity, 10);
       score += pts;
       positiveReasons.push("Location aligns with your service area.");
-      breakdown.push({ category: "Location", points: Math.round(pts), maxPoints: 10, status: "strong", detail: "Work location is within your service area." });
+      const profileLocations = [...(profile.workCities ?? []), ...(profile.workCounties ?? [])];
+      breakdown.push({ category: "Location", points: Math.round(pts), maxPoints: 10, status: "strong", detail: "Work location is within your service area.", rfpTokens: [rfp.location], profileTokens: profileLocations });
     } else if (profileLocationTokens.size > 0) {
+      const profileLocations = [...(profile.workCities ?? []), ...(profile.workCounties ?? [])];
       negativeReasons.push("Location may be outside your service area.");
-      breakdown.push({ category: "Location", points: 0, maxPoints: 10, status: "weak", detail: `"${rfp.location}" is not in your listed service areas.` });
+      breakdown.push({ category: "Location", points: 0, maxPoints: 10, status: "weak", detail: `"${rfp.location}" is not in your listed service areas.`, rfpTokens: [rfp.location], profileTokens: profileLocations });
     } else {
-      breakdown.push({ category: "Location", points: 0, maxPoints: 10, status: "neutral", detail: "No service areas listed in your profile." });
+      breakdown.push({ category: "Location", points: 0, maxPoints: 10, status: "neutral", detail: "No service areas listed in your profile.", rfpTokens: [rfp.location], profileTokens: [] });
     }
   }
 
@@ -512,9 +517,9 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     const pts = scoreFromSimilarity(agencySimilarity, 8);
     score += pts;
     positiveReasons.push("You have experience with this agency.");
-    breakdown.push({ category: "Agency Experience", points: Math.round(pts), maxPoints: 8, status: "strong", detail: `Prior experience with ${rfp.agency}.` });
+    breakdown.push({ category: "Agency Experience", points: Math.round(pts), maxPoints: 8, status: "strong", detail: `Prior experience with ${rfp.agency}.`, rfpTokens: [rfp.agency], profileTokens: profile.agencyExperience ?? [] });
   } else if (profileAgencyTokens.size > 0) {
-    breakdown.push({ category: "Agency Experience", points: 0, maxPoints: 8, status: "neutral", detail: "No prior experience with this agency." });
+    breakdown.push({ category: "Agency Experience", points: 0, maxPoints: 8, status: "neutral", detail: "No prior experience with this agency.", rfpTokens: [rfp.agency], profileTokens: profile.agencyExperience ?? [] });
   }
 
   // --- Contract Type (max 5 pts) ---
@@ -523,9 +528,9 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     const pts = scoreFromSimilarity(contractSimilarity, 5);
     score += pts;
     positiveReasons.push("Contract type matches your preferences.");
-    breakdown.push({ category: "Contract Type", points: Math.round(pts), maxPoints: 5, status: "strong", detail: "Contract type aligns with your preferences." });
+    breakdown.push({ category: "Contract Type", points: Math.round(pts), maxPoints: 5, status: "strong", detail: "Contract type aligns with your preferences.", rfpTokens: [rfp.contractType], profileTokens: profile.contractTypes ?? [] });
   } else {
-    breakdown.push({ category: "Contract Type", points: 0, maxPoints: 5, status: "neutral", detail: "Contract type not in your listed preferences." });
+    breakdown.push({ category: "Contract Type", points: 0, maxPoints: 5, status: "neutral", detail: "Contract type not in your listed preferences.", rfpTokens: [rfp.contractType], profileTokens: profile.contractTypes ?? [] });
   }
 
   // --- Description / Title text match (max 5 pts) ---
@@ -540,7 +545,8 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     const pts = scoreFromSimilarity(descSimilarity, 5);
     score += pts;
     positiveReasons.push("Description language matches your profile keywords.");
-    breakdown.push({ category: "Description Match", points: Math.round(pts), maxPoints: 5, status: "partial", detail: "Keywords in the RFP description overlap with your profile." });
+    const descMatched = [...rfpDescTokens].filter(t => profileTextTokens.has(t));
+    breakdown.push({ category: "Description Match", points: Math.round(pts), maxPoints: 5, status: "partial", detail: "Keywords in the RFP description overlap with your profile.", matchedTokens: descMatched.slice(0, 10), rfpTokens: [...rfpDescTokens].slice(0, 15), profileTokens: [...profileTextTokens].slice(0, 15) });
   }
 
   // --- Contract Value / Scale fit (bonus, not in base 100) ---
@@ -581,15 +587,11 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     }
   }
 
-  // --- Deadline status (informational, not scored but displayed) ---
+  // --- Deadline status (informational, kept in reasons but not in breakdown chart) ---
   if (due) {
     positiveReasons.unshift("Deadline is still open.");
-    breakdown.unshift({ category: "Deadline", points: 0, maxPoints: 0, status: "strong", detail: `Due ${rfp.deadline}. Deadline is still open.` });
-  } else if (rfp.deadline?.toUpperCase() === "TBD") {
-    breakdown.unshift({ category: "Deadline", points: 0, maxPoints: 0, status: "neutral", detail: "Deadline is TBD." });
-  } else {
+  } else if (!rfp.deadline || rfp.deadline.toUpperCase() !== "TBD") {
     negativeReasons.push("Could not parse deadline.");
-    breakdown.unshift({ category: "Deadline", points: 0, maxPoints: 0, status: "weak", detail: "Could not determine deadline status." });
   }
 
   // =========================================================================
