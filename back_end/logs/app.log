@@ -1040,3 +1040,866 @@ Read user data from S3 for username=ionaaa
 get_or_create_profile: loading from S3 (user_id=12)
 Read user data from S3 for username=ionaaa
 Retrieved profile from S3 for user_id=12 username=ionaaa
+Login failed: invalid credentials for username=erikaecl
+Signup: creating profile in AWS for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+Creating new profile in S3 for user_id=1
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 bucket not set: add AWS_STORAGE_BUCKET_NAME to .env (e.g. civitas-uploads). User data not saved.
+Profile saved to S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+Creating new profile in S3 for user_id=1
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 bucket not set: add AWS_STORAGE_BUCKET_NAME to .env (e.g. civitas-uploads). User data not saved.
+Profile saved to S3 for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 bucket not set: add AWS_STORAGE_BUCKET_NAME to .env (e.g. civitas-uploads). User data not saved.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Token set in S3 for user_id=1 username=erikaecl
+Signup successful: user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+get_or_create_profile: loading from S3 (user_id=1)
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+Creating new profile in S3 for user_id=1
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 bucket not set: add AWS_STORAGE_BUCKET_NAME to .env (e.g. civitas-uploads). User data not saved.
+Profile saved to S3 for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+get_or_create_profile: loading from S3 (user_id=1)
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+Creating new profile in S3 for user_id=1
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 bucket not set: add AWS_STORAGE_BUCKET_NAME to .env (e.g. civitas-uploads). User data not saved.
+Profile saved to S3 for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 bucket not set: add AWS_STORAGE_BUCKET_NAME to .env (e.g. civitas-uploads). User data not saved.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Token set in S3 for user_id=1 username=erikaecl
+Login successful: user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+get_or_create_profile: loading from S3 (user_id=1)
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+Creating new profile in S3 for user_id=1
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 not available; cannot read user data
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+S3 bucket not set: add AWS_STORAGE_BUCKET_NAME to .env (e.g. civitas-uploads). User data not saved.
+Profile saved to S3 for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+AWS credentials from .env incomplete: AWS_ACCESS_KEY_ID=not set, AWS_SECRET_ACCESS_KEY=not set. Add both to back_end/.env for DynamoDB/S3.
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+No user data in S3 for username=erikaecl
+Creating new profile in S3 for user_id=1
+No user data in S3 for username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+Profile saved to S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Read user data from S3 for username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+Read user data from S3 for username=erikaecl
+User 1 removed RFP event-15-6530-0000037911 from applied
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 removed RFP event-15-6530-0000037911 from applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 removed RFP event-15-6530-0000037911 from applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 removed RFP event-15-6530-0000037911 from applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 removed RFP event-15-6530-0000037911 from applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 removed RFP event-15-6530-0000037911 from applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 removed RFP event-15-6530-0000037911 from applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 removed RFP event-15-6530-0000037911 from applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 removed RFP event-15-6530-0000037911 from applied
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 removed RFP event-15-6530-0000037911 from applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-15-6530-0000037911 as applied
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 marked RFP event-16-pages-loading-html as applied
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Read user data from S3 for username=erikaecl
+Read user data from S3 for username=erikaecl
+Saved user data to S3 bucket=civitas-uploads key=users/erikaecl.json
+User 1 removed RFP event-15-6530-0000037911 from applied
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
