@@ -1525,7 +1525,7 @@ function RFPDetailPanel({
         <div className="p-5 md:p-6 border-b border-slate-100">
           {(() => {
             const metaRows = [
-              { label: "Due", value: rfp.deadline },
+              { label: "Due", value: rfp.deadline?.trim() || "TBD" },
               { label: "Location", value: rfp.location },
               { label: "Est. value", value: rfp.estimatedValue },
               { label: "Requested by", value: `${rfp.agency}${rfp.industry ? ` · ${rfp.industry}` : ""}` },
@@ -1535,14 +1535,14 @@ function RFPDetailPanel({
 
             return (
               <div className={`flex flex-col gap-y-4 ${hasBreakdown ? "md:flex-row md:items-start md:gap-0" : ""}`}>
-                {/* Left: Important information — width adapts to content */}
-                <div className="min-w-0 md:w-auto md:shrink-0 md:pr-6">
+                {/* Left: Important information — fixed width so layout stays consistent */}
+                <div className="min-w-0 md:w-64 md:shrink-0 md:pr-6">
                   <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Important information</h3>
-                  <div className="space-y-1.5 text-left">
+                  <div className="space-y-4 text-left">
                     {metaRows.map((row, i) => (
-                      <div key={i} className="min-h-8 flex items-center">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 shrink-0">{row.label}</span>
-                        <span className="ml-1.5 text-sm text-slate-800 break-words">{row.value}</span>
+                      <div key={i} className="space-y-1">
+                        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{row.label}</div>
+                        <div className="text-sm text-slate-800 break-words leading-snug">{row.value}</div>
                       </div>
                     ))}
                   </div>
