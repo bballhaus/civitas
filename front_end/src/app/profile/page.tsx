@@ -108,10 +108,10 @@ export default function ProfilePage() {
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [dupMessage, setDupMessage] = useState("");
-  const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
   const pendingFilesRef = useRef<Map<string, File>>(new Map());
+  const deletionsInFlightRef = useRef<Promise<void>[]>([]);
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -428,10 +428,6 @@ export default function ProfilePage() {
     try {
       if (editingSection === "documents") {
         if (currentUser && getAuthToken()) {
-          for (const key of pendingRemovals) {
-            try { await deleteContractDocument(key); } catch (e) { console.error("Delete failed:", key, e); }
-          }
-
           const failedFiles: string[] = [];
           for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
@@ -447,10 +443,14 @@ export default function ProfilePage() {
           }
           pendingFilesRef.current.clear();
 
+          if (deletionsInFlightRef.current.length > 0) {
+            await Promise.all(deletionsInFlightRef.current);
+            deletionsInFlightRef.current = [];
+          }
+
           const backendProfile = await getProfileFromBackend();
           const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
           setProfile(mapped);
-          setPendingRemovals([]);
           setCachedProfile(currentUser.user_id, mapped);
           if (failedFiles.length > 0) {
             alert(`The following files failed to upload:\n${failedFiles.join("\n")}\n\nPlease try again.`);
@@ -499,15 +499,6 @@ export default function ProfilePage() {
           }
         }
 
-        if (pendingRemovals.length > 0) {
-          profileToSave = {
-            ...profileToSave,
-            uploadedFiles: (profileToSave.uploadedFiles ?? []).filter(
-              (f) => !pendingRemovals.includes(f.contractId || f.name)
-            ),
-          };
-          setPendingRemovals([]);
-        }
       } else {
         profileToSave = profile;
       }
@@ -572,8 +563,19 @@ export default function ProfilePage() {
   const removeFile = (index: number) => {
     if (!profile?.uploadedFiles) return;
     const file = profile.uploadedFiles[index];
-    const key = file.contractId || file.name;
-    setPendingRemovals((prev) => [...prev, key]);
+
+    setProfile((prev) => {
+      if (!prev?.uploadedFiles) return prev;
+      return { ...prev, uploadedFiles: prev.uploadedFiles.filter((_, i) => i !== index) };
+    });
+    pendingFilesRef.current.delete(file.name);
+
+    if (file.contractId && currentUser && getAuthToken()) {
+      const p = deleteContractDocument(file.contractId).catch((e) =>
+        console.error("Failed to delete file from backend:", e)
+      );
+      deletionsInFlightRef.current.push(p);
+    }
   };
 
   function SearchFirstDropdown({
@@ -1179,10 +1181,9 @@ export default function ProfilePage() {
                   {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
                     <div className="mt-4 space-y-2">
                       <h3 className="text-sm font-medium text-slate-700 mb-2">
-                        Uploaded Files ({profile.uploadedFiles.filter((f) => !pendingRemovals.includes(f.contractId || f.name)).length})
+                        Uploaded Files ({profile.uploadedFiles.length})
                       </h3>
                       {profile.uploadedFiles.map((file, index) => {
-                        if (pendingRemovals.includes(file.contractId || file.name)) return null;
                         return (
                           <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
                             <div className="flex items-center space-x-3">
