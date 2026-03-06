@@ -658,7 +658,10 @@ export default function RFPDetailPage() {
                 </span>
               )}
             </div>
-            <p className="text-sm text-slate-600">{rfp.agency} · Due {rfp.deadline} · {rfp.estimatedValue}</p>
+            <ul className="text-sm text-slate-600 space-y-1">
+              <li><span className="text-slate-400 font-medium">Requested by:</span> <span className="text-slate-900 font-medium">{rfp.agency}</span>{rfp.industry ? ` · ${rfp.industry}` : ""}</li>
+              <li>Due {rfp.deadline} · {rfp.estimatedValue}</li>
+            </ul>
           </div>
 
           {/* Disqualifier banner */}
@@ -886,7 +889,7 @@ export default function RFPDetailPage() {
             <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
               <div className="flex items-start justify-between gap-2 mb-3">
                 <h2 className="text-sm font-bold text-slate-900">
-                  Match Analysis
+                  Match Summary
                 </h2>
                 {summaryLoading && (
                   <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
@@ -976,7 +979,7 @@ export default function RFPDetailPage() {
             )}
           </div>
 
-          {/* Details & link */}
+          {/* Details */}
           <div className="p-6 md:p-8 border-b border-slate-100">
             <h2 className="text-sm font-bold text-slate-900 mb-3">Details</h2>
             <div className="flex flex-wrap gap-2 mb-4">
@@ -991,12 +994,12 @@ export default function RFPDetailPage() {
                 </span>
               ))}
             </div>
-            {rfp.eventUrl && (
+            {(rfp.eventUrl || rfp.id) && (
               <a
-                href={rfp.eventUrl}
+                href={rfp.eventUrl || "#"}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 text-sm font-medium text-[#2563eb] hover:underline"
+                className="inline-flex items-center justify-center gap-2 min-w-[200px] px-5 py-3 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors shadow-sm"
               >
                 View on Cal eProcure
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
