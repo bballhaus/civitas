@@ -108,9 +108,10 @@ export default function ProfilePage() {
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [dupMessage, setDupMessage] = useState("");
-  const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const dragCounter = useRef(0);
   const pendingFilesRef = useRef<Map<string, File>>(new Map());
-  const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
+  const deletionsInFlightRef = useRef<Promise<void>[]>([]);
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -435,24 +436,33 @@ export default function ProfilePage() {
     try {
       if (editingSection === "documents") {
         if (currentUser && getAuthToken()) {
-          for (const key of pendingRemovals) {
-            try { await deleteContractDocument(key); } catch (e) { console.error("Delete failed:", key, e); }
-          }
-          setPendingRemovals([]);
-
+          const failedFiles: string[] = [];
           for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
             const file = pendingFilesRef.current.get(fileInfo.name);
             if (file) {
-              await uploadContractDocument(file, file.name);
+              try {
+                await uploadContractDocument(file, file.name);
+              } catch (e) {
+                console.error("Upload failed:", file.name, e);
+                failedFiles.push(file.name);
+              }
             }
           }
           pendingFilesRef.current.clear();
+
+          if (deletionsInFlightRef.current.length > 0) {
+            await Promise.all(deletionsInFlightRef.current);
+            deletionsInFlightRef.current = [];
+          }
 
           const backendProfile = await getProfileFromBackend();
           const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
           setProfile(mapped);
           setCachedProfile(currentUser.user_id, mapped);
+          if (failedFiles.length > 0) {
+            alert(`The following files failed to upload:\n${failedFiles.join("\n")}\n\nPlease try again.`);
+          }
           setEditingSection(null);
           setSectionSaving(false);
           return;
@@ -497,17 +507,6 @@ export default function ProfilePage() {
           }
         }
 
-        if (currentUser && (pendingRemovals.length > 0 || pendingFilesRef.current.size > 0)) {
-          for (const key of pendingRemovals) {
-            try { await deleteContractDocument(key); } catch (e) { console.warn("Failed to delete", key, e); }
-          }
-          setPendingRemovals([]);
-          const backendProfile = await getProfileFromBackend();
-          const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
-          setProfile(mapped);
-          setCachedProfile(currentUser.user_id, mapped);
-          profileToSave = mapped;
-        }
       } else {
         profileToSave = profile;
       }
@@ -528,16 +527,21 @@ export default function ProfilePage() {
     }
   };
 
-  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || !profile) return;
+  const ACCEPTED_EXTENSIONS = [".pdf", ".doc", ".docx", ".txt"];
+
+  const addFiles = (incoming: File[]) => {
+    if (!profile) return;
+    const accepted = incoming.filter((f) =>
+      ACCEPTED_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext))
+    );
+    if (accepted.length === 0) return;
     const existingNames = new Set((profile.uploadedFiles ?? []).map((f) => f.name));
-    const newFiles = Array.from(files).filter((f) => {
+    const newFiles = accepted.filter((f) => {
       if (existingNames.has(f.name)) return false;
       existingNames.add(f.name);
       return true;
     });
-    const skipped = files.length - newFiles.length;
+    const skipped = accepted.length - newFiles.length;
     if (skipped > 0) {
       setDupMessage(`${skipped} duplicate file(s) already uploaded — skipped.`);
     } else {
@@ -559,11 +563,27 @@ export default function ProfilePage() {
     });
   };
 
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    addFiles(Array.from(e.target.files));
+  };
+
   const removeFile = (index: number) => {
     if (!profile?.uploadedFiles) return;
     const file = profile.uploadedFiles[index];
-    const key = file.contractId || file.name;
-    setPendingRemovals((prev) => [...prev, key]);
+
+    setProfile((prev) => {
+      if (!prev?.uploadedFiles) return prev;
+      return { ...prev, uploadedFiles: prev.uploadedFiles.filter((_, i) => i !== index) };
+    });
+    pendingFilesRef.current.delete(file.name);
+
+    if (file.contractId && currentUser && getAuthToken()) {
+      const p = deleteContractDocument(file.contractId).catch((e) =>
+        console.error("Failed to delete file from backend:", e)
+      );
+      deletionsInFlightRef.current.push(p);
+    }
   };
 
   function SearchFirstDropdown({
@@ -1135,23 +1155,43 @@ export default function ProfilePage() {
               <SectionHeader title="Uploaded Documents" sectionId="documents" />
               {editingSection === "documents" ? (
                 <div className="space-y-4">
-                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center hover:border-[#3C89C6] transition-colors">
+                  <div
+                    className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                      dragging
+                        ? "border-[#3C89C6] bg-slate-100"
+                        : "border-slate-300 hover:border-[#3C89C6]"
+                    }`}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current++; setDragging(true); }}
+                    onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current--; if (dragCounter.current <= 0) { dragCounter.current = 0; setDragging(false); } }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      dragCounter.current = 0;
+                      setDragging(false);
+                      addFiles(Array.from(e.dataTransfer.files));
+                    }}
+                  >
+                    {dragging && (
+                      <div className="absolute inset-0 bg-slate-200/60 rounded-lg flex items-center justify-center z-10 pointer-events-none">
+                        <p className="text-2xl font-bold text-[#3C89C6]">Drop files here</p>
+                      </div>
+                    )}
                     <input type="file" id="profile-file-upload" multiple accept=".pdf,.doc,.docx,.txt" onChange={handleFileUpload} className="hidden" />
-                    <label htmlFor="profile-file-upload" className="cursor-pointer flex flex-col items-center">
+                    <label htmlFor="profile-file-upload" className={`cursor-pointer flex flex-col items-center ${dragging ? "opacity-30" : ""}`}>
                       <svg className="w-12 h-12 text-slate-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                       </svg>
-                      <span className="text-sm font-medium text-slate-700">Click to upload files</span>
+                      <span className="text-sm font-medium text-slate-700">Drag & drop files here, or click to upload</span>
                       <span className="text-xs text-slate-500 mt-1">PDF, DOC, DOCX, TXT</span>
                     </label>
                   </div>
                   {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
                     <div className="mt-4 space-y-2">
                       <h3 className="text-sm font-medium text-slate-700 mb-2">
-                        Uploaded Files ({profile.uploadedFiles.filter((f) => !pendingRemovals.includes(f.contractId || f.name)).length})
+                        Uploaded Files ({profile.uploadedFiles.length})
                       </h3>
                       {profile.uploadedFiles.map((file, index) => {
-                        if (pendingRemovals.includes(file.contractId || file.name)) return null;
                         return (
                           <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
                             <div className="flex items-center space-x-3">
@@ -1171,7 +1211,7 @@ export default function ProfilePage() {
                                 <p className="text-xs text-slate-500">{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}</p>
                               </div>
                             </div>
-                            <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
+                            <button type="button" onClick={() => removeFile(index)} disabled={sectionSaving} className="text-red-600 hover:text-red-700 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed">
                               Remove
                             </button>
                           </div>
