@@ -42,6 +42,12 @@ export default function RFPDetailPage() {
   const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
   const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
   const [expandedBreakdownCategory, setExpandedBreakdownCategory] = useState<string | null>(null);
+  const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
+  const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
+  const [userRfpStatusLoaded, setUserRfpStatusLoaded] = useState(false);
+  const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
+  const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
+  const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
 
   const rfp: RFPWithMatch | null = rfpData && profileLoaded
     ? { ...rfpData, match: computeMatch(rfpData, profile) }
