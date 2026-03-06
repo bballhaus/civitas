@@ -64,7 +64,9 @@ ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'civitas-server.onrender.com']
 # Must include every origin that hosts the frontend (local + production).
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
+    'http://localhost:3001',
     'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
     'https://civitas-ai.onrender.com',
 ]
 _extra_csrf = os.getenv('CSRF_TRUSTED_ORIGINS_EXTRA', '')
@@ -225,7 +227,9 @@ REST_FRAMEWORK = {
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
+    'http://localhost:3001',
     'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
     'https://civitas-ai.onrender.com',
 ]
 
