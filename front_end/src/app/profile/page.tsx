@@ -10,7 +10,6 @@ import {
   NAICS_DISPLAY,
 } from "@/data/filter-options";
 import { AppHeader } from "@/components/AppHeader";
-import { MeshBackground } from "@/components/MeshBackground";
 import {
   getApiBase,
   getCurrentUser,
@@ -109,6 +108,7 @@ export default function ProfilePage() {
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [dupMessage, setDupMessage] = useState("");
+  const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
   const pendingFilesRef = useRef<Map<string, File>>(new Map());
 
   // Parse documents with backend API
@@ -426,6 +426,11 @@ export default function ProfilePage() {
     try {
       if (editingSection === "documents") {
         if (currentUser && getAuthToken()) {
+          for (const key of pendingRemovals) {
+            try { await deleteContractDocument(key); } catch (e) { console.error("Delete failed:", key, e); }
+          }
+          setPendingRemovals([]);
+
           for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
             const file = pendingFilesRef.current.get(fileInfo.name);
@@ -483,12 +488,14 @@ export default function ProfilePage() {
           }
         }
 
-        if (currentUser && (removalsToProcess.length > 0 || filesToUpload.length > 0)) {
-          const backendProfile = await getProfileFromBackend();
-          const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
-          setProfile(mapped);
-          setCachedProfile(currentUser.user_id, mapped);
-          profileToSave = mapped;
+        if (pendingRemovals.length > 0) {
+          profileToSave = {
+            ...profileToSave,
+            uploadedFiles: (profileToSave.uploadedFiles ?? []).filter(
+              (f) => !pendingRemovals.includes(f.contractId || f.name)
+            ),
+          };
+          setPendingRemovals([]);
         }
       } else {
         profileToSave = profile;
@@ -654,9 +661,8 @@ export default function ProfilePage() {
 
   if (!isClient) {
     return (
-      <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff] flex items-center justify-center">
-        <MeshBackground />
-        <div className="relative animate-spin rounded-full h-12 w-12 border-b-2 border-[#3C89C6]"></div>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#3C89C6]"></div>
       </div>
     );
   }
@@ -664,10 +670,9 @@ export default function ProfilePage() {
   // Show loading until user + profile fetch is done (must be before profile === null check).
   if (!initialLoadDone) {
     return (
-      <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
-        <MeshBackground />
+      <div className="min-h-screen bg-slate-50">
         <AppHeader />
-        <div className="relative max-w-7xl mx-auto px-6 py-10 flex flex-col items-center justify-center min-h-[40vh] gap-4">
+        <div className="max-w-7xl mx-auto px-6 py-10 flex flex-col items-center justify-center min-h-[40vh] gap-4">
           <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#3C89C6]"></div>
           <p className="text-slate-600 font-medium">Loading your profile…</p>
         </div>
@@ -677,10 +682,9 @@ export default function ProfilePage() {
 
   if (profile === null) {
     return (
-      <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
-        <MeshBackground />
+      <div className="min-h-screen bg-slate-50">
         <AppHeader />
-        <div className="relative max-w-3xl mx-auto px-6 py-16 text-center">
+        <div className="max-w-3xl mx-auto px-6 py-16 text-center">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">No profile yet</h1>
           <p className="text-slate-600 mb-6">Create or save your company profile to see a summary here.</p>
           <button
@@ -758,11 +762,10 @@ export default function ProfilePage() {
   );
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
-      <MeshBackground />
+    <div className="min-h-screen bg-slate-50">
       <AppHeader />
 
-      <div className="relative max-w-7xl mx-auto px-6 py-10 flex gap-10">
+      <div className="max-w-7xl mx-auto px-6 py-10 flex gap-10">
         {hasAnyData && (
           <aside className="hidden lg:block w-56 shrink-0">
             <nav className="sticky top-32">
@@ -1154,14 +1157,15 @@ export default function ProfilePage() {
                                     <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
                                   )}
                                 </div>
-                              <p className="text-xs text-slate-500">{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}</p>
+                                <p className="text-xs text-slate-500">{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}</p>
+                              </div>
                             </div>
+                            <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
+                              Remove
+                            </button>
                           </div>
-                          <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
-                            Remove
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                       {dupMessage && (
                         <p className="text-sm text-amber-600 mt-2">{dupMessage}</p>
                       )}
