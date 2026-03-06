@@ -6,12 +6,23 @@ import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
 import { getCurrentUser, getCachedUser, getCachedProfile } from "@/lib/api";
+import { setCachedEvents } from "@/lib/events-cache";
 import type { RFP } from "@/lib/rfp-matching";
 
 const STORAGE_KEYS = {
   SAVED: "civitas_saved_rfps",
   EXPRESSED_INTEREST: "civitas_expressed_interest_rfps",
 };
+const RFP_PRELOAD_KEY = "civitas_preload_rfp";
+
+function preloadRfpAndNavigate(rfp: RFP, router: ReturnType<typeof useRouter>) {
+  try {
+    sessionStorage.setItem(RFP_PRELOAD_KEY, JSON.stringify(rfp));
+  } catch {
+    // ignore quota / private mode
+  }
+  router.push(`/dashboard/rfp/${encodeURIComponent(rfp.id)}`);
+}
 
 function loadSet(key: string): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -154,7 +165,9 @@ export default function HomePage() {
     fetch("/api/events")
       .then((res) => (res.ok ? res.json() : { events: [] }))
       .then((data) => {
-        setRfps(data.events ?? []);
+        const events = data.events ?? [];
+        setRfps(events);
+        if (events.length > 0) setCachedEvents(events);
       })
       .catch(() => setRfps([]))
       .finally(() => setLoading(false));
@@ -311,9 +324,10 @@ export default function HomePage() {
                 <ul className="space-y-2">
                   {savedRfps.slice(0, 5).map((rfp) => (
                     <li key={rfp.id}>
-                      <Link
-                        href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
-                        className="block p-3 rounded-xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/50 transition-all hover:shadow-sm border-l-2 border-l-blue-400"
+                      <button
+                        type="button"
+                        onClick={() => preloadRfpAndNavigate(rfp, router)}
+                        className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/50 transition-all hover:shadow-sm border-l-2 border-l-blue-400"
                       >
                         <p className="font-semibold text-slate-900 text-sm line-clamp-2">
                           {rfp.title}
@@ -321,7 +335,7 @@ export default function HomePage() {
                         <p className="text-xs text-slate-500 mt-1">
                           {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
                         </p>
-                      </Link>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -363,9 +377,10 @@ export default function HomePage() {
                 <ul className="space-y-2">
                   {appliedRfps.slice(0, 5).map((rfp) => (
                     <li key={rfp.id}>
-                      <Link
-                        href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
-                        className="block p-3 rounded-xl border border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/50 transition-all hover:shadow-sm border-l-2 border-l-emerald-400"
+                      <button
+                        type="button"
+                        onClick={() => preloadRfpAndNavigate(rfp, router)}
+                        className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/50 transition-all hover:shadow-sm border-l-2 border-l-emerald-400"
                       >
                         <p className="font-semibold text-slate-900 text-sm line-clamp-2">
                           {rfp.title}
@@ -373,7 +388,7 @@ export default function HomePage() {
                         <p className="text-xs text-slate-500 mt-1">
                           {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
                         </p>
-                      </Link>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -415,9 +430,10 @@ export default function HomePage() {
                 <ul className="space-y-2">
                   {inProgressRfps.slice(0, 5).map((rfp) => (
                     <li key={rfp.id}>
-                      <Link
-                        href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
-                        className="block p-3 rounded-xl border border-slate-100 hover:border-violet-200 hover:bg-violet-50/50 transition-all hover:shadow-sm border-l-2 border-l-violet-400"
+                      <button
+                        type="button"
+                        onClick={() => preloadRfpAndNavigate(rfp, router)}
+                        className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-violet-200 hover:bg-violet-50/50 transition-all hover:shadow-sm border-l-2 border-l-violet-400"
                       >
                         <p className="font-semibold text-slate-900 text-sm line-clamp-2">
                           {rfp.title}
@@ -425,7 +441,7 @@ export default function HomePage() {
                         <p className="text-xs text-slate-500 mt-1">
                           {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
                         </p>
-                      </Link>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -469,9 +485,10 @@ export default function HomePage() {
               <ul className="space-y-2">
                 {upcomingDeadlines.map((rfp) => (
                   <li key={rfp.id}>
-                    <Link
-                      href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
-                      className="flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-100 hover:border-amber-200 hover:bg-amber-50/50 transition-all hover:shadow-sm border-l-2 border-l-amber-400"
+                    <button
+                      type="button"
+                      onClick={() => preloadRfpAndNavigate(rfp, router)}
+                      className="w-full text-left flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-100 hover:border-amber-200 hover:bg-amber-50/50 transition-all hover:shadow-sm border-l-2 border-l-amber-400"
                     >
                       <div className="min-w-0">
                         <p className="font-semibold text-slate-900 text-sm line-clamp-1">
@@ -484,7 +501,7 @@ export default function HomePage() {
                       <span className="shrink-0 text-sm font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-lg">
                         {formatDeadlineShort(rfp.deadline)}
                       </span>
-                    </Link>
+                    </button>
                   </li>
                 ))}
               </ul>

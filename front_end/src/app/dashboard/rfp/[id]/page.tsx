@@ -13,6 +13,7 @@ import {
 } from "@/lib/rfp-matching";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { getCurrentUser, updateUserRfpStatus } from "@/lib/api";
+import { getCachedEvents } from "@/lib/events-cache";
 
 type RFPWithMatch = RFP & { match: RFPMatch };
 
@@ -86,6 +87,39 @@ export default function RFPDetailPage() {
       setError("Invalid RFP ID");
       return;
     }
+    const preloadKey = "civitas_preload_rfp";
+    let preloaded: RFP | null = null;
+    try {
+      const raw = typeof window !== "undefined" ? sessionStorage.getItem(preloadKey) : null;
+      if (raw) {
+        const parsed = JSON.parse(raw) as RFP;
+        if (parsed && parsed.id === id) {
+          preloaded = parsed;
+          sessionStorage.removeItem(preloadKey);
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    if (preloaded) {
+      setRfpData(preloaded);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    const cached = getCachedEvents();
+    if (cached && cached.length > 0) {
+      const found = cached.find((e) => e.id === id);
+      if (found) {
+        setRfpData(found);
+        setLoading(false);
+        setError(null);
+        return;
+      }
+    }
+
     async function load() {
       setLoading(true);
       setError(null);

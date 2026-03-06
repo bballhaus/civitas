@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useDeferredValue } from "react";
 import Link from "next/link";
 import {
   CALIFORNIA_CITIES,
@@ -25,6 +25,7 @@ import {
   getEmptyCompanyProfile,
   updateUserRfpStatus,
 } from "@/lib/api";
+import { getCachedEvents, setCachedEvents, clearCachedEvents } from "@/lib/events-cache";
 import {
   type RFP as RFPType,
   type RFPMatch as RFPMatchType,
@@ -187,9 +188,6 @@ const STORAGE_KEYS = {
   NOT_INTERESTED: "civitas_not_interested_rfps",
   EXPRESSED_INTEREST: "civitas_expressed_interest_rfps",
 };
-
-/** Cached events so we only refetch when user refreshes; matches stay stable until profile is updated. */
-let cachedEvents: RFP[] | null = null;
 
 function loadSet(key: string): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -800,18 +798,19 @@ export default function DashboardPage() {
     let cancelled = false;
     const cachedUser = getCachedUser();
     const cachedProfile = cachedUser ? getCachedProfile(cachedUser.user_id) : null;
-    const hasEvents = cachedEvents && cachedEvents.length > 0;
+    const events = getCachedEvents();
+    const hasEvents = events && events.length > 0;
     if (cachedUser && cachedProfile && hasEvents) {
       setCurrentUser(cachedUser);
       setProfile(cachedProfile);
-      setRfps(cachedEvents ?? []);
+      setRfps(events ?? []);
       setProfileLoadDone(true);
       setLoading(false);
       getCurrentUser(false).then((data) => {
         if (cancelled) return;
         if (!data) {
           clearCachedUser();
-          cachedEvents = null;
+          clearCachedEvents();
           setCurrentUser(null);
           setProfile(null);
         } else {
@@ -885,8 +884,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function fetchEvents() {
-      if (cachedEvents && cachedEvents.length > 0) {
-        setRfps(cachedEvents);
+      const cached = getCachedEvents();
+      if (cached && cached.length > 0) {
+        setRfps(cached);
         setLoading(false);
       } else {
         setLoading(true);
@@ -898,7 +898,7 @@ export default function DashboardPage() {
         const data = await res.json();
         const events = data.events ?? [];
         setRfps(events);
-        cachedEvents = events;
+        if (events.length > 0) setCachedEvents(events);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load events");
         setRfps(FALLBACK_RFPS);
@@ -909,41 +909,45 @@ export default function DashboardPage() {
     fetchEvents();
   }, []);
 
-  const allRfpsWithMatch: RFPWithMatch[] = (rfps.length > 0 ? rfps : FALLBACK_RFPS).map((rfp) => ({
-    ...rfp,
-    match: computeMatch(rfp, profile),
-  }));
-  allRfpsWithMatch.sort((a, b) => b.match.score - a.match.score);
+  const allRfpsWithMatch = React.useMemo(() => {
+    const list: RFPWithMatch[] = (rfps.length > 0 ? rfps : FALLBACK_RFPS).map((rfp) => ({
+      ...rfp,
+      match: computeMatch(rfp, profile),
+    }));
+    return [...list].sort((a, b) => b.match.score - a.match.score);
+  }, [rfps, profile]);
 
-  const rfpsWithMatch = allRfpsWithMatch.filter((r) => !notInterestedRfpIds.has(r.id));
-  const hiddenRfps = allRfpsWithMatch.filter((r) => notInterestedRfpIds.has(r.id));
-  const hiddenCount = hiddenRfps.length;
-
-  const baseDisplayedRfps = listFilter === "saved"
-    ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
-    : rfpsWithMatch;
-  let displayedRfps = countActiveFilters(filters) > 0
-    ? baseDisplayedRfps.filter((r) => rfpMatchesFilters(r, filters))
-    : baseDisplayedRfps;
-  displayedRfps = displayedRfps.filter((r) => rfpMatchesSearch(r, searchQuery));
-  if (minScore != null) {
-    displayedRfps = displayedRfps.filter((r) => r.match.score >= minScore);
-  }
-  displayedRfps = [...displayedRfps].sort((a, b) => {
-    let cmp = 0;
-    if (sortBy === "score") {
-      cmp = a.match.score - b.match.score;
-    } else if (sortBy === "deadline") {
-      const dueA = parseDeadline(a.deadline)?.getTime() ?? Infinity;
-      const dueB = parseDeadline(b.deadline)?.getTime() ?? Infinity;
-      cmp = dueA - dueB;
-    } else if (sortBy === "value") {
-      const valA = getContractValueNumeric(a.estimatedValue);
-      const valB = getContractValueNumeric(b.estimatedValue);
-      cmp = valA - valB;
+  const { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps } = React.useMemo(() => {
+    const rfpsWithMatch = allRfpsWithMatch.filter((r) => !notInterestedRfpIds.has(r.id));
+    const hiddenRfps = allRfpsWithMatch.filter((r) => notInterestedRfpIds.has(r.id));
+    const hiddenCount = hiddenRfps.length;
+    const baseDisplayedRfps = listFilter === "saved"
+      ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
+      : rfpsWithMatch;
+    let displayed = countActiveFilters(filters) > 0
+      ? baseDisplayedRfps.filter((r) => rfpMatchesFilters(r, filters))
+      : baseDisplayedRfps;
+    displayed = displayed.filter((r) => rfpMatchesSearch(r, searchQuery));
+    if (minScore != null) {
+      displayed = displayed.filter((r) => r.match.score >= minScore);
     }
-    return sortDirection === "desc" ? -cmp : cmp;
-  });
+    displayed = [...displayed].sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === "score") {
+        cmp = a.match.score - b.match.score;
+      } else if (sortBy === "deadline") {
+        const dueA = parseDeadline(a.deadline)?.getTime() ?? Infinity;
+        const dueB = parseDeadline(b.deadline)?.getTime() ?? Infinity;
+        cmp = dueA - dueB;
+      } else if (sortBy === "value") {
+        const valA = getContractValueNumeric(a.estimatedValue);
+        const valB = getContractValueNumeric(b.estimatedValue);
+        cmp = valA - valB;
+      }
+      return sortDirection === "desc" ? -cmp : cmp;
+    });
+    return { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps: displayed };
+  }, [allRfpsWithMatch, notInterestedRfpIds, listFilter, savedRfpIds, filters, searchQuery, minScore, sortBy, sortDirection]);
 
   const dynamicFilterOptions = React.useMemo(
     () => deriveFilterOptionsFromRfps(rfpsWithMatch),
@@ -957,6 +961,8 @@ export default function DashboardPage() {
       ? selectedRfpId
       : displayedRfps[0]?.id ?? null;
   const selectedRfp = displayedRfps.find((r) => r.id === selectedId);
+  // Defer heavy panel content so card selection (border) updates immediately
+  const deferredSelectedRfp = useDeferredValue(selectedRfp ?? null);
 
   useEffect(() => {
     if (selectedRfpId && !displayedRfps.some((r) => r.id === selectedRfpId)) {
@@ -1206,18 +1212,23 @@ export default function DashboardPage() {
               {toast}
             </div>
           )}
-          {selectedRfp ? (
+          {selectedRfp && selectedRfp.id !== deferredSelectedRfp?.id ? (
+            <div className="p-6 flex flex-col items-center justify-center min-h-[200px] text-slate-500">
+              <p className="font-semibold text-slate-700 truncate max-w-full text-center">{selectedRfp.title}</p>
+              <p className="mt-2 text-sm">Loading…</p>
+            </div>
+          ) : deferredSelectedRfp ? (
             <RFPDetailPanel
-              rfp={selectedRfp}
+              rfp={deferredSelectedRfp}
               profile={profile}
               generateSummary={generateMatchSummary}
               MatchBadge={MatchBadge}
-              isSaved={savedRfpIds.has(selectedRfp.id)}
-              onSave={() => handleSaveRfp(selectedRfp.id)}
-              isApplied={appliedRfpIds.has(selectedRfp.id)}
-              onToggleApplied={() => handleToggleApplied(selectedRfp.id)}
-              isInProgress={inProgressRfpIds.has(selectedRfp.id)}
-              cachedSummary={summaryCache[selectedRfp.id]}
+              isSaved={savedRfpIds.has(deferredSelectedRfp.id)}
+              onSave={() => handleSaveRfp(deferredSelectedRfp.id)}
+              isApplied={appliedRfpIds.has(deferredSelectedRfp.id)}
+              onToggleApplied={() => handleToggleApplied(deferredSelectedRfp.id)}
+              isInProgress={inProgressRfpIds.has(deferredSelectedRfp.id)}
+              cachedSummary={summaryCache[deferredSelectedRfp.id]}
               onSummaryReady={handleSummaryReady}
             />
           ) : (
