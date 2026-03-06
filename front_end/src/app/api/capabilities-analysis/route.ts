@@ -1,24 +1,25 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 
-const PROMPT = `You are an expert government contracting consultant. Given an RFP and a company profile, produce a concise capabilities analysis that compares the company's qualifications against the RFP's requirements.
+const PROMPT = `You are an expert government contracting consultant. Given an RFP and a company profile, produce a concise capabilities analysis that compares the user's qualifications against the RFP's requirements.
 
 You will be given:
 1) RFP details (title, agency, industry, capabilities, certifications, NAICS codes, location, description, attachments)
-2) The company's profile (industries, capabilities, certifications, locations, agency experience, contract types, technology stack)
-3) The rule-based score breakdown showing how the company scored in each category
+2) The user's profile (industries, capabilities, certifications, locations, agency experience, contract types, technology stack)
+3) The rule-based score breakdown showing how the user scored in each category
 
 Your task: Write a focused analysis (150–250 words) that covers:
-- **What the company can fulfill** — Specific RFP requirements that align with the company's capabilities, certifications, industry experience, technology stack, or past agency work. Reference concrete overlaps.
-- **Potential gaps** — Specific RFP requirements the company does not currently demonstrate in their profile (missing certifications, unfamiliar agencies, scope areas not listed in capabilities, etc.)
-- **Scope alignment** — How well the type of work described in the RFP matches the company's demonstrated experience
+- **What your company can fulfill** — Specific RFP requirements that align with your capabilities, certifications, industry experience, technology stack, or past agency work. Reference concrete overlaps.
+- **Potential gaps** — Specific RFP requirements you do not currently demonstrate in your profile (missing certifications, unfamiliar agencies, scope areas not listed in capabilities, etc.)
+- **Scope alignment** — How well the type of work described in the RFP matches your demonstrated experience
 
 Format your response in markdown:
 - Do NOT include a title or heading like "Capabilities Analysis" at the top — jump straight into the content
-- Use **bold** for section headings (e.g., **What the company can fulfill**, **Potential gaps**, **Scope alignment**)
+- Use **bold** for section headings (e.g., **What your company can fulfill**, **Potential gaps**, **Scope alignment**)
 - Use bullet points for specific items
+- Always refer to the reader as "you" and their business as "your company". Never use "the company" or "the contractor" in your output.
 - Keep it scannable and factual — no encouragement or advice about improving the profile
-- If the company profile is missing, state that no profile is available and list what the RFP requires`;
+- If the user's profile is missing, state that no profile is available and list what the RFP requires`;
 
 export async function POST(req: Request) {
   try {
@@ -56,7 +57,7 @@ export async function POST(req: Request) {
     const hasAttachments = attachmentRollup && typeof attachmentRollup === "object";
 
     // Build compact profile summary
-    let profileSummary = "No company profile available.";
+    let profileSummary = "No user profile available.";
     if (profile) {
       profileSummary = JSON.stringify(profile);
     }

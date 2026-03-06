@@ -5,7 +5,7 @@ const PROMPT = `You are an expert government contracting consultant helping a ve
 
 You will be given:
 1) Complete RFP information: title, agency, description, requirements, deadline, estimated value, location, contract type, capabilities sought, certifications required, contact info, and any reference to attachments or supplementary documents
-2) The company's full profile: company name, industries, capabilities, certifications, clearances, NAICS codes, service areas (cities/counties), agency experience, contract types, and size status
+2) The user's full profile: company name, industries, capabilities, certifications, clearances, NAICS codes, service areas (cities/counties), agency experience, contract types, and size status
 
 Your task: Write a professional proposal draft tailored to this RFP. Structure it as:
 
@@ -15,7 +15,7 @@ Your task: Write a professional proposal draft tailored to this RFP. Structure i
 4. **Relevant Experience & Qualifications** – Highlight experience with similar projects, the agency if applicable, and relevant certifications
 5. **Why Choose Us** – Differentiators based on your profile that align with the RFP needs
 
-Use the company profile extensively to personalize the proposal. Reference specific capabilities, certifications, locations, and past agency experience. Be professional and persuasive. If the RFP mentions attachments (e.g., "Attachment A", "see full packet"), acknowledge them and suggest the reader refer to those documents for additional detail. Write in the company's voice (first person plural: "We..."). Aim for approximately 800–1200 words. Use clear headings and short paragraphs.`;
+Use the user's profile extensively to personalize the proposal. Reference specific capabilities, certifications, locations, and past agency experience. Be professional and persuasive. If the RFP mentions attachments (e.g., "Attachment A", "see full packet"), acknowledge them and suggest the reader refer to those documents for additional detail. Write in first person plural ("We...", "our company"). Never refer to the vendor as "the company" or "the contractor" in the proposal text. Aim for approximately 800–1200 words. Use clear headings and short paragraphs.`;
 
 const REFINE_PROMPT = `You are an expert government contracting consultant. The user has received a draft proposal and has provided feedback. Your task is to produce an improved version of the proposal that incorporates their feedback.
 
@@ -24,7 +24,7 @@ You will be given:
 2) The current draft proposal
 3) The user's feedback
 
-Incorporate the feedback thoughtfully. Preserve the overall structure and quality. Make targeted changes based on what the user asked for. If the feedback is vague, make reasonable improvements. Output the full revised proposal.`;
+Incorporate the feedback thoughtfully. Preserve the overall structure and quality. Make targeted changes based on what the user asked for. If the feedback is vague, make reasonable improvements. Output the full revised proposal. Keep the proposal in first person plural (We/our). Never refer to the vendor as "the company" or "the contractor."`;
 
 export async function POST(req: Request) {
   try {

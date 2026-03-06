@@ -302,13 +302,27 @@ export interface UserRfpStatusResponse {
 }
 
 /**
- * Mark an RFP as applied, remove from applied, and/or mark in progress. Stored in user data in S3.
+ * Fetch saved Plan of Execution for the current user and RFP. Returns null if none saved.
+ */
+export async function getGeneratedPoe(rfpId: string): Promise<string | null> {
+  const res = await fetch(
+    `${getApiBase()}/user/generated-poe/?rfp_id=${encodeURIComponent(rfpId)}`,
+    { credentials: "include", headers: { ...authHeaders() } }
+  );
+  if (!res.ok) return null;
+  const data = (await res.json()) as { plan_of_execution?: string | null };
+  return data.plan_of_execution ?? null;
+}
+
+/**
+ * Mark an RFP as applied, remove from applied, mark in progress, and/or save generated POE. Stored in user data in S3.
  * Requires auth (Bearer token or session + CSRF).
  */
 export async function updateUserRfpStatus(payload: {
   mark_applied?: string;
   remove_applied?: string;
   mark_in_progress?: string;
+  save_generated_poe?: { rfp_id: string; content: string };
 }): Promise<UserRfpStatusResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
   // Always send CSRF when using credentials so session auth works (Bearer may be expired)

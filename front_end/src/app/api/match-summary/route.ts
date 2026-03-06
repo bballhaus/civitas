@@ -1,27 +1,28 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 
-const PROMPT = `You are helping a vendor/contractor understand why an RFP (Request for Proposal) is or isn't a good match for their company.
+const PROMPT = `You are helping a vendor/contractor understand why an RFP (Request for Proposal) is or isn't a good match for their business.
 
 Given:
 1) The RFP details (title, agency, industry, capabilities, location, deadline, description snippet)
-2) The company's full profile (industries, capabilities, certifications, locations, agency experience, contract types)
+2) The user's full profile (industries, capabilities, certifications, locations, agency experience, contract types)
 3) A rule-based match summary that lists reasons like "the deadline is still open", "industry aligns", "capabilities align: X"
 4) Optional lists of positive and negative match reasons
 5) Optional attachment-derived key requirements and constraints (e.g., certifications, clearances, set-asides, geography)
 
 Important scoring context:
-- When an RFP does NOT specify a requirement for a category (e.g., no NAICS codes, no certifications), the company earns FULL points for that category. This means "no requirement = everyone qualifies" and is expected, not a flaw.
-- A high score on a generic RFP (few specific requirements) is normal — the company isn't penalized for requirements that don't exist.
-- Focus explanations on categories where there IS a specific RFP requirement and how the company matches or doesn't match.
+- When an RFP does NOT specify a requirement for a category (e.g., no NAICS codes, no certifications), the user earns FULL points for that category. This means "no requirement = everyone qualifies" and is expected, not a flaw.
+- A high score on a generic RFP (few specific requirements) is normal — the user isn't penalized for requirements that don't exist.
+- Focus explanations on categories where there IS a specific RFP requirement and how the user matches or doesn't match.
 
 Your task: Write two plain text paragraphs (no headings or "Part 1/Part 2" labels).
 
-First paragraph: A very brief summary of what the RFP is actually asking for (scope, key requirements, type of work, agency/context). Do not mention the company yet. 1–2 sentences.
+First paragraph: A very brief summary of what the RFP is actually asking for (scope, key requirements, type of work, agency/context). Do not mention the reader yet. 1–2 sentences.
 
-Second paragraph: Why this RFP is or isn't a good match for the company. Be specific — name overlapping capabilities, industries, certifications, or NAICS codes that drive the score. When attachment-derived data is present, reference specific requirements from the attachments. If disqualified, explain clearly why. If a strong match, explain exactly which company strengths align with which RFP requirements. If weak, explain which specific RFP requirements the company doesn't meet. 2–4 sentences.
+Second paragraph: Why this RFP is or isn't a good match for you / your company. Be specific — name overlapping capabilities, industries, certifications, or NAICS codes that drive the score. When attachment-derived data is present, reference specific requirements from the attachments. If disqualified, explain clearly why. If a strong match, explain exactly which of your company's strengths align with which RFP requirements. If weak, explain which specific RFP requirements you don't meet. 2–4 sentences.
 
 Rules:
+- Always refer to the reader as "you" and their business as "your company". Never use "the company" or "the contractor" in your output.
 - Do NOT suggest profile updates, improvements, or ways to strengthen the match
 - Do NOT use filler phrases like "let's take a closer look", "to better understand", or "review the breakdown"
 - Output exactly two paragraphs of plain text. No bullet points, no labels.`;

@@ -24,6 +24,7 @@ import {
   mapBackendProfileToCompanyProfile,
   getEmptyCompanyProfile,
   updateUserRfpStatus,
+  getGeneratedPoe,
 } from "@/lib/api";
 import { getCachedEvents, setCachedEvents, clearCachedEvents } from "@/lib/events-cache";
 import {
@@ -1279,6 +1280,111 @@ function RFPDetailPanel({
   const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
   const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
   const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
+  const [planOfExecution, setPlanOfExecution] = useState<string | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planFeedback, setPlanFeedback] = useState("");
+  const [poeDropdownOpen, setPoeDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    if (!rfp.id) return;
+    getGeneratedPoe(rfp.id).then((saved) => {
+      if (saved) setPlanOfExecution(saved);
+    });
+  }, [rfp.id]);
+
+  const planPayload = () => ({
+    rfp: {
+      title: rfp.title,
+      agency: rfp.agency,
+      industry: rfp.industry,
+      location: rfp.location,
+      deadline: rfp.deadline,
+      estimatedValue: rfp.estimatedValue,
+      capabilities: rfp.capabilities,
+      certifications: rfp.certifications,
+      contractType: rfp.contractType,
+      description: rfp.description,
+      naicsCodes: (rfp as any).naicsCodes,
+      eventUrl: rfp.eventUrl,
+      contactName: (rfp as any).contactName,
+      contactEmail: (rfp as any).contactEmail,
+      contactPhone: (rfp as any).contactPhone,
+    },
+    profile: profile
+      ? {
+          companyName: profile.companyName,
+          industry: profile.industry,
+          sizeStatus: profile.sizeStatus,
+          certifications: profile.certifications,
+          clearances: profile.clearances,
+          naicsCodes: profile.naicsCodes,
+          workCities: profile.workCities,
+          workCounties: profile.workCounties,
+          capabilities: profile.capabilities,
+          agencyExperience: profile.agencyExperience,
+          contractTypes: profile.contractTypes,
+        }
+      : null,
+  });
+
+  const handleGeneratePlanOfExecution = useCallback(async (feedbackText?: string) => {
+    if (planLoading) return;
+    const trimmed = String(feedbackText ?? "").trim();
+    setPlanLoading(true);
+    setPlanError(null);
+    if (!trimmed) setPlanOfExecution(null);
+    updateUserRfpStatus({ mark_in_progress: rfp.id }).catch(() => {});
+    try {
+      const res = await fetch("/api/generate-plan-of-execution", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...planPayload(),
+          ...(trimmed && { currentPlan: planOfExecution, feedback: trimmed }),
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || res.statusText);
+      }
+      const data = await res.json();
+      setPlanOfExecution(data.plan ?? "");
+      setPlanFeedback("");
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : "Failed to generate plan");
+    } finally {
+      setPlanLoading(false);
+    }
+  }, [rfp, profile, planOfExecution, planLoading]);
+
+  const handleDownloadPlanOfExecution = useCallback(async () => {
+    if (!planOfExecution || !rfp.title) return;
+    const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import("docx");
+    const { saveAs } = await import("file-saver");
+    const lines = planOfExecution.split(/\n/);
+    const children = lines.map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return new Paragraph({ text: "", spacing: { after: 120 } });
+      const isHeading = /^\d+\.\s*\*\*/.test(trimmed) || (/^\*\*.*\*\*$/.test(trimmed) && trimmed.length < 80);
+      const text = trimmed.replace(/\*\*/g, "");
+      return isHeading
+        ? new Paragraph({ text, heading: HeadingLevel.HEADING_2, spacing: { before: 240, after: 120 } })
+        : new Paragraph({ children: [new TextRun({ text: trimmed })], spacing: { after: 120 } });
+    });
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: [
+          new Paragraph({ text: rfp.title, heading: HeadingLevel.TITLE, spacing: { after: 240 } }),
+          new Paragraph({ text: rfp.agency, spacing: { after: 360 } }),
+          ...children,
+        ],
+      }],
+    });
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, `Plan-of-Execution-${rfp.title.slice(0, 50).replace(/[^a-zA-Z0-9]/g, "-")}.docx`);
+  }, [planOfExecution, rfp.title, rfp.agency]);
 
   useEffect(() => {
     if (cachedSummary) {
@@ -1470,129 +1576,137 @@ function RFPDetailPanel({
   return (
     <article className="w-full p-4 md:p-6">
       <div className="rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-200">
-        {/* Hero: title + match score row; then full-width Match Summary; then actions */}
+        {/* Hero: title + match score; Save / I've applied */}
         <div className="p-5 md:p-6 border-b border-slate-100">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
             <h2 className="text-xl md:text-2xl font-bold text-slate-900 leading-tight min-w-0">{rfp.title}</h2>
             <div className="shrink-0">
               <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} size="lg" />
             </div>
           </div>
-          {/* Match Summary — full row, below title/score to avoid collision */}
-          <div className={`rounded-lg ${match.disqualified ? "border border-red-200 bg-red-50/30" : "border border-blue-200 bg-blue-50"} p-4 mb-5 md:mb-6 w-full`}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Match Summary</span>
-              {isLoadingSummary && <span className="text-xs text-slate-400 animate-pulse">Summarizing…</span>}
-            </div>
-            <p className="text-sm text-slate-700 leading-relaxed">{summary}</p>
-            {summaryError && (
-              <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Using rule-based summary.</p>
-            )}
+          {/* Save + I've applied — right under the title */}
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onSave(); }}
+              className={`text-sm flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-colors ${isSaved ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
+            >
+              <svg className={`w-4 h-4 ${isSaved ? "fill-current" : ""}`} fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
+              {isSaved ? "Saved" : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onToggleApplied(); }}
+              className={`text-sm flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-colors ${isApplied ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
+            >
+              {isApplied ? (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> Applied</>) : (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> I&apos;ve applied</>)}
+            </button>
+            {isInProgress && <span className="text-sm flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-violet-50 text-violet-700">In progress</span>}
           </div>
-          <div className="flex flex-wrap items-stretch justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <Link href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`} className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                Generate Proposal &amp; Plan
-              </Link>
-              {(rfp.eventUrl || rfp.id) && (
-                <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">
-                  View on Cal eProcure <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                </a>
-              )}
+        </div>
+
+        {/* Important information (left) + Match Summary (right) */}
+        <div className="p-5 md:p-6 border-b border-slate-100">
+          <div className="flex flex-col gap-y-4 md:flex-row md:items-start md:gap-0">
+            <div className="min-w-0 md:w-64 md:shrink-0 md:pr-6">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Important information</h3>
+              <div className="space-y-4 text-left">
+                {[
+                  { label: "Due", value: rfp.deadline?.trim() || "TBD" },
+                  { label: "Location", value: rfp.location },
+                  { label: "Est. value", value: rfp.estimatedValue },
+                  { label: "Requested by", value: `${rfp.agency}${rfp.industry ? ` · ${rfp.industry}` : ""}` },
+                ].map((row, i) => (
+                  <div key={i} className="space-y-1">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{row.label}</div>
+                    <div className="text-sm text-slate-800 break-words leading-snug">{row.value}</div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onSave(); }}
-                className={`text-sm flex items-center justify-center gap-1.5 h-10 px-3 rounded-lg transition-colors ${isSaved ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
-              >
-                <svg className={`w-4 h-4 ${isSaved ? "fill-current" : ""}`} fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
-                {isSaved ? "Saved" : "Save"}
-              </button>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onToggleApplied(); }}
-                className={`text-sm flex items-center justify-center gap-1.5 h-10 px-3 rounded-lg transition-colors ${isApplied ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
-              >
-                {isApplied ? (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> Applied</>) : (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> I&apos;ve applied</>)}
-              </button>
-              {isInProgress && <span className="text-sm flex items-center justify-center gap-1.5 h-10 px-3 rounded-lg bg-violet-50 text-violet-700">In progress</span>}
+            <div className="min-w-0 flex-1 md:border-l md:border-slate-200 md:pl-6">
+              <div className={`rounded-lg border-2 ${match.disqualified ? "border-red-200 bg-red-50/30" : "border-blue-200 bg-blue-50"} p-4`}>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Match Summary</h3>
+                {isLoadingSummary && <span className="text-xs text-slate-400 animate-pulse">Summarizing…</span>}
+                <p className="text-sm text-slate-700 leading-relaxed mt-1">{summary}</p>
+                {summaryError && (
+                  <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Using rule-based summary.</p>
+                )}
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Important information (left) + Score breakdown (right) — grid-aligned rows */}
+        {/* About this RFP — in a contained text box */}
         <div className="p-5 md:p-6 border-b border-slate-100">
-          {(() => {
-            const metaRows = [
-              { label: "Due", value: rfp.deadline?.trim() || "TBD" },
-              { label: "Location", value: rfp.location },
-              { label: "Est. value", value: rfp.estimatedValue },
-              { label: "Requested by", value: `${rfp.agency}${rfp.industry ? ` · ${rfp.industry}` : ""}` },
-            ];
-            const breakdownItems = match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral");
-            const hasBreakdown = breakdownItems.length > 0 && !match.disqualified;
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">About this RFP</h3>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            {requirementsSummaryLoading ? (
+              <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
+            ) : requirementsSummary ? (
+              <MarkdownContent content={requirementsSummary} />
+            ) : (
+              <p className="text-sm text-slate-700 leading-relaxed">{rfp.description || "—"}</p>
+            )}
+            {requirementsSummaryError && (
+              <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
+            )}
+          </div>
+        </div>
 
-            return (
-              <div className={`flex flex-col gap-y-4 ${hasBreakdown ? "md:flex-row md:items-start md:gap-0" : ""}`}>
-                {/* Left: Important information — fixed width so layout stays consistent */}
-                <div className="min-w-0 md:w-64 md:shrink-0 md:pr-6">
-                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Important information</h3>
-                  <div className="space-y-4 text-left">
-                    {metaRows.map((row, i) => (
-                      <div key={i} className="space-y-1">
-                        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{row.label}</div>
-                        <div className="text-sm text-slate-800 break-words leading-snug">{row.value}</div>
-                      </div>
-                    ))}
+        {/* Score Breakdown */}
+        {match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").length > 0 && !match.disqualified && (
+          <div className="p-5 md:p-6 border-b border-slate-100">
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Score Breakdown</h3>
+            <div className="space-y-1.5">
+              {match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
+                const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
+                const barColor =
+                  fillRatio >= 0.75 ? "bg-emerald-500" :
+                  fillRatio >= 0.5 ? "bg-yellow-400" :
+                  fillRatio >= 0.25 ? "bg-orange-400" :
+                  fillRatio > 0 ? "bg-red-400" : "bg-slate-200";
+                const textColor =
+                  fillRatio >= 0.75 ? "text-emerald-700" :
+                  fillRatio >= 0.5 ? "text-yellow-600" :
+                  fillRatio >= 0.25 ? "text-orange-600" :
+                  b.points === 0 && b.maxPoints > 0 ? "text-red-600" : "text-slate-500";
+                return (
+                  <div key={i} className="min-h-8 flex items-center gap-3">
+                    <span className="text-sm font-medium text-slate-700 w-28 shrink-0 truncate" title={b.category}>{b.category}</span>
+                    {b.maxPoints > 0 ? (
+                      <>
+                        <div className="h-2 rounded-full overflow-hidden relative flex-1 min-w-0">
+                          <div className="absolute inset-0 bg-slate-200 rounded-full" />
+                          <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${fillPct}%` }} />
+                        </div>
+                        <span className={`text-sm font-bold w-12 text-right shrink-0 ${textColor}`}>{b.points}/{b.maxPoints}</span>
+                      </>
+                    ) : (
+                      <span className={`text-sm ${textColor} flex-1 min-w-0`}>{b.detail}</span>
+                    )}
                   </div>
-                </div>
-                {/* Vertical bar + Score breakdown */}
-                {hasBreakdown && (
-                  <div className="min-w-0 flex-1 md:border-l md:border-slate-200 md:pl-6">
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Score Breakdown</h3>
-                    <div className="space-y-1.5">
-                      {breakdownItems.map((b, i) => {
-                        const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
-                        const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
-                        const barColor =
-                          fillRatio >= 0.75 ? "bg-emerald-500" :
-                          fillRatio >= 0.5 ? "bg-yellow-400" :
-                          fillRatio >= 0.25 ? "bg-orange-400" :
-                          fillRatio > 0 ? "bg-red-400" :
-                          "bg-slate-200";
-                        const textColor =
-                          fillRatio >= 0.75 ? "text-emerald-700" :
-                          fillRatio >= 0.5 ? "text-yellow-600" :
-                          fillRatio >= 0.25 ? "text-orange-600" :
-                          b.points === 0 && b.maxPoints > 0 ? "text-red-600" :
-                          "text-slate-500";
-                        return (
-                          <div key={i} className="min-h-8 flex items-center gap-3">
-                            <span className="text-sm font-medium text-slate-700 w-28 shrink-0 truncate" title={b.category}>{b.category}</span>
-                            {b.maxPoints > 0 ? (
-                              <>
-                                <div className="h-2 rounded-full overflow-hidden relative flex-1 min-w-0">
-                                  <div className="absolute inset-0 bg-slate-200 rounded-full" />
-                                  <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${fillPct}%` }} />
-                                </div>
-                                <span className={`text-sm font-bold w-12 text-right shrink-0 ${textColor}`}>
-                                  {b.points}/{b.maxPoints}
-                                </span>
-                              </>
-                            ) : (
-                              <span className={`text-sm ${textColor} flex-1 min-w-0`}>{b.detail}</span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Capabilities Analysis — in a contained text box */}
+        <div className="p-5 md:p-6 border-b border-slate-100">
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Capabilities Analysis</h3>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            {capabilitiesAnalysisLoading ? (
+              <p className="text-slate-500 text-sm animate-pulse">Analyzing capabilities against requirements…</p>
+            ) : capabilitiesAnalysis ? (
+              <MarkdownContent content={capabilitiesAnalysis} />
+            ) : capabilitiesAnalysisError ? (
+              <p className="text-xs text-amber-600">Capabilities analysis unavailable.</p>
+            ) : (
+              <p className="text-slate-500 text-sm">No company profile available for analysis.</p>
+            )}
+          </div>
         </div>
 
         {/* Disqualifier banner */}
@@ -1610,6 +1724,8 @@ function RFPDetailPanel({
           </div>
         )}
 
+<<<<<<< generate-buttons
+=======
         {/* Capabilities Analysis */}
         <div className="p-5 md:p-6 border-t border-slate-100">
           <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Capabilities Analysis</h3>
@@ -1725,6 +1841,7 @@ function RFPDetailPanel({
           )}
         </div>
 
+>>>>>>> main
         {/* Contact */}
         {(rfp.contactEmail || rfp.contactName) && (
           <div className="p-5 md:p-6 border-t border-slate-100">
@@ -1735,6 +1852,111 @@ function RFPDetailPanel({
             )}
           </div>
         )}
+
+        {/* Generated Plan of Execution dropdown — when open, appears above the bottom buttons */}
+        {poeDropdownOpen && (
+          <div className="border-t border-slate-100 bg-slate-50/50">
+            <div className="p-4 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-bold text-slate-900">Generated Plan of Execution</h3>
+              <div className="flex items-center gap-2">
+                {planOfExecution && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleDownloadPlanOfExecution(); }}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    Download
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (planOfExecution) {
+                      updateUserRfpStatus({ save_generated_poe: { rfp_id: rfp.id, content: planOfExecution } }).catch(() => {});
+                    }
+                    setPoeDropdownOpen(false);
+                  }}
+                  className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                  aria-label="Close"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </button>
+              </div>
+            </div>
+            <div className="px-4 pb-4 max-h-[60vh] overflow-y-auto">
+              {planLoading && !planOfExecution ? (
+                <p className="text-sm text-slate-500 animate-pulse">Generating plan…</p>
+              ) : planError ? (
+                <p className="text-sm text-red-600">{planError}</p>
+              ) : planOfExecution ? (
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
+                      {planOfExecution}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 items-start">
+                    <div className="flex-1 min-w-[180px]">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Improve with feedback (optional)</label>
+                      <textarea
+                        value={planFeedback}
+                        onChange={(e) => setPlanFeedback(e.target.value)}
+                        placeholder="e.g. Add more detail on timelines..."
+                        rows={2}
+                        className="w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2563eb] focus:border-transparent resize-none"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleGeneratePlanOfExecution(planFeedback); }}
+                      disabled={planLoading}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 mt-5"
+                    >
+                      {planLoading ? "Regenerating…" : "Regenerate with feedback"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">Click &quot;Generate Plan of Execution&quot; below to create a plan. It will appear here.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Bottom: Generate Plan of Execution + View on Cal eProcure */}
+        <div className="p-5 md:p-6 border-t border-slate-100 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPoeDropdownOpen((open) => !open);
+              if (!planOfExecution && !planLoading) handleGeneratePlanOfExecution();
+            }}
+            className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors"
+          >
+            {planLoading ? (
+              <>
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+                  <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Generating…
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                Generate Plan of Execution
+              </>
+            )}
+          </button>
+          {(rfp.eventUrl || rfp.id) && (
+            <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">
+              View on Cal eProcure <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+            </a>
+          )}
+        </div>
       </div>
     </article>
   );
