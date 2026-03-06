@@ -530,12 +530,6 @@ export default function RFPDetailPage() {
       const data = await res.json();
       setPlanOfExecution(data.plan ?? "");
       setPlanFeedback("");
-      try {
-        await updateUserRfpStatus({ mark_in_progress: id });
-        setInProgressRfpIds((prev) => new Set([...prev, id]));
-      } catch {
-        // ignore
-      }
     } catch (err) {
       setPlanError(
         err instanceof Error ? err.message : "Failed to generate plan"
