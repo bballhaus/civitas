@@ -47,7 +47,6 @@ interface CompanyProfile {
   uploadedFiles?: Array<{
     name: string;
     type: string;
-    size: number;
     uploadedAt: string;
     parsed?: boolean;
     uploadedToBackend?: boolean;
@@ -108,6 +107,8 @@ export default function ProfilePage() {
   const [profileLoadedFromBackend, setProfileLoadedFromBackend] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [dupMessage, setDupMessage] = useState("");
+  const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
   const pendingFilesRef = useRef<Map<string, File>>(new Map());
   const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
 
@@ -434,6 +435,11 @@ export default function ProfilePage() {
     try {
       if (editingSection === "documents") {
         if (currentUser && getAuthToken()) {
+          for (const key of pendingRemovals) {
+            try { await deleteContractDocument(key); } catch (e) { console.error("Delete failed:", key, e); }
+          }
+          setPendingRemovals([]);
+
           for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
             const file = pendingFilesRef.current.get(fileInfo.name);
@@ -525,11 +531,22 @@ export default function ProfilePage() {
   const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || !profile) return;
-    Array.from(files).forEach((file) => {
+    const existingNames = new Set((profile.uploadedFiles ?? []).map((f) => f.name));
+    const newFiles = Array.from(files).filter((f) => {
+      if (existingNames.has(f.name)) return false;
+      existingNames.add(f.name);
+      return true;
+    });
+    const skipped = files.length - newFiles.length;
+    if (skipped > 0) {
+      setDupMessage(`${skipped} duplicate file(s) already uploaded — skipped.`);
+    } else {
+      setDupMessage("");
+    }
+    newFiles.forEach((file) => {
       const fileInfo = {
         name: file.name,
         type: file.type || "application/octet-stream",
-        size: file.size,
         uploadedAt: new Date().toISOString(),
         parsed: false,
       };
@@ -722,7 +739,17 @@ export default function ProfilePage() {
       <h2 className={sectionTitleClass.replace(" mb-4", "")}>{title}</h2>
       {editingSection === sectionId ? (
         <div className="flex items-center gap-2 shrink-0">
-          <button type="button" onClick={() => setEditingSection(null)} className={btnSecondary}>
+          <button type="button" onClick={() => {
+            if (sectionId === "documents") {
+              setProfile((prev) =>
+                prev
+                  ? { ...prev, uploadedFiles: (prev.uploadedFiles ?? []).filter((f) => f.parsed !== false) }
+                  : null
+              );
+              setDupMessage("");
+            }
+            setEditingSection(null);
+          }} className={btnSecondary}>
             Cancel
           </button>
           <button type="button" onClick={saveSection} disabled={sectionSaving} className={btnPrimary + " disabled:opacity-50"}>
@@ -780,18 +807,18 @@ export default function ProfilePage() {
             {hasAnyData && (
               <Link
                 href="/dashboard"
-                className="shrink-0 w-full lg:w-auto flex items-center gap-3 p-4 rounded-lg border border-slate-200 bg-white hover:border-[#3C89C6]/40 hover:bg-slate-50/50 transition-colors group"
+                className="shrink-0 w-full lg:w-auto flex items-center gap-3 p-4 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:shadow-[#3C89C6]/30 hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20"
               >
-                <div className="flex-shrink-0 w-10 h-10 rounded-md bg-[#3C89C6]/10 flex items-center justify-center">
-                  <svg className="w-5 h-5 text-[#3C89C6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-105 group-hover:bg-white/25 transition-all duration-200">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                   </svg>
                 </div>
                 <div className="min-w-0">
-                  <p className="font-semibold text-slate-900">View Matches</p>
-                  <p className="text-sm text-slate-600">RFPs tailored to your profile</p>
+                  <p className="font-semibold text-white">View Matches</p>
+                  <p className="text-sm text-white/85">RFPs tailored to your profile</p>
                 </div>
-                <svg className="w-4 h-4 text-slate-400 group-hover:text-[#3C89C6] shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 text-white/90 group-hover:text-white group-hover:translate-x-0.5 shrink-0 transition-all duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </Link>
@@ -1141,7 +1168,7 @@ export default function ProfilePage() {
                                     <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
                                   )}
                                 </div>
-                                <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(2)} KB</p>
+                                <p className="text-xs text-slate-500">{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}</p>
                               </div>
                             </div>
                             <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
@@ -1150,6 +1177,9 @@ export default function ProfilePage() {
                           </div>
                         );
                       })}
+                      {dupMessage && (
+                        <p className="text-sm text-amber-600 mt-2">{dupMessage}</p>
+                      )}
                     </div>
                   )}
                 </div>

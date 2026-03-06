@@ -13,6 +13,7 @@ import {
 // Filter options - cities, counties, NAICS from real data; others static
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { AppHeader } from "@/components/AppHeader";
+import { MeshBackground } from "@/components/MeshBackground";
 import {
   getCurrentUser,
   getCachedUser,
@@ -909,9 +910,10 @@ export default function DashboardPage() {
   // Full-page loading until both profile and events are loaded — keeps match scores stable (no re-sort after load).
   if (loading || !profileLoadDone) {
     return (
-      <div className="min-h-screen bg-[#f5f5f5]">
-        <AppHeader variant="dashboard" rightContent={<Link href="/profile" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Profile</Link>} />
-        <div className="flex flex-col items-center justify-center min-h-[calc(100vh-65px)] gap-4">
+      <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
+        <MeshBackground />
+        <AppHeader />
+        <div className="relative flex flex-col items-center justify-center min-h-[calc(100vh-65px)] gap-4">
           <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#2563eb]" />
           <p className="text-slate-600 font-medium">Loading matches…</p>
         </div>
@@ -920,11 +922,12 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5]">
-      <AppHeader variant="dashboard" rightContent={<Link href="/profile" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Profile</Link>} />
+    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
+      <MeshBackground />
+      <AppHeader />
 
       {/* Split view */}
-      <div className="flex flex-col lg:flex-row h-[calc(100vh-65px)]">
+      <div className="relative z-[1] flex flex-col lg:flex-row h-[calc(100vh-65px)]">
         {/* Left: RFP list */}
         <aside className="w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-visible">
           <div ref={filtersContainerRef} className="p-4 border-b border-slate-200 bg-white space-y-3">
@@ -1120,7 +1123,7 @@ export default function DashboardPage() {
 
         {/* Right: RFP detail */}
         <main
-          className={`flex-1 min-w-0 bg-[#f5f5f5] relative ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
+          className={`flex-1 min-w-0 bg-transparent relative ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
         >
           {toast && (
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-lg">
@@ -1207,6 +1210,11 @@ function RFPDetailPanel({
               certifications: rfp.certifications,
               contractType: rfp.contractType,
               description: (rfp.description || "").slice(0, 1500),
+              naicsCodes: (rfp as any).naicsCodes,
+              clearancesRequired: (rfp as any).clearancesRequired,
+              setAsideTypes: (rfp as any).setAsideTypes,
+              deliverables: (rfp as any).deliverables,
+              attachmentRollup: (rfp as any).attachmentRollup ?? null,
             },
             profile: profile ? {
               companyName: profile.companyName,
@@ -1316,6 +1324,9 @@ function RFPDetailPanel({
               certifications: rfp.certifications,
               contractType: rfp.contractType,
               naicsCodes: (rfp as any).naicsCodes,
+              clearancesRequired: (rfp as any).clearancesRequired,
+              setAsideTypes: (rfp as any).setAsideTypes,
+              deliverables: (rfp as any).deliverables,
               estimatedValue: rfp.estimatedValue,
               description: (rfp.description || "").slice(0, 3000),
               attachmentRollup: (rfp as any).attachmentRollup ?? null,

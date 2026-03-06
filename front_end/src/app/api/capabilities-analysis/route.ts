@@ -61,6 +61,10 @@ export async function POST(req: Request) {
       profileSummary = JSON.stringify(profile);
     }
 
+    const clearances = Array.isArray(rfp.clearancesRequired) ? (rfp.clearancesRequired as string[]).join(", ") : "";
+    const setAsides = Array.isArray(rfp.setAsideTypes) ? (rfp.setAsideTypes as string[]).join(", ") : "";
+    const deliverables = Array.isArray(rfp.deliverables) ? (rfp.deliverables as string[]).slice(0, 5).join(", ") : "";
+
     const input = `RFP:
 Title: ${rfp.title ?? "N/A"}
 Agency: ${rfp.agency ?? "N/A"}
@@ -70,6 +74,9 @@ Contract type: ${rfp.contractType ?? "N/A"}
 Capabilities sought: ${Array.isArray(rfp.capabilities) ? (rfp.capabilities as string[]).join(", ") : "N/A"}
 Certifications required: ${Array.isArray(rfp.certifications) ? (rfp.certifications as string[]).join(", ") : "N/A"}
 NAICS codes: ${Array.isArray(rfp.naicsCodes) ? (rfp.naicsCodes as string[]).join(", ") : "N/A"}
+Clearances required: ${clearances || "N/A"}
+Set-aside types: ${setAsides || "N/A"}
+Deliverables: ${deliverables || "N/A"}
 Estimated value: ${rfp.estimatedValue ?? "N/A"}
 
 Description (excerpt):
