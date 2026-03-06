@@ -198,6 +198,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'work_counties',
             'capabilities',
             'agency_experience',
+            'size_status',
+            'contract_types',
             'uploaded_documents',
             'created_at',
             'updated_at',
@@ -216,3 +218,9 @@ class UserWithProfileSerializer(serializers.Serializer):
     user_id = serializers.IntegerField(source='user.id')
     username = serializers.CharField(source='user.username')
     profile = UserProfileSerializer(allow_null=True, required=False)
+    applied_rfp_ids = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list, allow_empty=True
+    )
+    in_progress_rfp_ids = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list, allow_empty=True
+    )

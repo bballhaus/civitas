@@ -24,6 +24,8 @@ PROFILE_ATTRS = [
     "work_counties",
     "capabilities",
     "agency_experience",
+    "size_status",
+    "contract_types",
     "created_at",
     "updated_at",
     "uploaded_documents",  # list of { id, title, document, created_at } sustained in profile
@@ -197,38 +199,35 @@ def refresh_profile_from_contracts(user):
     counties = set()
     capabilities_set = set()
     agencies = set()
+    technology_stack = set()
+    contract_types = set()
+    contractor_names = set()
     total_val = Decimal("0")
+
+    def _get(obj, key, default=None):
+        """Get a value from an object or dict."""
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
     for c in contract_list:
-        rc = getattr(c, "required_certifications", None) or (
-            c.get("required_certifications") if isinstance(c, dict) else []
-        )
-        rcl = getattr(c, "required_clearances", None) or (
-            c.get("required_clearances") if isinstance(c, dict) else []
-        )
-        naics_list = getattr(c, "naics_codes", None) or (
-            c.get("naics_codes") if isinstance(c, dict) else []
-        )
-        it = getattr(c, "industry_tags", None) or (
-            c.get("industry_tags") if isinstance(c, dict) else []
-        )
-        jc = getattr(c, "jurisdiction_city", None) or (
-            c.get("jurisdiction_city") if isinstance(c, dict) else None
-        )
-        jcy = getattr(c, "jurisdiction_county", None) or (
-            c.get("jurisdiction_county") if isinstance(c, dict) else None
-        )
-        wl = getattr(c, "work_locations", None) or (
-            c.get("work_locations") if isinstance(c, dict) else []
-        )
-        ia = getattr(c, "issuing_agency", None) or (
-            c.get("issuing_agency") if isinstance(c, dict) else None
-        )
-        wd = getattr(c, "work_description", None) or (
-            c.get("work_description") if isinstance(c, dict) else None
-        )
-        val = getattr(c, "contract_value_estimate", None) or (
-            c.get("contract_value_estimate") if isinstance(c, dict) else None
-        )
+        rc = _get(c, "required_certifications") or []
+        rcl = _get(c, "required_clearances") or []
+        naics_list = _get(c, "naics_codes") or []
+        it = _get(c, "industry_tags") or []
+        jc = _get(c, "jurisdiction_city")
+        jcy = _get(c, "jurisdiction_county")
+        wl = _get(c, "work_locations") or []
+        ia = _get(c, "issuing_agency")
+        wd = _get(c, "work_description")
+        val = _get(c, "contract_value_estimate")
+        tech = _get(c, "technology_stack") or []
+        scope_kw = _get(c, "scope_keywords") or []
+        ct = _get(c, "contract_type")
+        cn = _get(c, "contractor_name")
+
+        if cn and str(cn).strip():
+            contractor_names.add(str(cn).strip())
         certs.update(rc or [])
         clearances_set.update(rcl or [])
         naics.update(naics_list or [])
@@ -242,6 +241,17 @@ def refresh_profile_from_contracts(user):
             agencies.add(ia)
         if wd and str(wd).strip():
             capabilities_set.add(str(wd).strip())
+        # Aggregate technology stack from extracted proposals
+        for t in tech:
+            if t and str(t).strip():
+                technology_stack.add(str(t).strip())
+        # Aggregate scope keywords as additional capabilities
+        for kw in scope_kw:
+            if kw and str(kw).strip():
+                capabilities_set.add(str(kw).strip())
+        # Aggregate contract types
+        if ct and str(ct).strip():
+            contract_types.add(str(ct).strip())
         try:
             total_val += Decimal(str(val or "0").replace(",", "").replace("$", ""))
         except Exception:
@@ -259,6 +269,10 @@ def refresh_profile_from_contracts(user):
             doc = getattr(c, "document", None) or ""
             created = getattr(c, "created_at", None) or ""
             uploaded_documents.append({"id": cid, "title": title, "document": doc, "created_at": created})
+    existing_name = profile_dict.get("name") or ""
+    if not existing_name and contractor_names:
+        profile_dict["name"] = sorted(contractor_names)[0]
+
     profile_dict.update(
         {
             "user_id": user.id,

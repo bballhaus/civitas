@@ -59,6 +59,7 @@ __pycache__/
 
 # logs, databases, coverage
 /back_end/*.log
+/back_end/logs/app.log
 /back_end/*.coverage
 /back_end/.coverage.*
 /back_end/.cache/
@@ -71,3 +72,5 @@ __pycache__/
 .venv/
 venv/
 
+# webscraping downloads
+/webscraping/downloads/

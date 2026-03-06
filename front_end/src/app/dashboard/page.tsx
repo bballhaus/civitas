@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useDeferredValue } from "react";
 import Link from "next/link";
 import {
   CALIFORNIA_CITIES,
@@ -13,6 +13,7 @@ import {
 // Filter options - cities, counties, NAICS from real data; others static
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { AppHeader } from "@/components/AppHeader";
+import { MeshBackground } from "@/components/MeshBackground";
 import {
   getCurrentUser,
   getCachedUser,
@@ -22,7 +23,9 @@ import {
   clearCachedUser,
   mapBackendProfileToCompanyProfile,
   getEmptyCompanyProfile,
+  updateUserRfpStatus,
 } from "@/lib/api";
+import { getCachedEvents, setCachedEvents, clearCachedEvents } from "@/lib/events-cache";
 import {
   type RFP as RFPType,
   type RFPMatch as RFPMatchType,
@@ -186,9 +189,6 @@ const STORAGE_KEYS = {
   EXPRESSED_INTEREST: "civitas_expressed_interest_rfps",
 };
 
-/** Cached events so we only refetch when user refreshes; matches stay stable until profile is updated. */
-let cachedEvents: RFP[] | null = null;
-
 function loadSet(key: string): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
@@ -313,10 +313,13 @@ function countActiveFilters(f: RFPFilters): number {
 const computeMatch = computeMatchLib;
 const generateMatchSummary = generateMatchSummaryLib;
 
-function MatchBadge({ score, tier, disqualified }: { score: number; tier?: RFPMatch["tier"]; disqualified?: boolean }) {
+function MatchBadge({ score, tier, disqualified, size = "sm" }: { score: number; tier?: RFPMatch["tier"]; disqualified?: boolean; size?: "sm" | "lg" }) {
+  const isLarge = size === "lg";
+  const pillClass = isLarge ? "px-3.5 py-1.5 rounded-full text-base font-bold" : "px-2.5 py-1 rounded-full text-sm font-bold";
+
   if (disqualified) {
     return (
-      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold bg-red-100 text-red-700">
+      <span className={`inline-flex items-center ${pillClass} bg-red-100 text-red-700`}>
         <span className="mr-1">✗</span>
         Not Eligible
       </span>
@@ -329,7 +332,7 @@ function MatchBadge({ score, tier, disqualified }: { score: number; tier?: RFPMa
     excellent: "bg-emerald-500 text-white",
     strong: "bg-blue-500 text-white",
     moderate: "bg-amber-400 text-amber-900",
-    low: "bg-slate-200 text-slate-600",
+    low: "bg-orange-100 text-orange-800",
     disqualified: "bg-red-100 text-red-700",
   };
 
@@ -342,7 +345,7 @@ function MatchBadge({ score, tier, disqualified }: { score: number; tier?: RFPMa
   };
 
   return (
-    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold ${styles[t]}`}>
+    <span className={`inline-flex items-center ${pillClass} ${styles[t]}`}>
       {t === "excellent" && <span className="mr-1">★</span>}
       {score}% · {labels[t]}
     </span>
@@ -609,6 +612,8 @@ export default function DashboardPage() {
   const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(new Set());
   const [notInterestedRfpIds, setNotInterestedRfpIds] = useState<Set<string>>(new Set());
   const [expressedInterestRfpIds, setExpressedInterestRfpIds] = useState<Set<string>>(new Set());
+  const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
+  const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [summaryCache, setSummaryCache] = useState<Record<string, string>>({});
 
@@ -702,6 +707,45 @@ export default function DashboardPage() {
     showToast("RFP restored to your list");
   };
 
+  const handleToggleApplied = useCallback(async (rfpId: string) => {
+    const currentlyApplied = appliedRfpIds.has(rfpId);
+    // Optimistic update: flip UI immediately
+    setAppliedRfpIds((prev) => {
+      const next = new Set(prev);
+      if (currentlyApplied) next.delete(rfpId);
+      else next.add(rfpId);
+      return next;
+    });
+    try {
+      if (currentlyApplied) {
+        await updateUserRfpStatus({ remove_applied: rfpId });
+        showToast("Removed from applied");
+      } else {
+        await updateUserRfpStatus({ mark_applied: rfpId });
+        showToast("Marked as applied");
+      }
+    } catch (e) {
+      // Revert on failure
+      setAppliedRfpIds((prev) => {
+        const next = new Set(prev);
+        if (currentlyApplied) next.add(rfpId);
+        else next.delete(rfpId);
+        return next;
+      });
+      console.error("Failed to update applied status:", e);
+      showToast(e instanceof Error ? e.message : "Failed to update — try again");
+    }
+  }, [appliedRfpIds]);
+
+  const handleMarkInProgress = useCallback(async (rfpId: string) => {
+    try {
+      await updateUserRfpStatus({ mark_in_progress: rfpId });
+      setInProgressRfpIds((prev) => new Set([...prev, rfpId]));
+    } catch (e) {
+      console.error("Failed to mark RFP in progress:", e);
+    }
+  }, []);
+
   const [showNotInterestedList, setShowNotInterestedList] = useState(false);
   const [listFilter, setListFilter] = useState<"all" | "saved">("all");
   const [filters, setFilters] = useState<RFPFilters>(EMPTY_FILTERS);
@@ -754,23 +798,29 @@ export default function DashboardPage() {
     let cancelled = false;
     const cachedUser = getCachedUser();
     const cachedProfile = cachedUser ? getCachedProfile(cachedUser.user_id) : null;
-    const hasEvents = cachedEvents && cachedEvents.length > 0;
+    const events = getCachedEvents();
+    const hasEvents = events && events.length > 0;
     if (cachedUser && cachedProfile && hasEvents) {
       setCurrentUser(cachedUser);
       setProfile(cachedProfile);
-      setRfps(cachedEvents ?? []);
+      setRfps(events ?? []);
       setProfileLoadDone(true);
       setLoading(false);
       getCurrentUser(false).then((data) => {
         if (cancelled) return;
         if (!data) {
           clearCachedUser();
-          cachedEvents = null;
+          clearCachedEvents();
           setCurrentUser(null);
           setProfile(null);
         } else {
           setCachedUser(data);
         }
+      });
+      getCurrentUser(true).then((full) => {
+        if (cancelled || !full) return;
+        setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+        setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
       });
       return () => { cancelled = true; };
     }
@@ -784,6 +834,11 @@ export default function DashboardPage() {
           if (cached) {
             setProfile(cached);
             setProfileLoadDone(true);
+            getCurrentUser(true).then((full) => {
+              if (cancelled || !full) return;
+              setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+              setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+            });
             return;
           }
           getCurrentUser(true)
@@ -793,6 +848,8 @@ export default function DashboardPage() {
               const mapped = apiProfile ?? getEmptyCompanyProfile();
               setProfile(mapped);
               setCachedProfile(full.user_id, mapped);
+              setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+              setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
               setProfileLoadDone(true);
             })
             .catch(() => {
@@ -827,8 +884,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function fetchEvents() {
-      if (cachedEvents && cachedEvents.length > 0) {
-        setRfps(cachedEvents);
+      const cached = getCachedEvents();
+      if (cached && cached.length > 0) {
+        setRfps(cached);
         setLoading(false);
       } else {
         setLoading(true);
@@ -840,7 +898,7 @@ export default function DashboardPage() {
         const data = await res.json();
         const events = data.events ?? [];
         setRfps(events);
-        cachedEvents = events;
+        if (events.length > 0) setCachedEvents(events);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load events");
         setRfps(FALLBACK_RFPS);
@@ -851,41 +909,45 @@ export default function DashboardPage() {
     fetchEvents();
   }, []);
 
-  const allRfpsWithMatch: RFPWithMatch[] = (rfps.length > 0 ? rfps : FALLBACK_RFPS).map((rfp) => ({
-    ...rfp,
-    match: computeMatch(rfp, profile),
-  }));
-  allRfpsWithMatch.sort((a, b) => b.match.score - a.match.score);
+  const allRfpsWithMatch = React.useMemo(() => {
+    const list: RFPWithMatch[] = (rfps.length > 0 ? rfps : FALLBACK_RFPS).map((rfp) => ({
+      ...rfp,
+      match: computeMatch(rfp, profile),
+    }));
+    return [...list].sort((a, b) => b.match.score - a.match.score);
+  }, [rfps, profile]);
 
-  const rfpsWithMatch = allRfpsWithMatch.filter((r) => !notInterestedRfpIds.has(r.id));
-  const hiddenRfps = allRfpsWithMatch.filter((r) => notInterestedRfpIds.has(r.id));
-  const hiddenCount = hiddenRfps.length;
-
-  const baseDisplayedRfps = listFilter === "saved"
-    ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
-    : rfpsWithMatch;
-  let displayedRfps = countActiveFilters(filters) > 0
-    ? baseDisplayedRfps.filter((r) => rfpMatchesFilters(r, filters))
-    : baseDisplayedRfps;
-  displayedRfps = displayedRfps.filter((r) => rfpMatchesSearch(r, searchQuery));
-  if (minScore != null) {
-    displayedRfps = displayedRfps.filter((r) => r.match.score >= minScore);
-  }
-  displayedRfps = [...displayedRfps].sort((a, b) => {
-    let cmp = 0;
-    if (sortBy === "score") {
-      cmp = a.match.score - b.match.score;
-    } else if (sortBy === "deadline") {
-      const dueA = parseDeadline(a.deadline)?.getTime() ?? Infinity;
-      const dueB = parseDeadline(b.deadline)?.getTime() ?? Infinity;
-      cmp = dueA - dueB;
-    } else if (sortBy === "value") {
-      const valA = getContractValueNumeric(a.estimatedValue);
-      const valB = getContractValueNumeric(b.estimatedValue);
-      cmp = valA - valB;
+  const { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps } = React.useMemo(() => {
+    const rfpsWithMatch = allRfpsWithMatch.filter((r) => !notInterestedRfpIds.has(r.id));
+    const hiddenRfps = allRfpsWithMatch.filter((r) => notInterestedRfpIds.has(r.id));
+    const hiddenCount = hiddenRfps.length;
+    const baseDisplayedRfps = listFilter === "saved"
+      ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
+      : rfpsWithMatch;
+    let displayed = countActiveFilters(filters) > 0
+      ? baseDisplayedRfps.filter((r) => rfpMatchesFilters(r, filters))
+      : baseDisplayedRfps;
+    displayed = displayed.filter((r) => rfpMatchesSearch(r, searchQuery));
+    if (minScore != null) {
+      displayed = displayed.filter((r) => r.match.score >= minScore);
     }
-    return sortDirection === "desc" ? -cmp : cmp;
-  });
+    displayed = [...displayed].sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === "score") {
+        cmp = a.match.score - b.match.score;
+      } else if (sortBy === "deadline") {
+        const dueA = parseDeadline(a.deadline)?.getTime() ?? Infinity;
+        const dueB = parseDeadline(b.deadline)?.getTime() ?? Infinity;
+        cmp = dueA - dueB;
+      } else if (sortBy === "value") {
+        const valA = getContractValueNumeric(a.estimatedValue);
+        const valB = getContractValueNumeric(b.estimatedValue);
+        cmp = valA - valB;
+      }
+      return sortDirection === "desc" ? -cmp : cmp;
+    });
+    return { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps: displayed };
+  }, [allRfpsWithMatch, notInterestedRfpIds, listFilter, savedRfpIds, filters, searchQuery, minScore, sortBy, sortDirection]);
 
   const dynamicFilterOptions = React.useMemo(
     () => deriveFilterOptionsFromRfps(rfpsWithMatch),
@@ -899,6 +961,8 @@ export default function DashboardPage() {
       ? selectedRfpId
       : displayedRfps[0]?.id ?? null;
   const selectedRfp = displayedRfps.find((r) => r.id === selectedId);
+  // Defer heavy panel content so card selection (border) updates immediately
+  const deferredSelectedRfp = useDeferredValue(selectedRfp ?? null);
 
   useEffect(() => {
     if (selectedRfpId && !displayedRfps.some((r) => r.id === selectedRfpId)) {
@@ -909,9 +973,10 @@ export default function DashboardPage() {
   // Full-page loading until both profile and events are loaded — keeps match scores stable (no re-sort after load).
   if (loading || !profileLoadDone) {
     return (
-      <div className="min-h-screen bg-[#f5f5f5]">
-        <AppHeader variant="dashboard" rightContent={<Link href="/profile" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Profile</Link>} />
-        <div className="flex flex-col items-center justify-center min-h-[calc(100vh-65px)] gap-4">
+      <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
+        <MeshBackground />
+        <AppHeader />
+        <div className="relative flex flex-col items-center justify-center min-h-[calc(100vh-65px)] gap-4">
           <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#2563eb]" />
           <p className="text-slate-600 font-medium">Loading matches…</p>
         </div>
@@ -920,11 +985,12 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5]">
-      <AppHeader variant="dashboard" rightContent={<Link href="/profile" className="text-slate-600 hover:text-slate-900 text-sm font-medium">Profile</Link>} />
+    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
+      <MeshBackground />
+      <AppHeader />
 
       {/* Split view */}
-      <div className="flex flex-col lg:flex-row h-[calc(100vh-65px)]">
+      <div className="relative z-[1] flex flex-col lg:flex-row h-[calc(100vh-65px)]">
         {/* Left: RFP list */}
         <aside className="w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-visible">
           <div ref={filtersContainerRef} className="p-4 border-b border-slate-200 bg-white space-y-3">
@@ -1054,19 +1120,31 @@ export default function DashboardPage() {
               const { match } = rfp;
               const isSelected = rfp.id === selectedId;
               const isSaved = savedRfpIds.has(rfp.id);
+              const isApplied = appliedRfpIds.has(rfp.id);
+              const isInProgress = inProgressRfpIds.has(rfp.id);
               const reasonSnippet = generateMatchSummary(rfp, match);
 
               return (
-                <Link
+                <div
                   key={rfp.id}
-                  href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
-                  className={`block w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md ${
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedRfpId(rfp.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedRfpId(rfp.id); } }}
+                  className={`block w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md cursor-pointer ${
                     match.disqualified ? "opacity-60 " : ""
                   }${isSelected ? "border-[#2563eb] shadow-md" : "border-transparent hover:border-slate-200"}`}
                 >
-                  <p className="text-sm font-bold text-slate-800 mb-0.5">{rfp.agency}</p>
-                  <p className="text-xs text-slate-500 mb-2">{rfp.industry}</p>
-                  <h2 className="text-sm font-bold text-[#2563eb] line-clamp-2 mb-2">{rfp.title}</h2>
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold text-slate-800 mb-0.5">{rfp.agency}</p>
+                      <p className="text-xs text-slate-500 mb-1">{rfp.industry}</p>
+                      <h2 className="text-sm font-bold text-[#2563eb] line-clamp-2">{rfp.title}</h2>
+                    </div>
+                    <div className="shrink-0">
+                      <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
+                    </div>
+                  </div>
                   <p className="text-xs text-slate-500 mb-3">{rfp.contractType} · {rfp.location}</p>
                   <div className="flex flex-wrap gap-2 mb-3">
                     <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-600">
@@ -1092,11 +1170,6 @@ export default function DashboardPage() {
                         Strong Match
                       </span>
                     )}
-                    {match.disqualified && (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-red-50 text-red-600">
-                        <span className="text-red-500">✗</span> Not Eligible
-                      </span>
-                    )}
                     {isSaved && (
                       <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
                         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
@@ -1105,16 +1178,26 @@ export default function DashboardPage() {
                         Saved
                       </span>
                     )}
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
+                    {isApplied && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Applied
+                      </span>
+                    )}
+                    {isInProgress && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-violet-50 text-violet-700">
+                        In progress
+                      </span>
+                    )}
                   </div>
                   {reasonSnippet && (
                     <p className="text-xs text-slate-500 mt-2 line-clamp-2">
                       {reasonSnippet}
                     </p>
                   )}
-                </Link>
+                </div>
               );
             })}
           </div>
@@ -1122,25 +1205,30 @@ export default function DashboardPage() {
 
         {/* Right: RFP detail */}
         <main
-          className={`flex-1 min-w-0 bg-[#f5f5f5] relative ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
+          className={`flex-1 min-w-0 bg-transparent relative ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
         >
           {toast && (
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-lg">
               {toast}
             </div>
           )}
-          {selectedRfp ? (
+          {selectedRfp && selectedRfp.id !== deferredSelectedRfp?.id ? (
+            <div className="p-6 flex flex-col items-center justify-center min-h-[200px] text-slate-500">
+              <p className="font-semibold text-slate-700 truncate max-w-full text-center">{selectedRfp.title}</p>
+              <p className="mt-2 text-sm">Loading…</p>
+            </div>
+          ) : deferredSelectedRfp ? (
             <RFPDetailPanel
-              rfp={selectedRfp}
+              rfp={deferredSelectedRfp}
               profile={profile}
               generateSummary={generateMatchSummary}
               MatchBadge={MatchBadge}
-              isSaved={savedRfpIds.has(selectedRfp.id)}
-              hasExpressedInterest={expressedInterestRfpIds.has(selectedRfp.id)}
-              onSave={() => handleSaveRfp(selectedRfp.id)}
-              onNotInterested={() => handleNotInterested(selectedRfp.id)}
-              onExpressInterest={() => handleExpressInterest(selectedRfp.id)}
-              cachedSummary={summaryCache[selectedRfp.id]}
+              isSaved={savedRfpIds.has(deferredSelectedRfp.id)}
+              onSave={() => handleSaveRfp(deferredSelectedRfp.id)}
+              isApplied={appliedRfpIds.has(deferredSelectedRfp.id)}
+              onToggleApplied={() => handleToggleApplied(deferredSelectedRfp.id)}
+              isInProgress={inProgressRfpIds.has(deferredSelectedRfp.id)}
+              cachedSummary={summaryCache[deferredSelectedRfp.id]}
               onSummaryReady={handleSummaryReady}
             />
           ) : (
@@ -1160,22 +1248,22 @@ function RFPDetailPanel({
   generateSummary,
   MatchBadge,
   isSaved,
-  hasExpressedInterest,
   onSave,
-  onNotInterested,
-  onExpressInterest,
+  isApplied,
+  onToggleApplied,
+  isInProgress,
   cachedSummary,
   onSummaryReady,
 }: {
   rfp: RFPWithMatch;
   profile: CompanyProfile | null;
   generateSummary: (rfp: RFP, match: RFPMatch) => string;
-  MatchBadge: React.ComponentType<{ score: number; tier?: RFPMatch["tier"]; disqualified?: boolean }>;
+  MatchBadge: React.ComponentType<{ score: number; tier?: RFPMatch["tier"]; disqualified?: boolean; size?: "sm" | "lg" }>;
   isSaved: boolean;
-  hasExpressedInterest: boolean;
   onSave: () => void;
-  onNotInterested: () => void;
-  onExpressInterest: () => void;
+  isApplied: boolean;
+  onToggleApplied: () => void;
+  isInProgress: boolean;
   cachedSummary?: string;
   onSummaryReady: (rfpId: string, summary: string) => void;
 }) {
@@ -1188,6 +1276,9 @@ function RFPDetailPanel({
   const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
   const [expandedBreakdownCategory, setExpandedBreakdownCategory] = useState<string | null>(null);
   const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
+  const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
+  const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
+  const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
 
   useEffect(() => {
     if (cachedSummary) {
@@ -1216,6 +1307,11 @@ function RFPDetailPanel({
               certifications: rfp.certifications,
               contractType: rfp.contractType,
               description: (rfp.description || "").slice(0, 1500),
+              naicsCodes: (rfp as any).naicsCodes,
+              clearancesRequired: (rfp as any).clearancesRequired,
+              setAsideTypes: (rfp as any).setAsideTypes,
+              deliverables: (rfp as any).deliverables,
+              attachmentRollup: (rfp as any).attachmentRollup ?? null,
             },
             profile: profile ? {
               companyName: profile.companyName,
@@ -1304,132 +1400,205 @@ function RFPDetailPanel({
     return () => { cancelled = true; };
   }, [rfp.id, rfp.description, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.contractType, rfp.capabilities, rfp.certifications, rfp.estimatedValue]);
 
+  // Fetch capabilities analysis (compares RFP requirements against company profile)
+  useEffect(() => {
+    let cancelled = false;
+    setCapabilitiesAnalysisLoading(true);
+    setCapabilitiesAnalysisError(false);
+
+    async function fetchCapabilitiesAnalysis() {
+      try {
+        const res = await fetch("/api/capabilities-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rfp: {
+              title: rfp.title,
+              agency: rfp.agency,
+              industry: rfp.industry,
+              location: rfp.location,
+              capabilities: rfp.capabilities,
+              certifications: rfp.certifications,
+              contractType: rfp.contractType,
+              naicsCodes: (rfp as any).naicsCodes,
+              clearancesRequired: (rfp as any).clearancesRequired,
+              setAsideTypes: (rfp as any).setAsideTypes,
+              deliverables: (rfp as any).deliverables,
+              estimatedValue: rfp.estimatedValue,
+              description: (rfp.description || "").slice(0, 3000),
+              attachmentRollup: (rfp as any).attachmentRollup ?? null,
+            },
+            profile: profile
+              ? {
+                  companyName: profile.companyName,
+                  industry: profile.industry,
+                  capabilities: profile.capabilities,
+                  certifications: profile.certifications,
+                  workCities: profile.workCities,
+                  workCounties: profile.workCounties,
+                  agencyExperience: profile.agencyExperience,
+                  contractTypes: profile.contractTypes,
+                  technologyStack: profile.technologyStack,
+                }
+              : null,
+            breakdown: match.breakdown,
+          }),
+        });
+        if (cancelled) return;
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (cancelled) return;
+        setCapabilitiesAnalysis(data.analysis ?? null);
+      } catch (err) {
+        console.error("[capabilities-analysis] Fetch failed:", err);
+        if (!cancelled) {
+          setCapabilitiesAnalysisError(true);
+          setCapabilitiesAnalysis(null);
+        }
+      } finally {
+        if (!cancelled) setCapabilitiesAnalysisLoading(false);
+      }
+    }
+
+    fetchCapabilitiesAnalysis();
+    return () => { cancelled = true; };
+  }, [rfp.id, profile]);
+
   const summary = llmSummary ?? initialSummary;
   const isLoadingSummary = llmSummary === null && !summaryError;
 
   return (
-    <article className="w-full p-6 md:p-8">
+    <article className="w-full p-4 md:p-6">
       <div className="rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-200">
-        {/* Header with actions */}
-        <div className="p-6 md:p-8 border-b border-slate-100">
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <h2 className="text-xl font-bold text-slate-900">RFP Match</h2>
-            <div className="flex items-center gap-3 shrink-0 flex-wrap">
+        {/* Hero: title + match score row; then full-width Match Summary; then actions */}
+        <div className="p-5 md:p-6 border-b border-slate-100">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+            <h2 className="text-xl md:text-2xl font-bold text-slate-900 leading-tight min-w-0">{rfp.title}</h2>
+            <div className="shrink-0">
+              <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} size="lg" />
+            </div>
+          </div>
+          {/* Match Summary — full row, below title/score to avoid collision */}
+          <div className={`rounded-lg ${match.disqualified ? "border border-red-200 bg-red-50/30" : "border border-blue-200 bg-blue-50"} p-4 mb-5 md:mb-6 w-full`}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Match Summary</span>
+              {isLoadingSummary && <span className="text-xs text-slate-400 animate-pulse">Summarizing…</span>}
+            </div>
+            <p className="text-sm text-slate-700 leading-relaxed">{summary}</p>
+            {summaryError && (
+              <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Using rule-based summary.</p>
+            )}
+          </div>
+          <div className="flex flex-wrap items-stretch justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Link href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`} className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                Generate Proposal &amp; Plan
+              </Link>
+              {(rfp.eventUrl || rfp.id) && (
+                <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">
+                  View on Cal eProcure <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                </a>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={onSave}
-                className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
-                  isSaved
-                    ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100"
-                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                }`}
+                onClick={(e) => { e.stopPropagation(); onSave(); }}
+                className={`text-sm flex items-center justify-center gap-1.5 h-10 px-3 rounded-lg transition-colors ${isSaved ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
               >
-                <svg className={`w-4 h-4 ${isSaved ? "fill-current" : ""}`} fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-                </svg>
+                <svg className={`w-4 h-4 ${isSaved ? "fill-current" : ""}`} fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
                 {isSaved ? "Saved" : "Save"}
               </button>
               <button
                 type="button"
-                onClick={onNotInterested}
-                className="text-sm text-slate-500 hover:text-slate-700 hover:bg-slate-100 flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors"
+                onClick={(e) => { e.stopPropagation(); onToggleApplied(); }}
+                className={`text-sm flex items-center justify-center gap-1.5 h-10 px-3 rounded-lg transition-colors ${isApplied ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                Not Interested
+                {isApplied ? (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> Applied</>) : (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> I&apos;ve applied</>)}
               </button>
-              <button
-                type="button"
-                onClick={onExpressInterest}
-                className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
-                  hasExpressedInterest
-                    ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
-                    : "bg-[#2563eb] text-white hover:bg-[#1d4ed8]"
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                {hasExpressedInterest ? "Interest expressed" : "Express Interest"}
-              </button>
+              {isInProgress && <span className="text-sm flex items-center justify-center gap-1.5 h-10 px-3 rounded-lg bg-violet-50 text-violet-700">In progress</span>}
             </div>
           </div>
-
-          <h3 className="text-2xl font-bold text-slate-900 mb-4">{rfp.title}</h3>
-
-          {/* Colored tags row */}
-          <div className="flex flex-wrap gap-2 mb-5">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-50 text-blue-600">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              {rfp.location}
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-pink-50 text-pink-600">
-              {rfp.industry}
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-amber-50 text-amber-600">
-              {rfp.capabilities[0] || rfp.contractType || "Contract"}
-            </span>
-            <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
-            {match.disqualified && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-red-50 text-red-600">
-                <span className="text-red-500">✗</span> Not Eligible
-              </span>
-            )}
-          </div>
-
-          {/* Key details with icons */}
-          <ul className="space-y-3 text-sm text-slate-600">
-            <li className="flex items-center gap-3">
-              <svg className="w-5 h-5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Due {rfp.deadline} · {rfp.contractType}
-            </li>
-            <li className="flex items-center gap-3">
-              <svg className="w-5 h-5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              {rfp.location}
-            </li>
-            <li className="flex items-center gap-3">
-              <svg className="w-5 h-5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              {rfp.estimatedValue}
-            </li>
-          </ul>
         </div>
 
-        {/* Agency info box */}
-        <div className="px-6 md:px-8 py-4 bg-slate-50 border-b border-slate-100">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-bold text-slate-900">{rfp.agency}</p>
-              <p className="text-sm text-slate-500">{rfp.industry}</p>
-            </div>
-            <a
-              href={rfp.eventUrl || "#"}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm font-medium text-[#2563eb] hover:underline flex items-center gap-1"
-            >
-              View on Cal eProcure
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-            </a>
-          </div>
+        {/* Important information (left) + Score breakdown (right) — grid-aligned rows */}
+        <div className="p-5 md:p-6 border-b border-slate-100">
+          {(() => {
+            const metaRows = [
+              { label: "Due", value: rfp.deadline?.trim() || "TBD" },
+              { label: "Location", value: rfp.location },
+              { label: "Est. value", value: rfp.estimatedValue },
+              { label: "Requested by", value: `${rfp.agency}${rfp.industry ? ` · ${rfp.industry}` : ""}` },
+            ];
+            const breakdownItems = match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral");
+            const hasBreakdown = breakdownItems.length > 0 && !match.disqualified;
+
+            return (
+              <div className={`flex flex-col gap-y-4 ${hasBreakdown ? "md:flex-row md:items-start md:gap-0" : ""}`}>
+                {/* Left: Important information — fixed width so layout stays consistent */}
+                <div className="min-w-0 md:w-64 md:shrink-0 md:pr-6">
+                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Important information</h3>
+                  <div className="space-y-4 text-left">
+                    {metaRows.map((row, i) => (
+                      <div key={i} className="space-y-1">
+                        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{row.label}</div>
+                        <div className="text-sm text-slate-800 break-words leading-snug">{row.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* Vertical bar + Score breakdown */}
+                {hasBreakdown && (
+                  <div className="min-w-0 flex-1 md:border-l md:border-slate-200 md:pl-6">
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Score Breakdown</h3>
+                    <div className="space-y-1.5">
+                      {breakdownItems.map((b, i) => {
+                        const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                        const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
+                        const barColor =
+                          fillRatio >= 0.75 ? "bg-emerald-500" :
+                          fillRatio >= 0.5 ? "bg-yellow-400" :
+                          fillRatio >= 0.25 ? "bg-orange-400" :
+                          fillRatio > 0 ? "bg-red-400" :
+                          "bg-slate-200";
+                        const textColor =
+                          fillRatio >= 0.75 ? "text-emerald-700" :
+                          fillRatio >= 0.5 ? "text-yellow-600" :
+                          fillRatio >= 0.25 ? "text-orange-600" :
+                          b.points === 0 && b.maxPoints > 0 ? "text-red-600" :
+                          "text-slate-500";
+                        return (
+                          <div key={i} className="min-h-8 flex items-center gap-3">
+                            <span className="text-sm font-medium text-slate-700 w-28 shrink-0 truncate" title={b.category}>{b.category}</span>
+                            {b.maxPoints > 0 ? (
+                              <>
+                                <div className="h-2 rounded-full overflow-hidden relative flex-1 min-w-0">
+                                  <div className="absolute inset-0 bg-slate-200 rounded-full" />
+                                  <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${fillPct}%` }} />
+                                </div>
+                                <span className={`text-sm font-bold w-12 text-right shrink-0 ${textColor}`}>
+                                  {b.points}/{b.maxPoints}
+                                </span>
+                              </>
+                            ) : (
+                              <span className={`text-sm ${textColor} flex-1 min-w-0`}>{b.detail}</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Disqualifier banner */}
         {match.disqualified && match.disqualifiers.length > 0 && (
-          <div className="px-6 md:px-8 py-4 border-t border-red-100 bg-red-50">
-            <h4 className="text-sm font-bold text-red-800 mb-2">Not Eligible</h4>
+          <div className="p-5 md:p-6 border-t border-red-100 bg-red-50">
+            <h3 className="text-xs font-semibold text-red-800 uppercase tracking-wider mb-2">Not Eligible</h3>
             <ul className="space-y-1">
               {match.disqualifiers.map((d, i) => (
                 <li key={i} className="text-sm text-red-700 flex items-start gap-2">
@@ -1441,35 +1610,18 @@ function RFPDetailPanel({
           </div>
         )}
 
-        {/* Quick indicators */}
-        {isHighMatch && !match.disqualified && (
-          <div className="px-6 md:px-8 py-4 flex flex-wrap gap-2 border-t border-slate-100">
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-600">
-              <span className="text-emerald-500">★</span> {match.tier === "excellent" ? "Excellent" : "Strong"} Match
-            </span>
-          </div>
-        )}
-
-        {/* AI-generated match summary */}
-        <div className="p-6 md:p-8 border-t border-slate-100">
-          <div className={`rounded-xl border-2 ${match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
-            <div className="flex items-start justify-between gap-2 mb-3">
-              <h4 className="text-sm font-bold text-slate-900">
-                {match.disqualified ? "Match Analysis" : "Why this is a good match"}
-              </h4>
-              {isLoadingSummary ? (
-                <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
-              ) : (
-                <svg className={`w-5 h-5 ${match.disqualified ? "text-red-400" : "text-blue-500"} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              )}
-            </div>
-            <p className="text-slate-700 leading-relaxed">{summary}</p>
-            {summaryError && (
-              <p className="mt-2 text-xs text-amber-600">AI summary unavailable (check console). Using rule-based summary.</p>
-            )}
-          </div>
+        {/* Capabilities Analysis */}
+        <div className="p-5 md:p-6 border-t border-slate-100">
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Capabilities Analysis</h3>
+          {capabilitiesAnalysisLoading ? (
+            <p className="text-slate-500 text-sm animate-pulse">Analyzing capabilities against requirements…</p>
+          ) : capabilitiesAnalysis ? (
+            <MarkdownContent content={capabilitiesAnalysis} />
+          ) : capabilitiesAnalysisError ? (
+            <p className="text-xs text-amber-600">Capabilities analysis unavailable.</p>
+          ) : (
+            <p className="text-slate-500 text-sm">No company profile available for analysis.</p>
+          )}
         </div>
 
         {/* Score Breakdown */}
@@ -1566,41 +1718,23 @@ function RFPDetailPanel({
           ) : requirementsSummary ? (
             <MarkdownContent content={requirementsSummary} />
           ) : (
-            <p className="text-slate-700 leading-relaxed">{rfp.description}</p>
+            <p className="text-sm text-slate-700 leading-relaxed">{rfp.description}</p>
           )}
           {requirementsSummaryError && (
             <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
           )}
         </div>
 
-        {/* Tags */}
-        <div className="p-6 md:p-8 border-t border-slate-100">
-          <h4 className="text-sm font-bold text-slate-900 mb-3">Details</h4>
-          <div className="flex flex-wrap gap-2">
-            {rfp.naicsCodes?.map((n) => (
-              <span key={n} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600">
-                NAICS {n}
-              </span>
-            ))}
-            {rfp.capabilities?.map((c) => (
-              <span key={c} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-600">
-                {c}
-              </span>
-            ))}
-            {(!rfp.naicsCodes?.length && !rfp.capabilities?.length) && (
-              <span className="text-sm text-slate-500">See description for full details</span>
+        {/* Contact */}
+        {(rfp.contactEmail || rfp.contactName) && (
+          <div className="p-5 md:p-6 border-t border-slate-100">
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Contact</h3>
+            {rfp.contactName && <p className="text-sm text-slate-700">{rfp.contactName}</p>}
+            {rfp.contactEmail && (
+              <a href={`mailto:${rfp.contactEmail}`} className="text-sm text-[#2563eb] hover:underline">{rfp.contactEmail}</a>
             )}
           </div>
-          {(rfp.contactEmail || rfp.contactName) && (
-            <div className="mt-4 pt-4 border-t border-slate-100">
-              <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Contact</h5>
-              {rfp.contactName && <p className="text-sm text-slate-700">{rfp.contactName}</p>}
-              {rfp.contactEmail && (
-                <a href={`mailto:${rfp.contactEmail}`} className="text-sm text-[#2563eb] hover:underline">{rfp.contactEmail}</a>
-              )}
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </article>
   );

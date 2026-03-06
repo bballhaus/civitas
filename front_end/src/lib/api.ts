@@ -25,6 +25,10 @@ export interface CurrentUser {
   username: string;
   email?: string;
   profile?: AuthMeProfile;
+  /** RFP ids the user has marked as "I've applied" (stored in user data). */
+  applied_rfp_ids?: string[];
+  /** RFP ids the user has generated a Plan of Action for (in progress). */
+  in_progress_rfp_ids?: string[];
 }
 
 /** Profile shape returned by GET /api/auth/me/ (from AWS). */
@@ -41,6 +45,8 @@ export interface AuthMeProfile {
   work_counties: string[];
   capabilities: string[];
   agency_experience: string[];
+  size_status?: string[];
+  contract_types?: string[];
   created_at?: string;
   updated_at?: string;
   uploaded_documents?: Array<{ id: string; title: string; document: string; created_at: string }>;
@@ -66,7 +72,6 @@ export interface CompanyProfileFromApi {
   uploadedFiles?: Array<{
     name: string;
     type: string;
-    size: number;
     uploadedAt: string;
     parsed?: boolean;
     uploadedToBackend?: boolean;
@@ -85,7 +90,7 @@ export function mapBackendProfileToCompanyProfile(
   return {
     companyName: p.name ?? "",
     industry: Array.isArray(p.industry_tags) ? p.industry_tags : [],
-    sizeStatus: [],
+    sizeStatus: Array.isArray(p.size_status) ? p.size_status : [],
     certifications: Array.isArray(p.certifications) ? p.certifications : [],
     clearances: Array.isArray(p.clearances) ? p.clearances : [],
     naicsCodes: Array.isArray(p.naics_codes) ? p.naics_codes : [],
@@ -93,16 +98,15 @@ export function mapBackendProfileToCompanyProfile(
     workCounties: Array.isArray(p.work_counties) ? p.work_counties : [],
     capabilities: Array.isArray(p.capabilities) ? p.capabilities : [],
     agencyExperience: Array.isArray(p.agency_experience) ? p.agency_experience : [],
-    contractTypes: [],
+    contractTypes: Array.isArray(p.contract_types) ? p.contract_types : [],
     contractCount: typeof p.contract_count === "number" ? p.contract_count : 0,
     totalPastContractValue: total,
     pastPerformance: "",
     strategicGoals: "",
     uploadedFiles: Array.isArray(p.uploaded_documents)
       ? p.uploaded_documents.map((d) => ({
-          name: d.title || "document",
+          name: (d.title || "document").split("/").pop() || "document",
           type: "application/octet-stream",
-          size: 0,
           uploadedAt: d.created_at || "",
           parsed: true,
           uploadedToBackend: true,
@@ -291,6 +295,41 @@ export async function getProfileFromBackend(): Promise<AuthMeProfile> {
   return res.json();
 }
 
+/** Response from PATCH /api/user/rfp-status/ */
+export interface UserRfpStatusResponse {
+  applied_rfp_ids: string[];
+  in_progress_rfp_ids: string[];
+}
+
+/**
+ * Mark an RFP as applied, remove from applied, and/or mark in progress. Stored in user data in S3.
+ * Requires auth (Bearer token or session + CSRF).
+ */
+export async function updateUserRfpStatus(payload: {
+  mark_applied?: string;
+  remove_applied?: string;
+  mark_in_progress?: string;
+}): Promise<UserRfpStatusResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
+  // Always send CSRF when using credentials so session auth works (Bearer may be expired)
+  headers["X-CSRFToken"] = await getCsrfToken();
+  const res = await fetch(`${API_BASE}/user/rfp-status/`, {
+    method: "PATCH",
+    headers,
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string; detail?: string };
+    const msg =
+      res.status === 401
+        ? "Please log in to save your RFP status."
+        : err?.error || err?.detail || (typeof err?.detail === "string" ? err.detail : null) || `Failed to update (${res.status})`;
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 /** Payload for PATCH /api/profile/ (snake_case, writable fields only). */
 export interface ProfilePatchPayload {
   name?: string;
@@ -303,6 +342,8 @@ export interface ProfilePatchPayload {
   work_counties?: string[];
   capabilities?: string[];
   agency_experience?: string[];
+  size_status?: string[];
+  contract_types?: string[];
 }
 
 /**

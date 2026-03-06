@@ -15,6 +15,10 @@ export interface CompanyProfile {
   contractTypes: string[];
   contractCount?: number;
   totalPastContractValue?: string;
+  pastPerformance?: string;
+  strategicGoals?: string;
+  technologyStack?: string[];
+  maxSingleContractValue?: string;
 }
 
 export interface RFP {
@@ -34,6 +38,17 @@ export interface RFP {
   contactName?: string;
   contactEmail?: string;
   contactPhone?: string;
+  // Attachment-derived fields (populated when extraction data exists)
+  clearancesRequired?: string[];
+  setAsideTypes?: string[];
+  deliverables?: string[];
+  contractDuration?: string | null;
+  evaluationCriteria?: string[];
+  attachmentRollup?: {
+    summary: string;
+    text: string;
+    pdfsProcessed: string[];
+  } | null;
 }
 
 export interface ScoreBreakdown {
@@ -66,10 +81,28 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+// --- Preserved terms: important short/compound terms that survive tokenization ---
+const PRESERVED_TERMS: [RegExp, string][] = [
+  [/\bc\+\+\b/gi, " cplusplus "],
+  [/\bc#\b/gi, " csharp "],
+  [/\bnode\.js\b/gi, " nodejs "],
+  [/\b\.net\b/gi, " dotnet "],
+  [/\bai\/ml\b/gi, " ai_ml "],
+  [/\bt&m\b/gi, " time_materials "],
+  [/\br&d\b/gi, " research_development "],
+  [/\bo&m\b/gi, " operations_maintenance "],
+  [/\bu\.s\.\b/gi, " us "],
+];
+
 function normalizeText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
+  let text = value.toLowerCase().trim();
+  // Replace preserved compound terms BEFORE stripping punctuation
+  for (const [pattern, replacement] of PRESERVED_TERMS) {
+    text = text.replace(pattern, replacement);
+  }
+  // Strip remaining punctuation (preserve underscores for our canonical tokens)
+  return text
+    .replace(/[^a-z0-9_\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -77,13 +110,53 @@ function normalizeText(value: string): string {
 function tokenize(value: string): string[] {
   const normalized = normalizeText(value);
   if (!normalized) return [];
-  return normalized.split(" ").filter((token) => token.length > 2);
+  // Min length 2 (not 3) — preserves "AI", "IT", "ML", "QA", "HR", "UX", "5G"
+  return normalized.split(" ").filter((token) => token.length >= 2);
 }
 
 function toTokenSet(values: string[]): Set<string> {
   const tokens = values.flatMap((value) => tokenize(value));
   return new Set(tokens);
 }
+
+// Stop words for description matching — filtered to prevent high-frequency
+// non-domain words from inflating coverage scores. Only used in the description
+// matching section, NOT in structured field matching (capabilities, industry, etc.).
+const STOP_WORDS = new Set([
+  // Articles & determiners
+  "the", "an", "this", "that", "these", "those", "each", "every",
+  "any", "all", "both", "few", "more", "most", "other", "some", "such", "no",
+  // Pronouns
+  "it", "its", "they", "them", "their", "we", "our", "you", "your", "he",
+  "she", "his", "her", "who", "whom", "which", "what",
+  // Prepositions
+  "of", "in", "to", "for", "with", "on", "at", "from", "by", "about",
+  "as", "into", "through", "during", "before", "after", "above", "below",
+  "between", "under", "over", "up",
+  // Conjunctions
+  "and", "but", "or", "nor", "so", "yet", "if", "when", "while",
+  "because", "although", "unless", "until", "than",
+  // Common verbs (non-domain)
+  "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+  "do", "does", "did", "will", "would", "shall", "should", "may", "might",
+  "can", "could", "must", "need", "get", "make", "made", "let",
+  // RFP/procurement boilerplate
+  "services", "service", "contractor", "contract", "contracts",
+  "provide", "provided", "providing", "required", "requires", "requirement",
+  "requirements", "including", "include", "includes", "within", "upon",
+  "pursuant", "accordance", "applicable", "appropriate", "ensure",
+  "responsible", "related", "also", "per", "not",
+  "state", "department", "agency", "work", "proposal",
+  // Generic abstract nouns in every RFP
+  "management", "information", "based", "following", "described",
+  "period", "date", "time", "days", "years", "year",
+  "section", "item", "items", "number", "order", "part",
+  "total", "amount", "price", "cost",
+  // Miscellaneous high-frequency low-signal
+  "new", "use", "used", "using", "well", "one", "two", "first",
+  "second", "only", "very", "just", "how", "where", "then",
+  "there", "here", "now", "way", "own", "same", "able",
+]);
 
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 && b.size === 0) return 0;
@@ -93,17 +166,21 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   return union === 0 ? 0 : intersection / union;
 }
 
+// NAICS overlap — require minimum 4-digit precision for prefix matching
 function countNaicsOverlap(rfpCodes: string[], profileCodes: string[]): string[] {
   if (rfpCodes.length === 0 || profileCodes.length === 0) return [];
   const normalizedProfile = profileCodes.map((code) => code.trim());
-  return rfpCodes.filter((code) =>
-    normalizedProfile.some(
-      (profileCode) =>
-        profileCode === code ||
-        profileCode.startsWith(code) ||
-        code.startsWith(profileCode)
-    )
-  );
+  return rfpCodes.filter((code) => {
+    const trimmed = code.trim();
+    return normalizedProfile.some((profileCode) => {
+      if (profileCode === trimmed) return true;
+      // Prefix matching requires at least 4 digits for the shorter code
+      const shorter = profileCode.length <= trimmed.length ? profileCode : trimmed;
+      const longer = profileCode.length <= trimmed.length ? trimmed : profileCode;
+      if (shorter.length >= 4 && longer.startsWith(shorter)) return true;
+      return false;
+    });
+  });
 }
 
 function findTokenOverlap(values: string[], profileTokens: Set<string>): string[] {
@@ -113,72 +190,288 @@ function findTokenOverlap(values: string[], profileTokens: Set<string>): string[
   });
 }
 
+// Pure linear scoring — no 15% floor (0% similarity = 0 points)
 function scoreFromSimilarity(sim: number, maxPoints: number) {
   const s = clamp(sim, 0, 1);
-  return maxPoints * (0.15 + 0.85 * s);
+  return maxPoints * s;
+}
+
+// ---------------------------------------------------------------------------
+// Canonical normalization maps for structured field matching
+// ---------------------------------------------------------------------------
+
+const CERTIFICATION_CANONICAL: Record<string, string> = {
+  "iso 9001": "iso_9001", "iso-9001": "iso_9001", "iso9001": "iso_9001", "iso 9001:2015": "iso_9001",
+  "iso 27001": "iso_27001", "iso-27001": "iso_27001", "iso27001": "iso_27001",
+  "soc 2": "soc_2", "soc-2": "soc_2", "soc2": "soc_2", "soc 2 type ii": "soc_2",
+  "fedramp": "fedramp", "fed-ramp": "fedramp", "fed ramp": "fedramp",
+  "cmmi": "cmmi", "cmmi-dev": "cmmi", "cmmi dev": "cmmi",
+  "pci dss": "pci_dss", "pci-dss": "pci_dss", "pcidss": "pci_dss",
+  "hipaa": "hipaa", "hipaa compliance": "hipaa",
+  "nist 800-53": "nist_800_53", "nist800-53": "nist_800_53", "nist 800 53": "nist_800_53",
+  "itar": "itar",
+  "gsa schedule": "gsa_schedule", "gsa": "gsa_schedule",
+  "naics codes": "naics",
+  // California-specific
+  "small business (sb)": "small_business_ca", "certified sb": "small_business_ca",
+  "dvbe": "dvbe", "disabled veteran business enterprise": "dvbe",
+  "california business license": "ca_business_license",
+};
+
+const SET_ASIDE_CANONICAL: Record<string, string> = {
+  "8(a)": "8a", "8a": "8a", "8 a": "8a", "8(a) business": "8a",
+  "hubzone": "hubzone", "hub zone": "hubzone",
+  "sdvosb": "sdvosb", "service-disabled veteran-owned (sdvosb)": "sdvosb", "service-disabled veteran": "sdvosb", "service disabled veteran": "sdvosb",
+  "vosb": "vosb", "veteran-owned small business (vosb)": "vosb", "veteran-owned": "vosb", "veteran owned": "vosb",
+  "wosb": "wosb", "women-owned small business (wosb)": "wosb", "women-owned": "wosb", "women owned": "wosb",
+  "small business": "small_business", "sb": "small_business", "certified small business": "small_business",
+  "sdb": "sdb", "small disadvantaged business (sdb)": "sdb", "small disadvantaged business": "sdb",
+  "dvbe": "dvbe", "disabled veterans business enterprise": "dvbe",
+  "mbe": "mbe", "minority-owned": "mbe", "minority owned": "mbe", "minority business": "mbe", "mb": "mbe",
+  "sb-pw": "small_business", // Small Business - Public Works
+};
+
+const CONTRACT_TYPE_CANONICAL: Record<string, string> = {
+  "fixed price": "fixed_price", "ffp": "fixed_price", "firm fixed price": "fixed_price",
+  "time & materials": "time_materials", "time and materials": "time_materials", "t&m": "time_materials",
+  "cost plus": "cost_plus", "cpff": "cost_plus", "cpaf": "cost_plus", "cost plus fixed fee": "cost_plus", "cost plus award fee": "cost_plus",
+  "idiq": "idiq", "idiq (indefinite delivery)": "idiq", "indefinite delivery": "idiq",
+  "bpa": "bpa", "bpa (blanket purchase agreement)": "bpa", "blanket purchase agreement": "bpa",
+  "gsa schedule": "gsa_schedule",
+  "competitive": "competitive",
+  "sole source": "sole_source",
+  "multi-year": "multi_year", "multi year": "multi_year",
+  "small business set-aside": "sb_set_aside",
+};
+
+function canonicalize(value: string, map: Record<string, string>): string {
+  const lower = value.toLowerCase().trim();
+  if (map[lower]) return map[lower];
+  // Try after stripping punctuation
+  const stripped = lower.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+  if (map[stripped]) return map[stripped];
+  return lower;
+}
+
+function canonicalSetMatch(
+  rfpValues: string[],
+  profileValues: string[],
+  canonicalMap: Record<string, string>
+): { ratio: number; matched: string[] } {
+  if (rfpValues.length === 0) return { ratio: 1, matched: [] };
+  if (profileValues.length === 0) return { ratio: 0, matched: [] };
+  const profileCanonical = new Set(profileValues.map((v) => canonicalize(v, canonicalMap)));
+  const matched = rfpValues.filter((v) => profileCanonical.has(canonicalize(v, canonicalMap)));
+  return {
+    ratio: matched.length / Math.max(1, rfpValues.length),
+    matched,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Geographic proximity for California locations
+// ---------------------------------------------------------------------------
+
+const CA_METRO_GROUPS: Record<string, string[]> = {
+  sacramento_metro: ["sacramento", "elk grove", "roseville", "folsom", "rancho cordova", "citrus heights", "davis", "woodland", "west sacramento", "natomas", "carmichael", "fair oaks", "orangevale"],
+  bay_area: ["san francisco", "oakland", "san jose", "berkeley", "fremont", "sunnyvale", "santa clara", "palo alto", "mountain view", "redwood city", "hayward", "concord", "walnut creek", "richmond", "daly city", "san mateo", "pleasanton", "livermore", "milpitas", "cupertino", "menlo park"],
+  la_metro: ["los angeles", "long beach", "santa monica", "pasadena", "glendale", "burbank", "inglewood", "torrance", "pomona", "el monte", "downey", "norwalk", "compton", "west covina", "baldwin park"],
+  san_diego_metro: ["san diego", "chula vista", "oceanside", "escondido", "carlsbad", "el cajon", "vista", "san marcos", "encinitas"],
+  central_valley: ["fresno", "bakersfield", "stockton", "modesto", "visalia", "merced", "tulare", "hanford", "madera", "turlock", "clovis", "lodi", "manteca", "tracy"],
+  inland_empire: ["riverside", "san bernardino", "ontario", "rancho cucamonga", "fontana", "corona", "moreno valley", "temecula", "murrieta", "redlands", "victorville"],
+};
+
+function locationProximityScore(
+  rfpLocation: string,
+  profileCities: string[],
+  profileCounties: string[]
+): number {
+  if (!rfpLocation?.trim()) return 0;
+  const rfpLower = rfpLocation.toLowerCase();
+  const profileLocs = [...profileCities, ...profileCounties].map((l) => l.toLowerCase());
+  if (profileLocs.length === 0) return 0;
+
+  // Exact or substring match
+  if (profileLocs.some((p) => rfpLower.includes(p) || p.includes(rfpLower))) return 1.0;
+
+  // Same metro area
+  for (const cities of Object.values(CA_METRO_GROUPS)) {
+    const rfpInGroup = cities.some((c) => rfpLower.includes(c));
+    const profileInGroup = profileLocs.some((p) => cities.some((c) => p.includes(c) || c.includes(p)));
+    if (rfpInGroup && profileInGroup) return 0.75;
+  }
+
+  // Both in California
+  if (rfpLower.includes("california") || rfpLower.includes(", ca")) return 0.2;
+
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
 // Domain synonym map — expands tokens so related concepts match
 // ---------------------------------------------------------------------------
 
-const SYNONYM_MAP: Record<string, string[]> = {
-  // IT / Software
-  cloud: ["aws", "azure", "gcp", "saas", "iaas", "paas", "serverless", "hosting"],
-  aws: ["cloud", "amazon"],
-  azure: ["cloud", "microsoft"],
-  gcp: ["cloud", "google"],
-  software: ["application", "platform", "development", "programming", "coding"],
-  database: ["sql", "nosql", "mongodb", "postgresql", "oracle", "data"],
-  devops: ["cicd", "pipeline", "deployment", "containerization", "kubernetes", "docker"],
-  kubernetes: ["container", "docker", "orchestration", "devops"],
+// Domain synonym groups — each group is a cluster of related terms.
+// Any token in a group expands to include all other tokens in that group.
+// This is more maintainable than a bidirectional map and ensures full coverage.
+const SYNONYM_GROUPS: string[][] = [
+  // ── IT / Software ──
+  ["cloud", "aws", "azure", "gcp", "saas", "iaas", "paas", "serverless", "hosting"],
+  ["software", "application", "platform", "program"],
+  ["programming", "coding", "scripting"],
+  ["database", "sql", "nosql", "mongodb", "postgresql", "oracle", "mysql", "dynamodb"],
+  ["devops", "cicd", "pipeline", "deployment", "containerization", "kubernetes", "docker", "terraform"],
+  ["web", "frontend", "backend", "fullstack", "javascript", "react", "angular", "html", "css"],
+  ["mobile", "ios", "android", "flutter", "native"],
+  ["api", "integration", "interface", "microservices", "rest", "graphql", "webhook"],
+  ["erp", "sap", "oracle", "workday", "peoplesoft"],
+  ["crm", "salesforce", "dynamics"],
 
-  // Cybersecurity
-  cybersecurity: ["siem", "soc", "penetration", "vulnerability", "firewall", "encryption", "infosec"],
-  siem: ["cybersecurity", "monitoring", "logging", "splunk"],
-  soc: ["cybersecurity", "monitoring", "incident"],
-  penetration: ["pentest", "security", "vulnerability", "assessment"],
+  // ── Cybersecurity ──
+  ["cybersecurity", "infosec", "security", "firewall", "encryption", "compliance"],
+  ["siem", "splunk", "monitoring", "logging", "detection"],
+  ["soc", "incident", "response", "threat", "intelligence"],
+  ["penetration", "pentest", "vulnerability", "assessment", "ethical", "hacking"],
+  ["zero", "trust", "identity", "access", "authentication", "authorization"],
+  ["nist", "fisma", "fedramp", "rmf", "ato"],
 
-  // Construction
-  construction: ["demolition", "renovation", "grading", "pavement", "building", "excavation"],
-  demolition: ["construction", "removal", "clearing"],
-  renovation: ["construction", "remodel", "rehabilitation", "restoration"],
-  hvac: ["heating", "ventilation", "cooling", "mechanical", "facilities"],
-  plumbing: ["piping", "water", "sewer", "facilities"],
-  electrical: ["wiring", "power", "lighting", "facilities"],
+  // ── Data / AI / Analytics ──
+  ["data", "analytics", "reporting", "visualization", "tableau", "powerbi", "looker"],
+  ["warehouse", "etl", "pipeline", "lake", "databricks", "snowflake", "redshift"],
+  ["machine", "learning", "model", "prediction", "classification", "regression"],
+  ["artificial", "intelligence", "neural", "deep", "nlp", "llm", "generative"],
+  ["forecast", "statistical", "analysis", "modeling"],
 
-  // Engineering
-  engineering: ["design", "structural", "civil", "mechanical", "architect"],
-  architect: ["design", "engineering", "planning"],
+  // ── Construction / Capital ──
+  ["construction", "building", "demolition", "renovation", "grading", "pavement", "excavation"],
+  ["renovation", "remodel", "rehabilitation", "restoration", "retrofit"],
+  ["roofing", "waterproofing", "insulation", "siding", "exterior"],
+  ["concrete", "masonry", "steel", "structural", "foundation"],
+  ["paving", "asphalt", "road", "highway", "bridge", "infrastructure"],
 
-  // Professional services
-  consulting: ["advisory", "strategy", "assessment", "analysis"],
-  management: ["project", "program", "coordination", "oversight"],
+  // ── Engineering ──
+  ["civil", "structural", "geotechnical"],
+  ["architect", "architectural", "blueprint"],
+  ["survey", "surveying", "topographic"],
+  ["drafting", "cad", "autocad", "revit", "bim"],
 
-  // Data / AI
-  analytics: ["data", "reporting", "dashboard", "visualization", "tableau", "powerbi"],
-  machine: ["learning", "model", "prediction", "classification"],
-  artificial: ["intelligence", "neural", "deep"],
+  // ── Facilities / Maintenance ──
+  ["facilities", "maintenance", "repair", "upkeep", "preventive", "corrective"],
+  ["janitorial", "cleaning", "custodial", "sanitation", "housekeeping"],
+  ["landscaping", "grounds", "irrigation", "vegetation", "outdoor", "horticulture"],
+  ["hvac", "heating", "ventilation", "cooling", "mechanical", "climate"],
+  ["plumbing", "piping", "water", "sewer", "drainage"],
+  ["electrical", "wiring", "power", "lighting", "generator", "solar", "energy"],
+  ["elevator", "escalator", "conveyance", "lift"],
+  ["pest_control", "extermination", "fumigation"],
+  ["waste", "refuse", "recycling", "disposal", "trash", "hazardous"],
 
-  // Facilities
-  maintenance: ["repair", "upkeep", "preventive", "custodial", "janitorial"],
-  janitorial: ["cleaning", "custodial", "sanitation", "maintenance"],
-  landscaping: ["grounds", "irrigation", "vegetation", "outdoor"],
+  // ── Fleet / Transportation ──
+  ["vehicle", "fleet", "automotive", "motor"],
+  ["bus", "truck", "transit", "transportation", "shuttle", "freight"],
+  ["charging", "electric", "station", "battery"],
+  ["logistics", "shipping", "delivery", "distribution", "warehousing", "supply", "chain"],
 
-  // Fleet
-  vehicle: ["fleet", "transportation", "automotive"],
-  fleet: ["vehicle", "bus", "truck", "transit"],
-  charging: ["electric", "station"],
-};
+  // ── Professional Services ──
+  ["consulting", "advisory", "strategy", "assessment", "analysis", "recommendation"],
+  ["management", "project", "program", "coordination", "oversight", "pmo"],
+  ["staffing", "temporary", "augmentation", "resource", "recruiting", "labor", "personnel"],
+  ["audit", "compliance", "risk", "regulatory", "governance"],
+  ["legal", "attorney", "counsel", "litigation", "arbitration"],
+  ["accounting", "financial", "bookkeeping", "payroll", "budgeting"],
+
+  // ── Training / Education ──
+  ["training", "workshop", "curriculum", "instruction", "education", "course", "learning", "certification"],
+  ["elearning", "lms", "virtual", "classroom", "webinar", "online"],
+
+  // ── Healthcare / Social Services ──
+  ["healthcare", "medical", "clinical", "patient", "hospital", "nursing", "pharmacy"],
+  ["behavioral", "mental_health", "psychology", "counseling", "therapy"],
+  ["social_services", "outreach", "community"],
+  ["hipaa", "ehr", "emr", "health_informatics"],
+
+  // ── Supplies / Equipment ──
+  ["supply", "supplies", "equipment", "materials", "parts", "furnish", "procurement", "hardware"],
+  ["furniture", "office", "workspace", "ergonomic", "modular"],
+  ["uniform", "clothing", "protective", "ppe", "safety", "gear"],
+
+  // ── Telecom / Network ──
+  ["network", "infrastructure", "wan", "lan", "fiber", "wireless", "telecom", "telecommunications"],
+  ["voip", "pbx", "telephone", "communications", "unified"],
+  ["cable", "cabling", "structured", "fiber", "optic"],
+
+  // ── Environmental / Scientific ──
+  ["environmental", "remediation", "abatement", "contamination", "hazmat"],
+  ["testing", "laboratory", "inspection", "quality", "assurance", "calibration"],
+  ["research", "development", "scientific", "study", "investigation"],
+
+  // ── Certifications (abbreviation ↔ full name, kept tight to avoid false matches) ──
+  ["iso9001", "iso_9001"],
+  ["iso27001", "iso_27001"],
+  ["cmmi", "capability_maturity"],
+  ["pci", "dss", "pci_dss"],
+  ["soc2", "soc_2"],
+  ["itar", "export_control"],
+  ["gsa", "gsa_schedule"],
+];
+
+// Build a fast lookup map from the groups
+const SYNONYM_MAP: Record<string, Set<string>> = {};
+for (const group of SYNONYM_GROUPS) {
+  for (const term of group) {
+    if (!SYNONYM_MAP[term]) {
+      SYNONYM_MAP[term] = new Set<string>();
+    }
+    for (const other of group) {
+      if (other !== term) {
+        SYNONYM_MAP[term].add(other);
+      }
+    }
+  }
+}
+
+// Optional fallback: use the `synonyms` npm package for general English words
+// not covered by domain groups. Filter to noun senses only to avoid noise.
+let _synonymsLib: ((word: string) => Record<string, string[]> | null) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  _synonymsLib = require("synonyms");
+} catch {
+  // Package not available — domain map only
+}
+
+function getSynonyms(token: string): Set<string> {
+  const domain = SYNONYM_MAP[token];
+  if (domain && domain.size > 0) return domain;
+
+  // Fallback to general English synonyms (nouns only, skip generic words)
+  if (_synonymsLib) {
+    const SKIP = new Set(["system", "group", "unit", "part", "point", "line", "set", "body", "field", "plan", "area", "order", "form"]);
+    if (SKIP.has(token)) return new Set();
+    const result = _synonymsLib(token);
+    if (result?.n) {
+      const nouns = result.n.filter((s: string) => s !== token && s.length > 2 && !SKIP.has(s));
+      if (nouns.length > 0) return new Set(nouns.slice(0, 6));
+    }
+  }
+
+  return new Set();
+}
+
+// Generic terms that should NOT be expanded via synonyms (too broad, cause false positives)
+const STOP_EXPANSION = new Set([
+  "development", "management", "services", "support", "system", "systems",
+  "solution", "solutions", "general", "operations", "process", "design",
+  "analysis", "planning", "implementation", "service", "project",
+]);
 
 function expandWithSynonyms(tokens: Set<string>): Set<string> {
   const expanded = new Set(tokens);
   for (const token of tokens) {
-    const synonyms = SYNONYM_MAP[token];
-    if (synonyms) {
-      for (const syn of synonyms) {
-        expanded.add(syn);
-      }
+    if (STOP_EXPANSION.has(token)) continue;
+    const synonyms = getSynonyms(token);
+    for (const syn of synonyms) {
+      expanded.add(syn);
     }
   }
   return expanded;
@@ -208,16 +501,32 @@ function synonymAwareOverlap(values: string[], profileTokens: Set<string>): stri
 
 function parseContractValue(value: string): number | null {
   const v = (value || "").trim();
-  if (!v || v.toUpperCase() === "TBD") return null;
+  if (!v || v.toUpperCase() === "TBD" || v.toUpperCase() === "UNKNOWN") return null;
+
+  const parseSingle = (numStr: string, suffix: string | undefined): number => {
+    let num = parseFloat(numStr);
+    const s = (suffix || "").toLowerCase();
+    if (s === "k") num *= 1_000;
+    else if (s === "m") num *= 1_000_000;
+    else if (s === "b") num *= 1_000_000_000;
+    return num;
+  };
+
+  // Try range patterns: "$5-10M", "$5M-$10M", "$100K - $500K"
+  const rangeMatch = v.match(
+    /\$?\s*([\d,]+(?:\.\d+)?)\s*(k|m|b)?\s*[-–to]+\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(k|m|b)?/i
+  );
+  if (rangeMatch) {
+    const low = parseSingle(rangeMatch[1].replace(/,/g, ""), rangeMatch[2]);
+    const high = parseSingle(rangeMatch[3].replace(/,/g, ""), rangeMatch[4] || rangeMatch[2]); // inherit suffix
+    return Math.max(low, high);
+  }
+
+  // Single value: "$1.5M", "$1,500,000", "1500K"
   const cleaned = v.replace(/[$,\s]/g, "").toLowerCase();
   const match = cleaned.match(/(\d+(?:\.\d+)?)\s*(k|m|b)?/);
   if (!match) return null;
-  let num = parseFloat(match[1]);
-  const suffix = match[2];
-  if (suffix === "k") num *= 1000;
-  else if (suffix === "m") num *= 1000000;
-  else if (suffix === "b") num *= 1000000000;
-  return num;
+  return parseSingle(match[1], match[2]);
 }
 
 // ---------------------------------------------------------------------------
@@ -335,42 +644,48 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
   // STAGE 1: Hard Disqualifiers (pass/fail gates)
   // =========================================================================
 
-  const rfpFullText = `${rfp.title} ${rfp.description} ${(rfp.capabilities || []).join(" ")} ${(rfp.certifications || []).join(" ")}`;
+  // Build full text including attachment-derived fields for broader matching
+  const deliverableText = (rfp.deliverables ?? []).join(" ");
+  const rfpFullText = `${rfp.title} ${rfp.description} ${(rfp.capabilities || []).join(" ")} ${(rfp.certifications || []).join(" ")} ${deliverableText} ${rfp.attachmentRollup?.summary ?? ""}`;
 
-  // 1a. Deadline check
+  // 1a. Deadline check — disabled for demo purposes
   const due = parseDeadline(rfp.deadline);
-  if (due) {
-    const now = new Date();
-    if (now > due) {
-      disqualifiers.push("Deadline has passed — this RFP is no longer accepting bids.");
-    }
-  }
 
-  // 1b. Required clearances
+  // 1b. Required clearances — check both text-based detection AND attachment-derived data
   const requiredClearance = detectRequiredClearance(rfpFullText);
-  if (requiredClearance) {
+  const attachmentClearances = rfp.clearancesRequired ?? [];
+  // Also check attachment-derived clearances against our patterns
+  let effectiveClearance = requiredClearance;
+  if (!effectiveClearance && attachmentClearances.length > 0) {
+    const attachClearanceText = attachmentClearances.join(" ");
+    effectiveClearance = detectRequiredClearance(attachClearanceText);
+  }
+  if (effectiveClearance) {
     const profileLevel = getProfileClearanceLevel(profile.clearances ?? []);
-    if (profileLevel < requiredClearance.level) {
+    if (profileLevel < effectiveClearance.level) {
       disqualifiers.push(
-        `Requires ${requiredClearance.label} clearance which is not in your profile.`
+        `Requires ${effectiveClearance.label} clearance which is not in your profile.`
       );
     }
   }
 
-  // 1c. Set-aside requirements
-  const rfpSetAsides = detectSetAsides(rfpFullText);
+  // 1c. Set-aside requirements — combine text-detected and attachment-derived
+  // Treat as OR: company must meet at least ONE set-aside requirement (not all)
+  const textSetAsides = detectSetAsides(rfpFullText);
+  const attachmentSetAsides = rfp.setAsideTypes ?? [];
+  const rfpSetAsides = [...new Set([...textSetAsides, ...attachmentSetAsides])];
   if (rfpSetAsides.length > 0) {
-    const profileStatuses = (profile.sizeStatus ?? []).map((s) => s.toLowerCase());
-    const profileCerts = (profile.certifications ?? []).map((c) => c.toLowerCase());
-    const profileAll = [...profileStatuses, ...profileCerts].join(" ");
-    const unmet = rfpSetAsides.filter((sa) => {
-      const saLower = sa.toLowerCase();
-      return !profileAll.includes(saLower) &&
-        !profileStatuses.some((ps) => ps.includes(saLower) || saLower.includes(ps));
+    const profileCanonical = [
+      ...(profile.sizeStatus ?? []).map((s) => canonicalize(s, SET_ASIDE_CANONICAL)),
+      ...(profile.certifications ?? []).map((c) => canonicalize(c, SET_ASIDE_CANONICAL)),
+    ];
+    const met = rfpSetAsides.filter((sa) => {
+      const saCanonical = canonicalize(sa, SET_ASIDE_CANONICAL);
+      return profileCanonical.includes(saCanonical);
     });
-    if (unmet.length > 0) {
+    if (met.length === 0) {
       disqualifiers.push(
-        `Set-aside requirement: ${unmet.join(", ")}. Your profile does not indicate this status.`
+        `Set-aside requirement: ${rfpSetAsides.join(" or ")}. Your profile does not indicate any qualifying status.`
       );
     }
   }
@@ -416,7 +731,12 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
   const rfpAgencyTokens = toTokenSet([rfp.agency ?? ""]);
   const rfpContractTokens = toTokenSet([rfp.contractType ?? ""]);
   const rfpLocationTokens = toTokenSet([rfp.location ?? ""]);
-  const rfpDescTokens = toTokenSet([rfp.description ?? "", rfp.title ?? ""]);
+  const rfpDescTokens = toTokenSet([
+    rfp.description ?? "",
+    rfp.title ?? "",
+    ...(rfp.deliverables ?? []),
+    rfp.attachmentRollup?.summary ?? "",
+  ]);
 
   // =========================================================================
   // STAGE 3: Weighted Scoring (100-point scale)
@@ -424,14 +744,15 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
 
   let score = 0;
 
-  // --- Capabilities (max 25 pts) ---
+  // --- Capabilities (max 15 pts) ---
+  // Empty = 50% (relevance unknown, not a positive signal)
   const capSimilarity = synonymAwareJaccard(rfpCapTokens, profileCapsTokens);
   const capOverlap = synonymAwareOverlap(rfp.capabilities ?? [], profileCapsTokens);
   if ((rfp.capabilities ?? []).length > 0) {
     if (capSimilarity > 0 || capOverlap.length > 0) {
       const pts = scoreFromSimilarity(
         clamp(capSimilarity + capOverlap.length * 0.05, 0, 1),
-        25
+        15
       );
       score += pts;
       const detail = capOverlap.length > 0
@@ -447,7 +768,8 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     breakdown.push({ category: "Capabilities", points: 0, maxPoints: 25, status: "neutral", detail: "RFP does not specify required capabilities.", rfpTokens: [], profileTokens: profile.capabilities ?? [] });
   }
 
-  // --- Industry (max 20 pts) ---
+  // --- Industry (max 12 pts) ---
+  // Empty = 50% (relevance unknown)
   const industrySimilarity = synonymAwareJaccard(rfpIndustryTokens, profileIndustryTokens);
   if (industrySimilarity > 0) {
     const pts = scoreFromSimilarity(industrySimilarity, 20);
@@ -459,12 +781,13 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     breakdown.push({ category: "Industry", points: 0, maxPoints: 20, status: "weak", detail: `Industry "${rfp.industry}" not in your profile.`, rfpTokens: [rfp.industry], profileTokens: profile.industry ?? [] });
   }
 
-  // --- NAICS Codes (max 15 pts) ---
+  // --- NAICS Codes (max 10 pts) ---
+  // Empty = 50% (relevance unknown)
   const naicsOverlap = countNaicsOverlap(rfp.naicsCodes ?? [], profileNaics);
   if ((rfp.naicsCodes ?? []).length > 0) {
     if (naicsOverlap.length > 0) {
       const ratio = naicsOverlap.length / Math.max(1, rfp.naicsCodes.length);
-      const pts = 15 * ratio;
+      const pts = 10 * ratio;
       score += pts;
       positiveReasons.push(`NAICS overlap: ${naicsOverlap.slice(0, 3).join(", ")}`);
       breakdown.push({ category: "NAICS Codes", points: Math.round(pts), maxPoints: 15, status: ratio >= 0.75 ? "strong" : "partial", detail: `${naicsOverlap.length}/${rfp.naicsCodes.length} codes match.`, matchedTokens: naicsOverlap, rfpTokens: rfp.naicsCodes, profileTokens: profileNaics });
@@ -476,12 +799,12 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     breakdown.push({ category: "NAICS Codes", points: 0, maxPoints: 15, status: "neutral", detail: "RFP does not list NAICS codes.", rfpTokens: [], profileTokens: profileNaics });
   }
 
-  // --- Certifications (max 12 pts) ---
-  const certOverlap = findTokenOverlap(rfp.certifications ?? [], profileCertTokens);
+  // --- Certifications (max 10 pts) ---
+  // ELIGIBILITY category: no cert requirement = full points (everyone eligible)
   if ((rfp.certifications ?? []).length > 0) {
-    if (certOverlap.length > 0) {
-      const ratio = certOverlap.length / Math.max(1, (rfp.certifications ?? []).length);
-      const pts = 12 * ratio;
+    const certMatch = canonicalSetMatch(rfp.certifications ?? [], profile.certifications ?? [], CERTIFICATION_CANONICAL);
+    if (certMatch.matched.length > 0) {
+      const pts = 10 * certMatch.ratio;
       score += pts;
       positiveReasons.push(`Certification match: ${certOverlap.slice(0, 2).join(", ")}`);
       breakdown.push({ category: "Certifications", points: Math.round(pts), maxPoints: 12, status: ratio >= 0.75 ? "strong" : "partial", detail: `${certOverlap.length}/${rfp.certifications.length} certifications match.`, matchedTokens: certOverlap, rfpTokens: rfp.certifications, profileTokens: profile.certifications ?? [] });
@@ -493,12 +816,18 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     breakdown.push({ category: "Certifications", points: 0, maxPoints: 12, status: "neutral", detail: "RFP does not list required certifications.", rfpTokens: [], profileTokens: profile.certifications ?? [] });
   }
 
-  // --- Location (max 10 pts) ---
-  const locationSimilarity = synonymAwareJaccard(rfpLocationTokens, profileLocationTokens);
+  // --- Location (max 8 pts) ---
+  // Use geographic proximity instead of pure token Jaccard
   if ((rfp.location ?? "").trim().length > 0) {
-    if (locationSimilarity > 0) {
-      const pts = scoreFromSimilarity(locationSimilarity, 10);
+    const proxScore = locationProximityScore(rfp.location, profile.workCities ?? [], profile.workCounties ?? []);
+    // Also try token Jaccard as fallback
+    const tokenLocScore = synonymAwareJaccard(rfpLocationTokens, profileLocationTokens);
+    const locScore = Math.max(proxScore, tokenLocScore);
+
+    if (locScore > 0) {
+      const pts = 8 * locScore;
       score += pts;
+      const locDetail = proxScore >= 0.75 ? "Work location is in your metro area." : "Work location aligns with your service area.";
       positiveReasons.push("Location aligns with your service area.");
       const profileLocations = [...(profile.workCities ?? []), ...(profile.workCounties ?? [])];
       breakdown.push({ category: "Location", points: Math.round(pts), maxPoints: 10, status: "strong", detail: "Work location is within your service area.", rfpTokens: [rfp.location], profileTokens: profileLocations });
@@ -509,12 +838,16 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     } else {
       breakdown.push({ category: "Location", points: 0, maxPoints: 10, status: "neutral", detail: "No service areas listed in your profile.", rfpTokens: [rfp.location], profileTokens: [] });
     }
+  } else {
+    score += 8;
+    breakdown.push({ category: "Location", points: 8, maxPoints: 8, status: "strong", detail: "No location restriction." });
   }
 
-  // --- Agency Experience (max 8 pts) ---
+  // --- Agency Experience (max 10 pts) ---
+  // Agency match is a bonus — 0 for no match (not penalized, but not rewarded)
   const agencySimilarity = synonymAwareJaccard(rfpAgencyTokens, profileAgencyTokens);
   if (agencySimilarity > 0) {
-    const pts = scoreFromSimilarity(agencySimilarity, 8);
+    const pts = scoreFromSimilarity(agencySimilarity, 10);
     score += pts;
     positiveReasons.push("You have experience with this agency.");
     breakdown.push({ category: "Agency Experience", points: Math.round(pts), maxPoints: 8, status: "strong", detail: `Prior experience with ${rfp.agency}.`, rfpTokens: [rfp.agency], profileTokens: profile.agencyExperience ?? [] });
@@ -533,16 +866,43 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     breakdown.push({ category: "Contract Type", points: 0, maxPoints: 5, status: "neutral", detail: "Contract type not in your listed preferences.", rfpTokens: [rfp.contractType], profileTokens: profile.contractTypes ?? [] });
   }
 
-  // --- Description / Title text match (max 5 pts) ---
+  // --- Description / Title text match (max 30 pts) ---
+  // Highest weight — the best signal for actual content relevance.
+  // Uses COVERAGE metric instead of Jaccard: what fraction of profile keywords
+  // appear in the RFP description? Jaccard fails here because both token sets
+  // are large (200+ tokens) so even 20 overlapping tokens give tiny ratios.
+  // Stop words are filtered from both sides so only domain-relevant terms count.
+  const profileCompanyTokens = profile.companyName
+    ? new Set(tokenize(profile.companyName).filter((t) => !STOP_WORDS.has(t)))
+    : new Set<string>();
+  const profileTechTokens = (profile.technologyStack ?? []).length > 0
+    ? new Set(profile.technologyStack!.flatMap((t) => tokenize(t)).filter((t) => !STOP_WORDS.has(t)))
+    : new Set<string>();
   const profileTextTokens = new Set<string>([
     ...expandWithSynonyms(profileIndustryTokens),
     ...expandWithSynonyms(profileCapsTokens),
     ...expandWithSynonyms(profileCertTokens),
     ...profileAgencyTokens,
+    ...profileCompanyTokens,
+    ...expandWithSynonyms(profileTechTokens),
   ]);
-  const descSimilarity = jaccardSimilarity(rfpDescTokens, profileTextTokens);
-  if (descSimilarity > 0.05) {
-    const pts = scoreFromSimilarity(descSimilarity, 5);
+  // Filter stop words from both sides for description matching only
+  const profileTextFiltered = new Set([...profileTextTokens].filter((t) => !STOP_WORDS.has(t)));
+  const rfpDescFiltered = new Set([...rfpDescTokens].filter((t) => !STOP_WORDS.has(t)));
+  // Coverage: what fraction of the PROFILE tokens appear in the RFP description
+  const descOverlapTokens = [...profileTextFiltered].filter((t) => rfpDescFiltered.has(t));
+  const descCoverage = descOverlapTokens.length / Math.max(1, profileTextFiltered.size);
+  // Also compute reverse coverage: what fraction of RFP description's meaningful tokens match profile
+  const rfpInProfile = [...rfpDescFiltered].filter((t) => profileTextFiltered.has(t));
+  const reverseCoverage = rfpInProfile.length / Math.max(1, rfpDescFiltered.size);
+  // Use the geometric mean of both coverages to balance the signal
+  const descRelevance = Math.sqrt(descCoverage * reverseCoverage);
+  // Also keep Jaccard as a floor (prevents zero-scoring when coverage is asymmetric)
+  const descJaccard = jaccardSimilarity(rfpDescFiltered, profileTextFiltered);
+  const descScore = Math.max(descRelevance, descJaccard);
+
+  if (descScore > 0.01) {
+    const pts = scoreFromSimilarity(Math.min(descScore * 2.5, 1), 30); // scale up: 0.40 coverage → full points
     score += pts;
     positiveReasons.push("Description language matches your profile keywords.");
     const descMatched = [...rfpDescTokens].filter(t => profileTextTokens.has(t));
@@ -563,23 +923,23 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
   }
 
   // --- Clearance bonus (not in base 100, but boost if matched) ---
-  if (requiredClearance) {
+  if (effectiveClearance) {
     const profileLevel = getProfileClearanceLevel(profile.clearances ?? []);
-    if (profileLevel >= requiredClearance.level) {
-      positiveReasons.push(`You hold the required ${requiredClearance.label} clearance.`);
-      breakdown.push({ category: "Security Clearance", points: 0, maxPoints: 0, status: "strong", detail: `${requiredClearance.label} clearance requirement met.` });
+    if (profileLevel >= effectiveClearance.level) {
+      positiveReasons.push(`You hold the required ${effectiveClearance.label} clearance.`);
+      breakdown.push({ category: "Security Clearance", points: 0, maxPoints: 0, status: "strong", detail: `${effectiveClearance.label} clearance requirement met.` });
     }
   }
 
   // --- Set-aside bonus ---
   if (rfpSetAsides.length > 0) {
-    const profileStatuses = (profile.sizeStatus ?? []).map((s) => s.toLowerCase());
-    const profileCerts = (profile.certifications ?? []).map((c) => c.toLowerCase());
-    const profileAll = [...profileStatuses, ...profileCerts].join(" ");
+    const profileCanonical = [
+      ...(profile.sizeStatus ?? []).map((s) => canonicalize(s, SET_ASIDE_CANONICAL)),
+      ...(profile.certifications ?? []).map((c) => canonicalize(c, SET_ASIDE_CANONICAL)),
+    ];
     const met = rfpSetAsides.filter((sa) => {
-      const saLower = sa.toLowerCase();
-      return profileAll.includes(saLower) ||
-        profileStatuses.some((ps) => ps.includes(saLower) || saLower.includes(ps));
+      const saCanonical = canonicalize(sa, SET_ASIDE_CANONICAL);
+      return profileCanonical.includes(saCanonical);
     });
     if (met.length > 0) {
       positiveReasons.push(`You qualify for the ${met.join(", ")} set-aside.`);
@@ -619,40 +979,70 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
 // ---------------------------------------------------------------------------
 
 export function generateMatchSummary(_rfp: RFP, match: RFPMatch): string {
-  const { positiveReasons, negativeReasons, score, disqualified, disqualifiers, tier } = match;
+  const { positiveReasons, negativeReasons, score, disqualified, disqualifiers, tier, breakdown } = match;
+
+  const fmt = (r: string) => {
+    const s = r.replace(/\.$/, "");
+    return s.charAt(0).toLowerCase() + s.slice(1);
+  };
+
+  const strengths = positiveReasons;
+  const gaps = negativeReasons;
+
+  // Build specific insights from breakdown scores
+  const scored = breakdown.filter((b) => b.maxPoints > 0);
+  const topScored = scored
+    .filter((b) => b.points > 0)
+    .sort((a, b) => (b.points / b.maxPoints) - (a.points / a.maxPoints));
+  const topNames = topScored.map((b) => b.category.toLowerCase());
+
+  // Identify the biggest contributor to the score
+  const descEntry = scored.find((b) => b.category === "Description Match");
+  const descPts = descEntry?.points ?? 0;
+  const descIsTop = descPts >= 15; // description drove a big chunk of the score
 
   if (disqualified && disqualifiers.length > 0) {
-    return `Not eligible: ${disqualifiers[0].toLowerCase()}`;
+    const dq = disqualifiers[0].replace(/\.$/, "");
+    return `Not eligible: ${dq.charAt(0).toLowerCase() + dq.slice(1)}.`;
   }
 
-  if (tier === "excellent" && positiveReasons.length > 0) {
-    const topReasons = positiveReasons.filter((r) => r !== "Deadline is still open.").slice(0, 3);
-    if (topReasons.length === 0) return "Strong overall alignment with your profile.";
-    const first = topReasons[0].charAt(0).toLowerCase() + topReasons[0].slice(1);
-    const rest = topReasons.slice(1).map((r) => r.charAt(0).toLowerCase() + r.slice(1)).join(". ");
-    return `Excellent fit: ${first}.${rest ? ` ${rest}.` : ""} Worth a close look.`;
+  // Build a reason string from the top 2 specific strengths
+  const specificReasons = strengths.slice(0, 2).map(fmt).join(", and ");
+
+  if (tier === "excellent") {
+    if (descIsTop && specificReasons) {
+      return `Excellent fit — the RFP description closely matches your profile. ${specificReasons.charAt(0).toUpperCase() + specificReasons.slice(1)}.`;
+    }
+    if (specificReasons) {
+      return `Excellent fit: ${specificReasons}. Strong alignment across ${topNames.slice(0, 3).join(", ")}.`;
+    }
+    return `Strong alignment across ${topNames.slice(0, 3).join(", ")}.`;
   }
 
-  if (tier === "strong" && positiveReasons.length > 0) {
-    const top = positiveReasons.filter((r) => r !== "Deadline is still open.").slice(0, 2);
-    if (top.length === 0) return "Good overall alignment with your profile.";
-    const first = top[0].charAt(0).toLowerCase() + top[0].slice(1);
-    const extra = top.length > 1 ? ` Also: ${top[1].charAt(0).toLowerCase() + top[1].slice(1)}.` : "";
-    return `Strong potential: ${first}.${extra}`;
+  if (tier === "strong") {
+    if (descIsTop && specificReasons) {
+      return `Good fit — RFP scope aligns with your experience. ${specificReasons.charAt(0).toUpperCase() + specificReasons.slice(1)}.`;
+    }
+    if (specificReasons) {
+      return `Good fit: ${specificReasons}.`;
+    }
+    return `Good alignment in ${topNames.slice(0, 3).join(", ")}.`;
   }
 
-  if (tier === "moderate" && positiveReasons.length > 0) {
-    const align = positiveReasons.filter((r) => r !== "Deadline is still open.")[0];
-    if (!align) return "Some alignment found. Review details for fit.";
-    const hint = negativeReasons.length > 0
-      ? " Consider updating your profile to improve match accuracy."
-      : "";
-    return `Some alignment: ${align.charAt(0).toLowerCase() + align.slice(1)}.${hint}`;
+  if (tier === "moderate") {
+    if (specificReasons) {
+      return `Partial fit: ${specificReasons}, but limited overlap in other areas.`;
+    }
+    return `Some overlap in ${topNames.slice(0, 2).join(" and ") || "a few areas"}, but limited overall alignment.`;
   }
 
-  if (score > 0 && positiveReasons.length > 0) {
-    return `Limited alignment. ${positiveReasons[0]}`;
+  // Low tier
+  if (score > 0) {
+    if (specificReasons) {
+      return `Low match: ${specificReasons}, but most categories don't align.`;
+    }
+    return "Minimal overlap with your profile across most categories.";
   }
 
-  return "Complete your profile for personalized match insights.";
+  return "No significant overlap with your profile.";
 }

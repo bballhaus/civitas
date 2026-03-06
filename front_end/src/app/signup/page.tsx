@@ -1,11 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getApiBase, setCachedUser, setAuthToken } from "@/lib/api";
+import { MeshBackground } from "@/components/MeshBackground";
 
 const API_BASE = getApiBase();
+
+const PASSWORD_RULES = [
+  { key: "length", label: "At least 8 characters", test: (p: string) => p.length >= 8 },
+  { key: "upper", label: "One uppercase letter", test: (p: string) => /[A-Z]/.test(p) },
+  { key: "lower", label: "One lowercase letter", test: (p: string) => /[a-z]/.test(p) },
+  { key: "special", label: "One special character (!@#$…)", test: (p: string) => /[^A-Za-z0-9]/.test(p) },
+] as const;
 
 export default function SignupPage() {
   const router = useRouter();
@@ -15,9 +23,21 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  const passwordChecks = useMemo(
+    () => PASSWORD_RULES.map((r) => ({ ...r, passed: r.test(password) })),
+    [password]
+  );
+  const allPasswordChecksPassed = passwordChecks.every((c) => c.passed);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    if (!allPasswordChecksPassed) {
+      setError("Please meet all password requirements before signing up.");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -39,7 +59,7 @@ export default function SignupPage() {
           "X-CSRFToken": csrfToken,
         },
         credentials: "include",
-        body: JSON.stringify({ username, password, email: email || undefined }),
+        body: JSON.stringify({ username, password, email }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -68,8 +88,9 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff] flex items-center justify-center p-4">
+      <MeshBackground />
+      <div className="relative w-full max-w-md">
         <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-8">
           <h1 className="text-2xl font-semibold text-slate-800 mb-1">
             Create account
@@ -103,13 +124,14 @@ export default function SignupPage() {
                 htmlFor="email"
                 className="block text-sm font-medium text-slate-700 mb-1"
               >
-                Email <span className="text-slate-400">(optional)</span>
+                Email
               </label>
               <input
                 id="email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                required
                 autoComplete="email"
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent text-slate-700 placeholder:text-slate-500"
                 placeholder="you@example.com"
@@ -133,6 +155,29 @@ export default function SignupPage() {
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent text-slate-700 placeholder:text-slate-500"
                 placeholder="Create a password"
               />
+              {password.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {passwordChecks.map((check) => (
+                    <li
+                      key={check.key}
+                      className={`flex items-center gap-1.5 text-xs ${
+                        check.passed ? "text-green-600" : "text-slate-400"
+                      }`}
+                    >
+                      {check.passed ? (
+                        <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <circle cx="12" cy="12" r="9" strokeWidth={2} />
+                        </svg>
+                      )}
+                      {check.label}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             {error && (
@@ -143,7 +188,7 @@ export default function SignupPage() {
 
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || !allPasswordChecksPassed}
               className="w-full py-2.5 px-4 bg-[#3C89C6] text-white font-medium rounded-lg hover:bg-[#2d6da3] focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
               {isLoading ? "Creating account..." : "Sign up"}
@@ -160,12 +205,6 @@ export default function SignupPage() {
             </Link>
           </p>
         </div>
-
-        <p className="mt-4 text-center text-xs text-slate-400">
-          <Link href="/" className="hover:text-slate-600">
-            ← Back to home
-          </Link>
-        </p>
       </div>
     </div>
   );

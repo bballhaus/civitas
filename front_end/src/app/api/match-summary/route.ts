@@ -6,11 +6,25 @@ const PROMPT = `You are helping a vendor/contractor understand why an RFP (Reque
 Given:
 1) The RFP details (title, agency, industry, capabilities, location, deadline, description snippet)
 2) The company's full profile (industries, capabilities, certifications, locations, agency experience, contract types)
-3) A rule-based match summary with score, tier, and reasons
-4) A per-category score breakdown showing how points were earned
-5) Any disqualifiers (hard blockers like expired deadlines or missing clearances)
+3) A rule-based match summary that lists reasons like "the deadline is still open", "industry aligns", "capabilities align: X"
+4) Optional lists of positive and negative match reasons
+5) Optional attachment-derived key requirements and constraints (e.g., certifications, clearances, set-asides, geography)
 
-Your task: Write a short, natural 2-4 sentence summary explaining why this RFP is a good match (or why it isn't). Reference specific overlaps or gaps from the breakdown. If disqualified, explain clearly why. If a strong match, highlight the top strengths. If weak, suggest what profile updates might help. Keep it conversational and under 100 words. No bullet points.`;
+Important scoring context:
+- When an RFP does NOT specify a requirement for a category (e.g., no NAICS codes, no certifications), the company earns FULL points for that category. This means "no requirement = everyone qualifies" and is expected, not a flaw.
+- A high score on a generic RFP (few specific requirements) is normal — the company isn't penalized for requirements that don't exist.
+- Focus explanations on categories where there IS a specific RFP requirement and how the company matches or doesn't match.
+
+Your task: Write two plain text paragraphs (no headings or "Part 1/Part 2" labels).
+
+First paragraph: A very brief summary of what the RFP is actually asking for (scope, key requirements, type of work, agency/context). Do not mention the company yet. 1–2 sentences.
+
+Second paragraph: Why this RFP is or isn't a good match for the company. Be specific — name overlapping capabilities, industries, certifications, or NAICS codes that drive the score. When attachment-derived data is present, reference specific requirements from the attachments. If disqualified, explain clearly why. If a strong match, explain exactly which company strengths align with which RFP requirements. If weak, explain which specific RFP requirements the company doesn't meet. 2–4 sentences.
+
+Rules:
+- Do NOT suggest profile updates, improvements, or ways to strengthen the match
+- Do NOT use filler phrases like "let's take a closer look", "to better understand", or "review the breakdown"
+- Output exactly two paragraphs of plain text. No bullet points, no labels.`;
 
 export async function POST(req: Request) {
   try {
@@ -30,20 +44,12 @@ export async function POST(req: Request) {
       currentSummary,
       positiveReasons,
       negativeReasons,
-      disqualifiers,
-      breakdown,
-      score,
-      tier,
     }: {
       rfp: Record<string, unknown>;
       profile: Record<string, unknown> | null;
       currentSummary: string;
       positiveReasons?: string[];
       negativeReasons?: string[];
-      disqualifiers?: string[];
-      breakdown?: Array<{ category: string; points: number; maxPoints: number; status: string; detail: string }>;
-      score?: number;
-      tier?: string;
     } = body;
 
     if (!rfp || !currentSummary) {
@@ -54,14 +60,30 @@ export async function POST(req: Request) {
     }
 
     const client = new Groq({ apiKey });
+
+    // Build structured attachment context
+    const rfpAny = rfp as Record<string, unknown>;
+    const naicsCodes = Array.isArray(rfpAny.naicsCodes) ? (rfpAny.naicsCodes as string[]).join(", ") : "";
+    const clearances = Array.isArray(rfpAny.clearancesRequired) ? (rfpAny.clearancesRequired as string[]).join(", ") : "";
+    const setAsides = Array.isArray(rfpAny.setAsideTypes) ? (rfpAny.setAsideTypes as string[]).join(", ") : "";
+    const deliverables = Array.isArray(rfpAny.deliverables) ? (rfpAny.deliverables as string[]).slice(0, 5).join(", ") : "";
+    const attachmentRollup = rfpAny.attachmentRollup;
+    const hasAttachments = attachmentRollup && typeof attachmentRollup === "object";
+
     const input = `RFP: ${JSON.stringify(rfp)}
+${naicsCodes ? `NAICS codes: ${naicsCodes}` : ""}
+${clearances ? `Clearances required: ${clearances}` : ""}
+${setAsides ? `Set-aside types: ${setAsides}` : ""}
+${deliverables ? `Key deliverables: ${deliverables}` : ""}
+${hasAttachments ? `Attachment data: ${JSON.stringify(attachmentRollup).slice(0, 1500)}` : ""}
 Profile: ${profile ? JSON.stringify(profile) : "No profile"}
-Score: ${score ?? "unknown"}/100 (Tier: ${tier ?? "unknown"})
 Rule-based summary: ${currentSummary}
-Positive reasons: ${JSON.stringify(positiveReasons ?? [])}
-Negative reasons: ${JSON.stringify(negativeReasons ?? [])}
-Disqualifiers: ${JSON.stringify(disqualifiers ?? [])}
-Score breakdown: ${JSON.stringify(breakdown ?? [])}`;
+Positive reasons: ${
+      Array.isArray(positiveReasons) ? JSON.stringify(positiveReasons) : "[]"
+    }
+Negative reasons: ${
+      Array.isArray(negativeReasons) ? JSON.stringify(negativeReasons) : "[]"
+    }`;
 
     const completion = await client.chat.completions.create({
       model: "llama-3.1-8b-instant",
@@ -70,7 +92,7 @@ Score breakdown: ${JSON.stringify(breakdown ?? [])}`;
         { role: "user", content: input },
       ],
       temperature: 0.3,
-      max_tokens: 200,
+      max_tokens: 280,
     });
 
     const summary =

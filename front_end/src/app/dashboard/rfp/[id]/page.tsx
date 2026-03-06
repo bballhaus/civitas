@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -12,6 +12,8 @@ import {
   generateMatchSummary,
 } from "@/lib/rfp-matching";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import { getCurrentUser, updateUserRfpStatus } from "@/lib/api";
+import { getCachedEvents } from "@/lib/events-cache";
 
 type RFPWithMatch = RFP & { match: RFPMatch };
 
@@ -20,6 +22,7 @@ export default function RFPDetailPage() {
   const id = params?.id ? decodeURIComponent(String(params.id)) : "";
   const [rfpData, setRfpData] = useState<RFP | null>(null);
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
@@ -40,7 +43,7 @@ export default function RFPDetailPage() {
   const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
   const [expandedBreakdownCategory, setExpandedBreakdownCategory] = useState<string | null>(null);
 
-  const rfp: RFPWithMatch | null = rfpData
+  const rfp: RFPWithMatch | null = rfpData && profileLoaded
     ? { ...rfpData, match: computeMatch(rfpData, profile) }
     : null;
 
@@ -60,6 +63,17 @@ export default function RFPDetailPage() {
         // ignore
       }
     }
+    setProfileLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    getCurrentUser(true).then((full) => {
+      setUserRfpStatusLoaded(true);
+      if (full) {
+        setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+        setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -68,6 +82,39 @@ export default function RFPDetailPage() {
       setError("Invalid RFP ID");
       return;
     }
+    const preloadKey = "civitas_preload_rfp";
+    let preloaded: RFP | null = null;
+    try {
+      const raw = typeof window !== "undefined" ? sessionStorage.getItem(preloadKey) : null;
+      if (raw) {
+        const parsed = JSON.parse(raw) as RFP;
+        if (parsed && parsed.id === id) {
+          preloaded = parsed;
+          sessionStorage.removeItem(preloadKey);
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    if (preloaded) {
+      setRfpData(preloaded);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    const cached = getCachedEvents();
+    if (cached && cached.length > 0) {
+      const found = cached.find((e) => e.id === id);
+      if (found) {
+        setRfpData(found);
+        setLoading(false);
+        setError(null);
+        return;
+      }
+    }
+
     async function load() {
       setLoading(true);
       setError(null);
@@ -120,6 +167,11 @@ export default function RFPDetailPage() {
               certifications: rfp.certifications,
               contractType: rfp.contractType,
               description: (rfp.description || "").slice(0, 1500),
+              naicsCodes: (rfp as any).naicsCodes,
+              clearancesRequired: (rfp as any).clearancesRequired,
+              setAsideTypes: (rfp as any).setAsideTypes,
+              deliverables: (rfp as any).deliverables,
+              attachmentRollup: (rfp as any).attachmentRollup ?? null,
             },
             profile: profile
               ? {
@@ -136,10 +188,6 @@ export default function RFPDetailPage() {
             currentSummary: initialSummary,
             positiveReasons: match.positiveReasons,
             negativeReasons: match.negativeReasons,
-            disqualifiers: match.disqualifiers,
-            breakdown: match.breakdown,
-            score: match.score,
-            tier: match.tier,
           }),
         });
         if (cancelled) return;
@@ -166,7 +214,7 @@ export default function RFPDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [rfpData?.id, profile]);
+  }, [rfpData?.id, profile, profileLoaded]);
 
   useEffect(() => {
     if (!rfpData || !rfpData.description?.trim()) return;
@@ -218,6 +266,76 @@ export default function RFPDetailPage() {
       cancelled = true;
     };
   }, [rfpData?.id]);
+
+  // Fetch capabilities analysis (compares RFP requirements against company profile)
+  useEffect(() => {
+    if (!rfpData || !profileLoaded) return;
+    const rfp: RFP = rfpData;
+    const match = computeMatch(rfp, profile);
+
+    let cancelled = false;
+    setCapabilitiesAnalysisLoading(true);
+    setCapabilitiesAnalysisError(false);
+
+    async function fetchCapabilitiesAnalysis() {
+      try {
+        const res = await fetch("/api/capabilities-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rfp: {
+              title: rfp.title,
+              agency: rfp.agency,
+              industry: rfp.industry,
+              location: rfp.location,
+              capabilities: rfp.capabilities,
+              certifications: rfp.certifications,
+              contractType: rfp.contractType,
+              naicsCodes: (rfp as any).naicsCodes,
+              clearancesRequired: (rfp as any).clearancesRequired,
+              setAsideTypes: (rfp as any).setAsideTypes,
+              deliverables: (rfp as any).deliverables,
+              estimatedValue: rfp.estimatedValue,
+              description: (rfp.description || "").slice(0, 3000),
+              attachmentRollup: (rfp as any).attachmentRollup ?? null,
+            },
+            profile: profile
+              ? {
+                  companyName: profile.companyName,
+                  industry: profile.industry,
+                  capabilities: profile.capabilities,
+                  certifications: profile.certifications,
+                  workCities: profile.workCities,
+                  workCounties: profile.workCounties,
+                  agencyExperience: profile.agencyExperience,
+                  contractTypes: profile.contractTypes,
+                  technologyStack: profile.technologyStack,
+                }
+              : null,
+            breakdown: match.breakdown,
+          }),
+        });
+        if (cancelled) return;
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (cancelled) return;
+        setCapabilitiesAnalysis(data.analysis ?? null);
+      } catch (err) {
+        console.error("[capabilities-analysis] Fetch failed:", err);
+        if (!cancelled) {
+          setCapabilitiesAnalysisError(true);
+          setCapabilitiesAnalysis(null);
+        }
+      } finally {
+        if (!cancelled) setCapabilitiesAnalysisLoading(false);
+      }
+    }
+
+    fetchCapabilitiesAnalysis();
+    return () => {
+      cancelled = true;
+    };
+  }, [rfpData?.id, profile, profileLoaded]);
 
   const downloadAsDocx = async (
     content: string,
@@ -393,12 +511,43 @@ export default function RFPDetailPage() {
       : null,
   });
 
+  const handleToggleApplied = useCallback(async () => {
+    if (!id) return;
+    const currentlyApplied = appliedRfpIds.has(id);
+    setAppliedRfpIds((prev) => {
+      const next = new Set(prev);
+      if (currentlyApplied) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    try {
+      if (currentlyApplied) {
+        await updateUserRfpStatus({ remove_applied: id });
+      } else {
+        await updateUserRfpStatus({ mark_applied: id });
+      }
+    } catch (e) {
+      setAppliedRfpIds((prev) => {
+        const next = new Set(prev);
+        if (currentlyApplied) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+      console.error("Failed to update applied status:", e);
+    }
+  }, [id, appliedRfpIds]);
+
   const handleGeneratePlanOfExecution = async (feedbackText?: string) => {
     if (!rfpData || planLoading) return;
     const trimmed = String(feedbackText ?? "").trim();
     setPlanLoading(true);
     setPlanError(null);
     if (!trimmed) setPlanOfExecution(null);
+
+    // Mark in progress as soon as the button is pressed (even if POE generation fails or doesn't finish)
+    setInProgressRfpIds((prev) => new Set([...prev, id]));
+    updateUserRfpStatus({ mark_in_progress: id }).catch(() => {});
+
     try {
       const res = await fetch("/api/generate-plan-of-execution", {
         method: "POST",
@@ -475,7 +624,43 @@ export default function RFPDetailPage() {
         <article className="rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-200">
           {/* Header */}
           <div className="p-6 md:p-8 border-b border-slate-100">
-            <h1 className="text-2xl font-bold text-slate-900 mb-4">{rfp.title}</h1>
+            <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+              <h1 className="text-2xl font-bold text-slate-900">{rfp.title}</h1>
+              {userRfpStatusLoaded && (
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleToggleApplied}
+                    className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
+                      appliedRfpIds.has(id)
+                        ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100"
+                        : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    {appliedRfpIds.has(id) ? (
+                      <>
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Applied
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        I&apos;ve applied
+                      </>
+                    )}
+                  </button>
+                  {inProgressRfpIds.has(id) && (
+                    <span className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-50 text-violet-700 border border-violet-100">
+                      In progress
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2 mb-4">
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-50 text-blue-600">
                 {rfp.location}
@@ -502,7 +687,10 @@ export default function RFPDetailPage() {
                 </span>
               )}
             </div>
-            <p className="text-sm text-slate-600">{rfp.agency} · Due {rfp.deadline} · {rfp.estimatedValue}</p>
+            <ul className="text-sm text-slate-600 space-y-1">
+              <li><span className="text-slate-400 font-medium">Requested by:</span> <span className="text-slate-900 font-medium">{rfp.agency}</span>{rfp.industry ? ` · ${rfp.industry}` : ""}</li>
+              <li>Due {rfp.deadline} · {rfp.estimatedValue}</li>
+            </ul>
           </div>
 
           {/* Disqualifier banner */}
@@ -634,7 +822,7 @@ export default function RFPDetailPage() {
 
           {/* Action buttons */}
           <div className="p-6 md:p-8 border-b border-slate-100 space-y-3">
-            <h2 className="text-sm font-bold text-slate-900 mb-4">Actions</h2>
+            <h2 className="text-sm font-bold text-slate-900 mb-4">Generate Proposal &amp; Plan</h2>
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
@@ -837,6 +1025,86 @@ export default function RFPDetailPage() {
             )}
           </div>
 
+          {/* Groq-generated summary */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
+              <div className="flex items-start justify-between gap-2 mb-3">
+                <h2 className="text-sm font-bold text-slate-900">
+                  Match Summary
+                </h2>
+                {summaryLoading && (
+                  <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
+                )}
+              </div>
+              <p className="text-slate-700 leading-relaxed">{displaySummary}</p>
+              {summaryError && (
+                <p className="mt-2 text-xs text-amber-600">
+                  AI summary unavailable. Showing rule-based summary.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Score Breakdown */}
+          {rfp.match.breakdown.length > 0 && !rfp.match.disqualified && (
+            <div className="p-6 md:p-8 border-b border-slate-100">
+              <h2 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h2>
+              <div className="space-y-3">
+                {rfp.match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
+                  // All bars are the same full width; colored fill shows points/maxPoints ratio
+                  const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                  // Color based on fill percentage: red → orange → yellow → green
+                  const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
+                  const barColor =
+                    fillRatio >= 0.75 ? "bg-emerald-500" :
+                    fillRatio >= 0.5 ? "bg-yellow-400" :
+                    fillRatio >= 0.25 ? "bg-orange-400" :
+                    fillRatio > 0 ? "bg-red-400" :
+                    "bg-slate-200";
+                  const textColor =
+                    fillRatio >= 0.75 ? "text-emerald-700" :
+                    fillRatio >= 0.5 ? "text-yellow-600" :
+                    fillRatio >= 0.25 ? "text-orange-600" :
+                    b.points === 0 && b.maxPoints > 0 ? "text-red-600" :
+                    "text-slate-500";
+
+                  return (
+                    <div key={i}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-slate-700">{b.category}</span>
+                        {b.maxPoints > 0 && (
+                          <span className={`text-xs font-bold ${textColor}`}>{b.points}/{b.maxPoints}</span>
+                        )}
+                      </div>
+                      {b.maxPoints > 0 ? (
+                        <div className="h-2 rounded-full overflow-hidden relative w-full">
+                          <div className="absolute inset-0 bg-slate-200 rounded-full" />
+                          <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${fillPct}%` }} />
+                        </div>
+                      ) : (
+                        <p className={`text-xs ${textColor}`}>{b.detail}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Capabilities Analysis - AI comparison of company profile vs RFP requirements */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <h2 className="text-sm font-bold text-slate-900 mb-3">Capabilities Analysis</h2>
+            {capabilitiesAnalysisLoading ? (
+              <p className="text-slate-500 text-sm animate-pulse">Analyzing capabilities against requirements…</p>
+            ) : capabilitiesAnalysis ? (
+              <MarkdownContent content={capabilitiesAnalysis} />
+            ) : capabilitiesAnalysisError ? (
+              <p className="text-xs text-amber-600">Capabilities analysis unavailable.</p>
+            ) : (
+              <p className="text-slate-500 text-sm">No company profile available for analysis.</p>
+            )}
+          </div>
+
           {/* About this RFP - AI summary of contract requirements */}
           <div className="p-6 md:p-8 border-b border-slate-100">
             <h2 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h2>
@@ -852,8 +1120,8 @@ export default function RFPDetailPage() {
             )}
           </div>
 
-          {/* Details & link */}
-          <div className="p-6 md:p-8">
+          {/* Details */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
             <h2 className="text-sm font-bold text-slate-900 mb-3">Details</h2>
             <div className="flex flex-wrap gap-2 mb-4">
               {rfp.naicsCodes?.map((n) => (
@@ -867,12 +1135,12 @@ export default function RFPDetailPage() {
                 </span>
               ))}
             </div>
-            {rfp.eventUrl && (
+            {(rfp.eventUrl || rfp.id) && (
               <a
-                href={rfp.eventUrl}
+                href={rfp.eventUrl || "#"}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 text-sm font-medium text-[#2563eb] hover:underline"
+                className="inline-flex items-center justify-center gap-2 min-w-[200px] px-5 py-3 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors shadow-sm"
               >
                 View on Cal eProcure
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -881,6 +1149,7 @@ export default function RFPDetailPage() {
               </a>
             )}
           </div>
+
         </article>
       </main>
     </div>

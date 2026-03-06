@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -47,7 +47,6 @@ interface CompanyProfile {
   uploadedFiles?: Array<{
     name: string;
     type: string;
-    size: number;
     uploadedAt: string;
     parsed?: boolean;
     uploadedToBackend?: boolean;
@@ -108,6 +107,11 @@ export default function ProfilePage() {
   const [profileLoadedFromBackend, setProfileLoadedFromBackend] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [dupMessage, setDupMessage] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const dragCounter = useRef(0);
+  const pendingFilesRef = useRef<Map<string, File>>(new Map());
+  const deletionsInFlightRef = useRef<Promise<void>[]>([]);
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -288,7 +292,7 @@ export default function ProfilePage() {
             : file
         );
         mergedProfile.uploadedFiles = updatedFiles;
-
+        
         // Update profile state
         setProfile(mergedProfile);
 
@@ -329,7 +333,13 @@ export default function ProfilePage() {
       .then((data) => {
         if (!data) {
           setCurrentUser(null);
-          setProfile(null);
+          // Fall back to localStorage profile for unauthenticated users
+          const saved = localStorage.getItem("companyProfile");
+          if (saved) {
+            try { setProfile(JSON.parse(saved)); } catch { setProfile(null); }
+          } else {
+            setProfile(null);
+          }
           setInitialLoadDone(true);
           setLoadingProfile(false);
           return;
@@ -415,6 +425,8 @@ export default function ProfilePage() {
     work_counties: p.workCounties ?? [],
     capabilities: p.capabilities ?? [],
     agency_experience: p.agencyExperience ?? [],
+    size_status: p.sizeStatus ?? [],
+    contract_types: p.contractTypes ?? [],
   });
 
   const saveSection = async () => {
@@ -423,57 +435,40 @@ export default function ProfilePage() {
     let profileToSave = profile;
     try {
       if (editingSection === "documents") {
-        const storedFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-        const filesToUpload: File[] = [];
-        const namesToMarkUploaded: string[] = [];
-
         if (currentUser && getAuthToken()) {
-          for (const fileInfo of profile.uploadedFiles ?? []) {
+          const failedFiles: string[] = [];
+          for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
-            const stored = storedFiles.find((f: { name: string }) => f.name === fileInfo.name);
-            if (stored?.content) {
-              const base64Data = stored.content.split(",")[1];
-              if (base64Data) {
-                const byteCharacters = atob(base64Data);
-                const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                  byteNumbers[i] = byteCharacters.charCodeAt(i);
-                }
-                const blob = new Blob([new Uint8Array(byteNumbers)], { type: stored.type });
-                filesToUpload.push(new File([blob], stored.name, { type: stored.type }));
-                namesToMarkUploaded.push(fileInfo.name);
+            const file = pendingFilesRef.current.get(fileInfo.name);
+            if (file) {
+              try {
+                await uploadContractDocument(file, file.name);
+              } catch (e) {
+                console.error("Upload failed:", file.name, e);
+                failedFiles.push(file.name);
               }
             }
           }
-          const nameToContractId: Record<string, string> = {};
-          for (const file of filesToUpload) {
-            const result = await uploadContractDocument(file, file.name);
-            if (result?.id) nameToContractId[file.name] = result.id;
+          pendingFilesRef.current.clear();
+
+          if (deletionsInFlightRef.current.length > 0) {
+            await Promise.all(deletionsInFlightRef.current);
+            deletionsInFlightRef.current = [];
           }
-          if (namesToMarkUploaded.length > 0) {
-            setProfile((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    uploadedFiles: (prev.uploadedFiles ?? []).map((f) =>
-                      namesToMarkUploaded.includes(f.name)
-                        ? { ...f, uploadedToBackend: true, contractId: nameToContractId[f.name] ?? f.contractId }
-                        : f
-                    ),
-                  }
-                : null
-            );
-            profileToSave = {
-              ...profileToSave,
-              uploadedFiles: (profileToSave.uploadedFiles ?? []).map((f) =>
-                namesToMarkUploaded.includes(f.name)
-                  ? { ...f, uploadedToBackend: true, contractId: nameToContractId[f.name] ?? f.contractId }
-                  : f
-              ),
-            };
+
+          const backendProfile = await getProfileFromBackend();
+          const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
+          setProfile(mapped);
+          setCachedProfile(currentUser.user_id, mapped);
+          if (failedFiles.length > 0) {
+            alert(`The following files failed to upload:\n${failedFiles.join("\n")}\n\nPlease try again.`);
           }
+          setEditingSection(null);
+          setSectionSaving(false);
+          return;
         }
 
+        const storedFiles = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
         const unparsedFiles = profileToSave.uploadedFiles?.filter((file) => !file.parsed) || [];
         if (unparsedFiles.length > 0) {
           try {
@@ -496,19 +491,13 @@ export default function ProfilePage() {
             }
             if (filesToParse.length > 0) {
               const extractedData = await parseDocumentsWithBackend(filesToParse);
-
-              // Merge extracted data with existing profile
               const mergedProfile = mergeProfileData(profileToSave, extractedData);
-
-              // Mark files as parsed
               const updatedFiles = (mergedProfile.uploadedFiles ?? []).map((file) =>
                 unparsedFiles.some((uf) => uf.name === file.name)
                   ? { ...file, parsed: true }
                   : file
               );
               mergedProfile.uploadedFiles = updatedFiles;
-
-              // Update profile state
               setProfile(mergedProfile);
               profileToSave = mergedProfile;
             }
@@ -517,6 +506,7 @@ export default function ProfilePage() {
             alert(`Warning: Could not parse some documents. Profile saved without updates from those files.`);
           }
         }
+
       } else {
         profileToSave = profile;
       }
@@ -537,53 +527,63 @@ export default function ProfilePage() {
     }
   };
 
-  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || !profile) return;
-    Array.from(files).forEach((file) => {
+  const ACCEPTED_EXTENSIONS = [".pdf", ".doc", ".docx", ".txt"];
+
+  const addFiles = (incoming: File[]) => {
+    if (!profile) return;
+    const accepted = incoming.filter((f) =>
+      ACCEPTED_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext))
+    );
+    if (accepted.length === 0) return;
+    const existingNames = new Set((profile.uploadedFiles ?? []).map((f) => f.name));
+    const newFiles = accepted.filter((f) => {
+      if (existingNames.has(f.name)) return false;
+      existingNames.add(f.name);
+      return true;
+    });
+    const skipped = accepted.length - newFiles.length;
+    if (skipped > 0) {
+      setDupMessage(`${skipped} duplicate file(s) already uploaded — skipped.`);
+    } else {
+      setDupMessage("");
+    }
+    newFiles.forEach((file) => {
       const fileInfo = {
         name: file.name,
         type: file.type || "application/octet-stream",
-        size: file.size,
         uploadedAt: new Date().toISOString(),
         parsed: false,
       };
+      pendingFilesRef.current.set(file.name, file);
       setProfile((prev) =>
         prev
           ? { ...prev, uploadedFiles: [...(prev.uploadedFiles ?? []), fileInfo] }
           : null
       );
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          const fileData = { ...fileInfo, content: event.target.result as string };
-          const existing = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-          existing.push(fileData);
-          localStorage.setItem("uploadedFiles", JSON.stringify(existing));
-        }
-      };
-      reader.readAsDataURL(file);
     });
   };
 
-  const removeFile = async (index: number) => {
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    addFiles(Array.from(e.target.files));
+  };
+
+  const removeFile = (index: number) => {
     if (!profile?.uploadedFiles) return;
     const file = profile.uploadedFiles[index];
-    if (file?.uploadedToBackend && file?.contractId) {
-      try {
-        await deleteContractDocument(file.contractId);
-      } catch (e) {
-        console.error("Delete contract failed:", e);
-        alert(`Could not remove document: ${e instanceof Error ? e.message : "Unknown error"}`);
-        return;
-      }
+
+    setProfile((prev) => {
+      if (!prev?.uploadedFiles) return prev;
+      return { ...prev, uploadedFiles: prev.uploadedFiles.filter((_, i) => i !== index) };
+    });
+    pendingFilesRef.current.delete(file.name);
+
+    if (file.contractId && currentUser && getAuthToken()) {
+      const p = deleteContractDocument(file.contractId).catch((e) =>
+        console.error("Failed to delete file from backend:", e)
+      );
+      deletionsInFlightRef.current.push(p);
     }
-    const next = profile.uploadedFiles.filter((_, i) => i !== index);
-    setProfile((prev) => (prev ? { ...prev, uploadedFiles: next } : null));
-    const existing = JSON.parse(localStorage.getItem("uploadedFiles") || "[]");
-    const name = file?.name;
-    const nextStored = name ? existing.filter((f: { name: string }) => f.name !== name) : existing;
-    localStorage.setItem("uploadedFiles", JSON.stringify(nextStored));
   };
 
   function SearchFirstDropdown({
@@ -714,13 +714,17 @@ export default function ProfilePage() {
   if (profile === null) {
     return (
       <div className="min-h-screen bg-slate-50">
-        <AppHeader rightContent={<Link href="/profile" className={btnPrimary}>Save Profile</Link>} />
+        <AppHeader />
         <div className="max-w-3xl mx-auto px-6 py-16 text-center">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">No profile yet</h1>
           <p className="text-slate-600 mb-6">Create or save your company profile to see a summary here.</p>
-          <Link href="/profile" className={"inline-flex px-6 py-3 " + btnPrimary}>
+          <button
+            type="button"
+            onClick={() => setProfile(getEmptyCompanyProfile())}
+            className={"inline-flex px-6 py-3 " + btnPrimary}
+          >
             Create profile
-          </Link>
+          </button>
         </div>
       </div>
     );
@@ -755,7 +759,17 @@ export default function ProfilePage() {
       <h2 className={sectionTitleClass.replace(" mb-4", "")}>{title}</h2>
       {editingSection === sectionId ? (
         <div className="flex items-center gap-2 shrink-0">
-          <button type="button" onClick={() => setEditingSection(null)} className={btnSecondary}>
+          <button type="button" onClick={() => {
+            if (sectionId === "documents") {
+              setProfile((prev) =>
+                prev
+                  ? { ...prev, uploadedFiles: (prev.uploadedFiles ?? []).filter((f) => f.parsed !== false) }
+                  : null
+              );
+              setDupMessage("");
+            }
+            setEditingSection(null);
+          }} className={btnSecondary}>
             Cancel
           </button>
           <button type="button" onClick={saveSection} disabled={sectionSaving} className={btnPrimary + " disabled:opacity-50"}>
@@ -813,18 +827,18 @@ export default function ProfilePage() {
             {hasAnyData && (
               <Link
                 href="/dashboard"
-                className="shrink-0 w-full lg:w-auto flex items-center gap-3 p-4 rounded-lg border border-slate-200 bg-white hover:border-[#3C89C6]/40 hover:bg-slate-50/50 transition-colors group"
+                className="shrink-0 w-full lg:w-auto flex items-center gap-3 p-4 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:shadow-[#3C89C6]/30 hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20"
               >
-                <div className="flex-shrink-0 w-10 h-10 rounded-md bg-[#3C89C6]/10 flex items-center justify-center">
-                  <svg className="w-5 h-5 text-[#3C89C6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-105 group-hover:bg-white/25 transition-all duration-200">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                   </svg>
                 </div>
                 <div className="min-w-0">
-                  <p className="font-semibold text-slate-900">View Matches</p>
-                  <p className="text-sm text-slate-600">RFPs tailored to your profile</p>
+                  <p className="font-semibold text-white">View Matches</p>
+                  <p className="text-sm text-white/85">RFPs tailored to your profile</p>
                 </div>
-                <svg className="w-4 h-4 text-slate-400 group-hover:text-[#3C89C6] shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 text-white/90 group-hover:text-white group-hover:translate-x-0.5 shrink-0 transition-all duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </Link>
@@ -1141,43 +1155,71 @@ export default function ProfilePage() {
               <SectionHeader title="Uploaded Documents" sectionId="documents" />
               {editingSection === "documents" ? (
                 <div className="space-y-4">
-                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center hover:border-[#3C89C6] transition-colors">
+                  <div
+                    className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                      dragging
+                        ? "border-[#3C89C6] bg-slate-100"
+                        : "border-slate-300 hover:border-[#3C89C6]"
+                    }`}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current++; setDragging(true); }}
+                    onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current--; if (dragCounter.current <= 0) { dragCounter.current = 0; setDragging(false); } }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      dragCounter.current = 0;
+                      setDragging(false);
+                      addFiles(Array.from(e.dataTransfer.files));
+                    }}
+                  >
+                    {dragging && (
+                      <div className="absolute inset-0 bg-slate-200/60 rounded-lg flex items-center justify-center z-10 pointer-events-none">
+                        <p className="text-2xl font-bold text-[#3C89C6]">Drop files here</p>
+                      </div>
+                    )}
                     <input type="file" id="profile-file-upload" multiple accept=".pdf,.doc,.docx,.txt" onChange={handleFileUpload} className="hidden" />
-                    <label htmlFor="profile-file-upload" className="cursor-pointer flex flex-col items-center">
+                    <label htmlFor="profile-file-upload" className={`cursor-pointer flex flex-col items-center ${dragging ? "opacity-30" : ""}`}>
                       <svg className="w-12 h-12 text-slate-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                       </svg>
-                      <span className="text-sm font-medium text-slate-700">Click to upload files</span>
+                      <span className="text-sm font-medium text-slate-700">Drag & drop files here, or click to upload</span>
                       <span className="text-xs text-slate-500 mt-1">PDF, DOC, DOCX, TXT</span>
                     </label>
                   </div>
                   {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
                     <div className="mt-4 space-y-2">
-                      <h3 className="text-sm font-medium text-slate-700 mb-2">Uploaded Files ({profile.uploadedFiles.length})</h3>
-                      {profile.uploadedFiles.map((file, index) => (
-                        <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
-                          <div className="flex items-center space-x-3">
-                            <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm font-medium text-slate-900">{file.name}</p>
-                                {file.parsed && (
-                                  <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Parsed</span>
-                                )}
-                                {!file.parsed && (
-                                  <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
-                                )}
+                      <h3 className="text-sm font-medium text-slate-700 mb-2">
+                        Uploaded Files ({profile.uploadedFiles.length})
+                      </h3>
+                      {profile.uploadedFiles.map((file, index) => {
+                        return (
+                          <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
+                            <div className="flex items-center space-x-3">
+                              <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium text-slate-900">{file.name}</p>
+                                  {file.parsed && (
+                                    <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Parsed</span>
+                                  )}
+                                  {!file.parsed && (
+                                    <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-500">{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}</p>
                               </div>
-                              <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(2)} KB</p>
                             </div>
+                            <button type="button" onClick={() => removeFile(index)} disabled={sectionSaving} className="text-red-600 hover:text-red-700 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+                              Remove
+                            </button>
                           </div>
-                          <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
-                            Remove
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
+                      {dupMessage && (
+                        <p className="text-sm text-amber-600 mt-2">{dupMessage}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1186,7 +1228,6 @@ export default function ProfilePage() {
                   {profile.uploadedFiles?.map((file, i) => (
                     <li key={i} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                       <span className="text-slate-700 font-medium">{file.name}</span>
-                      <span className="text-slate-500 text-sm">{(file.size / 1024).toFixed(2)} KB</span>
                     </li>
                   ))}
                 </ul>

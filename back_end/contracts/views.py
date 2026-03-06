@@ -2,6 +2,9 @@ import logging
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.middleware.csrf import get_token
 from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -27,6 +30,7 @@ from .services import (
     contract_dict_to_object,
 )
 from .services.token_storage import create_token, delete_token
+from .services.user_rfp_status import get_rfp_status, add_applied_rfp, remove_applied_rfp, add_in_progress_rfp
 
 logger = logging.getLogger(__name__)
 
@@ -53,21 +57,49 @@ class SignupView(APIView):
 
         if not username or not password:
             return Response(
-                {'error': 'username and password required'},
+                {'error': 'Username and password are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not email:
+            return Response(
+                {'error': 'Email is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            validate_email(email)
+        except ValidationError:
+            return Response(
+                {'error': 'Please enter a valid email address.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            validate_password(password)
+        except ValidationError as e:
+            return Response(
+                {'error': ' '.join(e.messages)},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         User = get_user_model()
         if User.objects.filter(username__iexact=username).exists():
             return Response(
-                {'error': 'A user with that username already exists'},
+                {'error': 'A user with that username already exists.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(email__iexact=email).exists():
+            return Response(
+                {'error': 'An account with that email already exists.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         user = User.objects.create_user(
             username=username,
             password=password,
-            email=email or '',
+            email=email,
         )
         logger.info("Signup: creating profile in AWS for user_id=%s username=%s", user.id, user.username)
         get_or_create_profile(user.id)
@@ -138,9 +170,12 @@ class CurrentUserView(APIView):
             logger.info("Auth/me: fetching user + profile from S3 for user_id=%s username=%s", user.id, user.username)
             profile_dict = get_or_create_profile(user.id)
             profile = profile_dict_to_object(profile_dict)
+            rfp_status = get_rfp_status(user.id)
             serializer = UserWithProfileSerializer({
                 'user': user,
                 'profile': profile,
+                'applied_rfp_ids': rfp_status['applied_rfp_ids'],
+                'in_progress_rfp_ids': rfp_status['in_progress_rfp_ids'],
             })
             logger.info("Auth/me: returning user + profile for user_id=%s", user.id)
         else:
@@ -148,8 +183,43 @@ class CurrentUserView(APIView):
             serializer = UserWithProfileSerializer({
                 'user': user,
                 'profile': None,
+                'applied_rfp_ids': [],
+                'in_progress_rfp_ids': [],
             })
         return Response(serializer.data)
+
+
+class UserRfpStatusView(APIView):
+    """PATCH to mark an RFP as applied or in progress (POA generated). Stored in user data in S3."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def patch(self, request):
+        data = request.data if isinstance(request.data, dict) else {}
+        mark_applied = data.get('mark_applied')
+        remove_applied = data.get('remove_applied')
+        mark_in_progress = data.get('mark_in_progress')
+        if not mark_applied and not remove_applied and not mark_in_progress:
+            return Response(
+                {'error': 'Provide mark_applied, remove_applied, and/or mark_in_progress with an RFP id (string).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        user_id = request.user.id
+        result = get_rfp_status(user_id)
+        if remove_applied:
+            rfp_id = str(remove_applied).strip()
+            if rfp_id:
+                result = remove_applied_rfp(user_id, rfp_id)
+        if mark_applied:
+            rfp_id = str(mark_applied).strip()
+            if rfp_id:
+                result = add_applied_rfp(user_id, rfp_id)
+        if mark_in_progress:
+            rfp_id = str(mark_in_progress).strip()
+            if rfp_id:
+                result = add_in_progress_rfp(user_id, rfp_id)
+        return Response(result)
 
 
 class ContractExtractView(APIView):
@@ -332,48 +402,110 @@ class ProfileExtractView(APIView):
                 elif 'naics' in cert_lower:
                     certifications.add('NAICS Codes')
             
-            # Capabilities from work_description and industry_tags
+            # Capabilities from work_description, industry_tags, scope_keywords, and technology_stack
             work_desc = features.get('work_description', '').lower()
-            for tag in industry_tags:
-                tag_lower = tag.lower()
-                if 'software' in tag_lower or 'software' in work_desc:
-                    capabilities.add('Software Development')
-                if 'cloud' in tag_lower or 'cloud' in work_desc:
-                    capabilities.add('Cloud Services')
-                if 'cyber' in tag_lower or 'security' in work_desc:
-                    capabilities.add('Cybersecurity')
-                if 'data' in tag_lower or 'analytics' in work_desc:
-                    capabilities.add('Data Analytics')
-                if 'project' in work_desc or 'management' in work_desc:
-                    capabilities.add('Project Management')
-                if 'integration' in work_desc or 'system' in work_desc:
-                    capabilities.add('System Integration')
-                if 'network' in work_desc:
-                    capabilities.add('Network Infrastructure')
-                if 'database' in work_desc:
-                    capabilities.add('Database Management')
-                if 'web' in work_desc:
-                    capabilities.add('Web Development')
-                if 'mobile' in work_desc:
-                    capabilities.add('Mobile Development')
-                if 'ai' in work_desc or 'ml' in work_desc or 'machine learning' in work_desc:
-                    capabilities.add('AI/ML Services')
-                if 'devops' in work_desc:
-                    capabilities.add('DevOps')
-                if 'qa' in work_desc or 'quality' in work_desc:
-                    capabilities.add('Quality Assurance')
-                if 'writing' in work_desc or 'technical' in work_desc:
-                    capabilities.add('Technical Writing')
-                if 'training' in work_desc or 'support' in work_desc:
-                    capabilities.add('Training & Support')
-            
-            # Contract types - infer from contract structure
-            # Most government contracts are competitive, fixed price, or time & materials
-            contract_types.add('Competitive')
-            if 'fixed' in work_desc or 'firm' in work_desc:
-                contract_types.add('Fixed Price')
-            if 'time' in work_desc or 'material' in work_desc:
-                contract_types.add('Time & Materials')
+            all_text = work_desc + ' ' + ' '.join(tag.lower() for tag in industry_tags)
+
+            # Add scope_keywords directly as capabilities (they describe the work type)
+            scope_keywords = features.get('scope_keywords', [])
+            for kw in scope_keywords:
+                if kw and kw.strip():
+                    capabilities.add(kw.strip())
+
+            # IT / Technology capabilities
+            if 'software' in all_text:
+                capabilities.add('Software Development')
+            if 'cloud' in all_text or 'aws' in all_text or 'azure' in all_text:
+                capabilities.add('Cloud Services')
+            if 'cyber' in all_text or 'infosec' in all_text:
+                capabilities.add('Cybersecurity')
+            if 'data analytics' in all_text or 'analytics' in all_text:
+                capabilities.add('Data Analytics')
+            if 'database' in all_text:
+                capabilities.add('Database Management')
+            if 'web' in all_text:
+                capabilities.add('Web Development')
+            if 'mobile' in all_text:
+                capabilities.add('Mobile Development')
+            if 'ai' in all_text or 'machine learning' in all_text:
+                capabilities.add('AI/ML Services')
+            if 'devops' in all_text:
+                capabilities.add('DevOps')
+            if 'network' in all_text:
+                capabilities.add('Network Infrastructure')
+            if 'integration' in all_text:
+                capabilities.add('System Integration')
+            # Construction / Engineering capabilities
+            if 'construction' in all_text or 'building' in all_text or 'demolition' in all_text:
+                capabilities.add('Building Construction')
+            if 'road' in all_text or 'highway' in all_text or 'paving' in all_text or 'asphalt' in all_text:
+                capabilities.add('Road & Highway Construction')
+            if 'concrete' in all_text or 'masonry' in all_text:
+                capabilities.add('Concrete & Masonry')
+            if 'renovation' in all_text or 'remodel' in all_text or 'rehabilitat' in all_text:
+                capabilities.add('Renovation & Remodeling')
+            if 'civil engineer' in all_text or 'structural' in all_text:
+                capabilities.add('Civil Engineering')
+            if 'electrical' in all_text or 'wiring' in all_text or 'generator' in all_text:
+                capabilities.add('Electrical Systems')
+            if 'plumbing' in all_text or 'piping' in all_text:
+                capabilities.add('Plumbing & Piping')
+            # Facilities / Maintenance capabilities
+            if 'janitorial' in all_text or 'cleaning' in all_text or 'custodial' in all_text:
+                capabilities.add('Janitorial & Cleaning')
+            if 'hvac' in all_text or 'heating' in all_text or 'ventilation' in all_text:
+                capabilities.add('HVAC Services')
+            if 'maintenance' in all_text or 'repair' in all_text:
+                capabilities.add('Facilities Maintenance & Repair')
+            if 'landscap' in all_text or 'grounds' in all_text:
+                capabilities.add('Landscaping & Grounds')
+            if 'pest control' in all_text:
+                capabilities.add('Pest Control')
+            if 'waste' in all_text or 'disposal' in all_text or 'refuse' in all_text:
+                capabilities.add('Waste Management & Disposal')
+            # Professional Services capabilities
+            if 'consult' in all_text or 'advisory' in all_text:
+                capabilities.add('Consulting & Advisory')
+            if 'project manage' in all_text or 'program manage' in all_text:
+                capabilities.add('Project Management')
+            if 'quality' in all_text or 'inspection' in all_text or 'qa' in all_text:
+                capabilities.add('Quality Assurance')
+            if 'writing' in all_text or 'technical writ' in all_text:
+                capabilities.add('Technical Writing')
+            if 'training' in all_text or 'education' in all_text:
+                capabilities.add('Training & Support')
+            if 'staffing' in all_text or 'recruiting' in all_text:
+                capabilities.add('Staffing & Recruiting')
+            if 'accounting' in all_text or 'financial' in all_text or 'payroll' in all_text:
+                capabilities.add('Accounting & Financial Services')
+            if 'legal' in all_text or 'attorney' in all_text:
+                capabilities.add('Legal Services')
+            # Other capabilities
+            if 'equipment' in all_text or 'procurement' in all_text:
+                capabilities.add('Equipment Procurement')
+            if 'vehicle' in all_text or 'fleet' in all_text or 'automotive' in all_text:
+                capabilities.add('Vehicle & Fleet Services')
+            if 'courier' in all_text or 'delivery' in all_text:
+                capabilities.add('Courier & Delivery')
+            if 'remediat' in all_text or 'hazmat' in all_text or 'abatement' in all_text:
+                capabilities.add('Environmental Remediation')
+            if 'medical' in all_text or 'clinical' in all_text or 'health service' in all_text:
+                capabilities.add('Medical & Health Services')
+            if 'fire' in all_text or 'emergency' in all_text:
+                capabilities.add('Fire & Safety Services')
+            if 'printing' in all_text or 'publishing' in all_text:
+                capabilities.add('Printing & Publishing')
+
+            # Contract types - use extracted contract_type first, then infer
+            ct = features.get('contract_type', '')
+            if ct and ct.strip():
+                contract_types.add(ct.strip())
+            else:
+                contract_types.add('Competitive')
+                if 'fixed' in work_desc or 'firm' in work_desc:
+                    contract_types.add('Fixed Price')
+                if 'time' in work_desc or 'material' in work_desc:
+                    contract_types.add('Time & Materials')
             
             # Past performance description
             title = extracted.get('title', '')
@@ -472,12 +604,16 @@ class ContractListCreateView(generics.ListCreateAPIView):
                     data['title'] = extracted['title']
                 if not data.get('rfp_id') and extracted.get('rfp_id'):
                     data['rfp_id'] = extracted['rfp_id']
+                if not data.get('contractor_name') and extracted.get('contractor_name'):
+                    data['contractor_name'] = extracted['contractor_name']
             except ExtractionError:
                 pass
         metadata = {
             'title': data.get('title', ''),
+            'contractor_name': data.get('contractor_name', ''),
             'rfp_id': data.get('rfp_id', ''),
             'issuing_agency': data.get('issuing_agency', 'Unknown'),
+            'contractor_name': data.get('contractor_name', ''),
             'jurisdiction_state': jur.get('state', 'CA'),
             'jurisdiction_county': jur.get('county', ''),
             'jurisdiction_city': jur.get('city', ''),
@@ -489,8 +625,13 @@ class ContractListCreateView(generics.ListCreateAPIView):
             'industry_tags': feats.get('industry_tags', []),
             'min_past_performance': feats.get('min_past_performance', ''),
             'contract_value_estimate': feats.get('contract_value_estimate', ''),
+            'contract_value_max': feats.get('contract_value_max', ''),
             'timeline_duration': feats.get('timeline_duration', ''),
             'work_description': feats.get('work_description', ''),
+            'technology_stack': feats.get('technology_stack', []),
+            'team_size': feats.get('team_size', ''),
+            'scope_keywords': feats.get('scope_keywords', []),
+            'contract_type': feats.get('contract_type', ''),
             'award_date': dts.get('award_date', ''),
             'start_date': dts.get('start_date', ''),
             'end_date': dts.get('end_date', ''),
@@ -585,8 +726,7 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
         serializer = self.get_serializer(data=request.data, partial=kwargs.get('partial', True))
         serializer.is_valid(raise_exception=True)
         for key, value in serializer.validated_data.items():
-            if key in profile_dict:
-                profile_dict[key] = value
+            profile_dict[key] = value
         profile_dict['user_id'] = user_id
         save_profile(profile_dict)  # writes to S3 users/{username}.json
         logger.info("Profile save: updated user JSON in S3 for user_id=%s", user_id)
