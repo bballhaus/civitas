@@ -30,7 +30,14 @@ from .services import (
     contract_dict_to_object,
 )
 from .services.token_storage import create_token, delete_token
-from .services.user_rfp_status import get_rfp_status, add_applied_rfp, remove_applied_rfp, add_in_progress_rfp
+from .services.user_rfp_status import (
+    get_rfp_status,
+    add_applied_rfp,
+    remove_applied_rfp,
+    add_in_progress_rfp,
+    get_generated_poe,
+    save_generated_poe,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +197,7 @@ class CurrentUserView(APIView):
 
 
 class UserRfpStatusView(APIView):
-    """PATCH to mark an RFP as applied or in progress (POA generated). Stored in user data in S3."""
+    """PATCH to mark an RFP as applied or in progress (POA generated), and optionally save generated POE. Stored in user data in S3."""
 
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser]
@@ -200,9 +207,10 @@ class UserRfpStatusView(APIView):
         mark_applied = data.get('mark_applied')
         remove_applied = data.get('remove_applied')
         mark_in_progress = data.get('mark_in_progress')
-        if not mark_applied and not remove_applied and not mark_in_progress:
+        save_generated_poe_payload = data.get('save_generated_poe')
+        if not mark_applied and not remove_applied and not mark_in_progress and not save_generated_poe_payload:
             return Response(
-                {'error': 'Provide mark_applied, remove_applied, and/or mark_in_progress with an RFP id (string).'},
+                {'error': 'Provide mark_applied, remove_applied, mark_in_progress, and/or save_generated_poe (object with rfp_id and content).'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         user_id = request.user.id
@@ -219,7 +227,29 @@ class UserRfpStatusView(APIView):
             rfp_id = str(mark_in_progress).strip()
             if rfp_id:
                 result = add_in_progress_rfp(user_id, rfp_id)
+        if save_generated_poe_payload and isinstance(save_generated_poe_payload, dict):
+            rfp_id = save_generated_poe_payload.get('rfp_id')
+            content = save_generated_poe_payload.get('content')
+            if rfp_id and isinstance(content, str):
+                save_generated_poe(user_id, str(rfp_id).strip(), content)
         return Response(result)
+
+
+class UserGeneratedPoeView(APIView):
+    """GET to fetch saved Plan of Execution for the current user and a given RFP."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        rfp_id = request.query_params.get('rfp_id', '').strip()
+        if not rfp_id:
+            return Response(
+                {'error': 'Provide rfp_id query parameter.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        user_id = request.user.id
+        content = get_generated_poe(user_id, rfp_id)
+        return Response({'plan_of_execution': content})
 
 
 class ContractExtractView(APIView):
