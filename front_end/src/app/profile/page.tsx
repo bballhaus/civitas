@@ -431,7 +431,6 @@ export default function ProfilePage() {
           for (const key of pendingRemovals) {
             try { await deleteContractDocument(key); } catch (e) { console.error("Delete failed:", key, e); }
           }
-          setPendingRemovals([]);
 
           const failedFiles: string[] = [];
           for (const fileInfo of profileToSave.uploadedFiles ?? []) {
@@ -451,6 +450,7 @@ export default function ProfilePage() {
           const backendProfile = await getProfileFromBackend();
           const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
           setProfile(mapped);
+          setPendingRemovals([]);
           setCachedProfile(currentUser.user_id, mapped);
           if (failedFiles.length > 0) {
             alert(`The following files failed to upload:\n${failedFiles.join("\n")}\n\nPlease try again.`);
@@ -1202,7 +1202,7 @@ export default function ProfilePage() {
                                 <p className="text-xs text-slate-500">{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}</p>
                               </div>
                             </div>
-                            <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
+                            <button type="button" onClick={() => removeFile(index)} disabled={sectionSaving} className="text-red-600 hover:text-red-700 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed">
                               Remove
                             </button>
                           </div>
