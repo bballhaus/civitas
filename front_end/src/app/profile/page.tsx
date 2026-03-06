@@ -108,10 +108,10 @@ export default function ProfilePage() {
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [dupMessage, setDupMessage] = useState("");
+  const [pendingRemovals, setPendingRemovals] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
   const pendingFilesRef = useRef<Map<string, File>>(new Map());
-  const deletionsInFlightRef = useRef<Promise<void>[]>([]);
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -333,13 +333,7 @@ export default function ProfilePage() {
       .then((data) => {
         if (!data) {
           setCurrentUser(null);
-          // Fall back to localStorage profile for unauthenticated users
-          const saved = localStorage.getItem("companyProfile");
-          if (saved) {
-            try { setProfile(JSON.parse(saved)); } catch { setProfile(null); }
-          } else {
-            setProfile(null);
-          }
+          setProfile(null);
           setInitialLoadDone(true);
           setLoadingProfile(false);
           return;
@@ -425,8 +419,6 @@ export default function ProfilePage() {
     work_counties: p.workCounties ?? [],
     capabilities: p.capabilities ?? [],
     agency_experience: p.agencyExperience ?? [],
-    size_status: p.sizeStatus ?? [],
-    contract_types: p.contractTypes ?? [],
   });
 
   const saveSection = async () => {
@@ -436,6 +428,10 @@ export default function ProfilePage() {
     try {
       if (editingSection === "documents") {
         if (currentUser && getAuthToken()) {
+          for (const key of pendingRemovals) {
+            try { await deleteContractDocument(key); } catch (e) { console.error("Delete failed:", key, e); }
+          }
+
           const failedFiles: string[] = [];
           for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
@@ -451,14 +447,10 @@ export default function ProfilePage() {
           }
           pendingFilesRef.current.clear();
 
-          if (deletionsInFlightRef.current.length > 0) {
-            await Promise.all(deletionsInFlightRef.current);
-            deletionsInFlightRef.current = [];
-          }
-
           const backendProfile = await getProfileFromBackend();
           const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
           setProfile(mapped);
+          setPendingRemovals([]);
           setCachedProfile(currentUser.user_id, mapped);
           if (failedFiles.length > 0) {
             alert(`The following files failed to upload:\n${failedFiles.join("\n")}\n\nPlease try again.`);
@@ -507,6 +499,15 @@ export default function ProfilePage() {
           }
         }
 
+        if (pendingRemovals.length > 0) {
+          profileToSave = {
+            ...profileToSave,
+            uploadedFiles: (profileToSave.uploadedFiles ?? []).filter(
+              (f) => !pendingRemovals.includes(f.contractId || f.name)
+            ),
+          };
+          setPendingRemovals([]);
+        }
       } else {
         profileToSave = profile;
       }
@@ -571,19 +572,8 @@ export default function ProfilePage() {
   const removeFile = (index: number) => {
     if (!profile?.uploadedFiles) return;
     const file = profile.uploadedFiles[index];
-
-    setProfile((prev) => {
-      if (!prev?.uploadedFiles) return prev;
-      return { ...prev, uploadedFiles: prev.uploadedFiles.filter((_, i) => i !== index) };
-    });
-    pendingFilesRef.current.delete(file.name);
-
-    if (file.contractId && currentUser && getAuthToken()) {
-      const p = deleteContractDocument(file.contractId).catch((e) =>
-        console.error("Failed to delete file from backend:", e)
-      );
-      deletionsInFlightRef.current.push(p);
-    }
+    const key = file.contractId || file.name;
+    setPendingRemovals((prev) => [...prev, key]);
   };
 
   function SearchFirstDropdown({
@@ -827,18 +817,18 @@ export default function ProfilePage() {
             {hasAnyData && (
               <Link
                 href="/dashboard"
-                className="shrink-0 w-full lg:w-auto flex items-center gap-3 p-4 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:shadow-[#3C89C6]/30 hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20"
+                className="shrink-0 w-full lg:w-auto flex items-center gap-3 p-4 rounded-lg border border-slate-200 bg-white hover:border-[#3C89C6]/40 hover:bg-slate-50/50 transition-colors group"
               >
-                <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-105 group-hover:bg-white/25 transition-all duration-200">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="flex-shrink-0 w-10 h-10 rounded-md bg-[#3C89C6]/10 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-[#3C89C6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                   </svg>
                 </div>
                 <div className="min-w-0">
-                  <p className="font-semibold text-white">View Matches</p>
-                  <p className="text-sm text-white/85">RFPs tailored to your profile</p>
+                  <p className="font-semibold text-slate-900">View Matches</p>
+                  <p className="text-sm text-slate-600">RFPs tailored to your profile</p>
                 </div>
-                <svg className="w-5 h-5 text-white/90 group-hover:text-white group-hover:translate-x-0.5 shrink-0 transition-all duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 text-slate-400 group-hover:text-[#3C89C6] shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </Link>
@@ -1189,9 +1179,10 @@ export default function ProfilePage() {
                   {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
                     <div className="mt-4 space-y-2">
                       <h3 className="text-sm font-medium text-slate-700 mb-2">
-                        Uploaded Files ({profile.uploadedFiles.length})
+                        Uploaded Files ({profile.uploadedFiles.filter((f) => !pendingRemovals.includes(f.contractId || f.name)).length})
                       </h3>
                       {profile.uploadedFiles.map((file, index) => {
+                        if (pendingRemovals.includes(file.contractId || file.name)) return null;
                         return (
                           <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
                             <div className="flex items-center space-x-3">
