@@ -177,7 +177,7 @@ def _upload_to_s3(file, s3_key, content_type=None):
         extra = {}
         if content_type:
             extra["ContentType"] = content_type
-        client.upload_fileobj(file, bucket, s3_key, **extra)
+        client.upload_fileobj(file, bucket, s3_key, ExtraArgs=extra if extra else None)
         return True
     except Exception as e:
         logger.warning("S3 upload failed for key=%s: %s", s3_key, e)
