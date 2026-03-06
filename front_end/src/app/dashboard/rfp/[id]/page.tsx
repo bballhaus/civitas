@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -12,6 +12,7 @@ import {
   generateMatchSummary,
 } from "@/lib/rfp-matching";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import { getCurrentUser, updateUserRfpStatus } from "@/lib/api";
 
 type RFPWithMatch = RFP & { match: RFPMatch };
 
@@ -42,6 +43,9 @@ export default function RFPDetailPage() {
   const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
   const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
   const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
+  const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
+  const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
+  const [userRfpStatusLoaded, setUserRfpStatusLoaded] = useState(false);
 
   const rfp: RFPWithMatch | null = rfpData && profileLoaded
     ? { ...rfpData, match: computeMatch(rfpData, profile) }
@@ -64,6 +68,16 @@ export default function RFPDetailPage() {
       }
     }
     setProfileLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    getCurrentUser(true).then((full) => {
+      setUserRfpStatusLoaded(true);
+      if (full) {
+        setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+        setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -460,6 +474,32 @@ export default function RFPDetailPage() {
       : null,
   });
 
+  const handleToggleApplied = useCallback(async () => {
+    if (!id) return;
+    const currentlyApplied = appliedRfpIds.has(id);
+    setAppliedRfpIds((prev) => {
+      const next = new Set(prev);
+      if (currentlyApplied) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    try {
+      if (currentlyApplied) {
+        await updateUserRfpStatus({ remove_applied: id });
+      } else {
+        await updateUserRfpStatus({ mark_applied: id });
+      }
+    } catch (e) {
+      setAppliedRfpIds((prev) => {
+        const next = new Set(prev);
+        if (currentlyApplied) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+      console.error("Failed to update applied status:", e);
+    }
+  }, [id, appliedRfpIds]);
+
   const handleGeneratePlanOfExecution = async (feedbackText?: string) => {
     if (!rfpData || planLoading) return;
     const trimmed = String(feedbackText ?? "").trim();
@@ -485,6 +525,12 @@ export default function RFPDetailPage() {
       const data = await res.json();
       setPlanOfExecution(data.plan ?? "");
       setPlanFeedback("");
+      try {
+        await updateUserRfpStatus({ mark_in_progress: id });
+        setInProgressRfpIds((prev) => new Set([...prev, id]));
+      } catch {
+        // ignore
+      }
     } catch (err) {
       setPlanError(
         err instanceof Error ? err.message : "Failed to generate plan"
@@ -542,7 +588,43 @@ export default function RFPDetailPage() {
         <article className="rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-200">
           {/* Header */}
           <div className="p-6 md:p-8 border-b border-slate-100">
-            <h1 className="text-2xl font-bold text-slate-900 mb-4">{rfp.title}</h1>
+            <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+              <h1 className="text-2xl font-bold text-slate-900">{rfp.title}</h1>
+              {userRfpStatusLoaded && (
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleToggleApplied}
+                    className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
+                      appliedRfpIds.has(id)
+                        ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100"
+                        : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    {appliedRfpIds.has(id) ? (
+                      <>
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Applied
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        I&apos;ve applied
+                      </>
+                    )}
+                  </button>
+                  {inProgressRfpIds.has(id) && (
+                    <span className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-50 text-violet-700 border border-violet-100">
+                      In progress
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2 mb-4">
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-50 text-blue-600">
                 {rfp.location}

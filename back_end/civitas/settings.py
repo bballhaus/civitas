@@ -70,13 +70,15 @@ CSRF_TRUSTED_ORIGINS = [
 _extra_csrf = os.getenv('CSRF_TRUSTED_ORIGINS_EXTRA', '')
 if _extra_csrf:
     CSRF_TRUSTED_ORIGINS.extend(s.strip() for s in _extra_csrf.split(',') if s.strip())
-# So the CSRF cookie is sent on cross-origin POST (required for Render frontend → backend)
-CSRF_COOKIE_SAMESITE = 'None'
-CSRF_COOKIE_SECURE = True
+# So the CSRF cookie is sent on cross-origin POST (required for Render frontend → backend).
+# On localhost (HTTP), use Lax + Secure=False so the browser will set and send the cookie.
+_secure_cookies = os.environ.get('SECURE_COOKIES', 'false').lower() == 'true'
+CSRF_COOKIE_SAMESITE = 'None' if _secure_cookies else 'Lax'
+CSRF_COOKIE_SECURE = _secure_cookies
 
 # Session cookie must also be sent on cross-origin requests so auth/me/ and other API calls see the logged-in user
-SESSION_COOKIE_SAMESITE = 'None'
-SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_SAMESITE = 'None' if _secure_cookies else 'Lax'
+SESSION_COOKIE_SECURE = _secure_cookies
 
 # NOTE: Session and CSRF are entirely handled by Django (this server), not by AWS.
 # - Session: stored in Django's session backend (db or cache). The session key is in the browser cookie.

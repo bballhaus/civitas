@@ -23,6 +23,7 @@ import {
   clearCachedUser,
   mapBackendProfileToCompanyProfile,
   getEmptyCompanyProfile,
+  updateUserRfpStatus,
 } from "@/lib/api";
 import {
   type RFP as RFPType,
@@ -610,6 +611,8 @@ export default function DashboardPage() {
   const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(new Set());
   const [notInterestedRfpIds, setNotInterestedRfpIds] = useState<Set<string>>(new Set());
   const [expressedInterestRfpIds, setExpressedInterestRfpIds] = useState<Set<string>>(new Set());
+  const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
+  const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [summaryCache, setSummaryCache] = useState<Record<string, string>>({});
 
@@ -703,6 +706,45 @@ export default function DashboardPage() {
     showToast("RFP restored to your list");
   };
 
+  const handleToggleApplied = useCallback(async (rfpId: string) => {
+    const currentlyApplied = appliedRfpIds.has(rfpId);
+    // Optimistic update: flip UI immediately
+    setAppliedRfpIds((prev) => {
+      const next = new Set(prev);
+      if (currentlyApplied) next.delete(rfpId);
+      else next.add(rfpId);
+      return next;
+    });
+    try {
+      if (currentlyApplied) {
+        await updateUserRfpStatus({ remove_applied: rfpId });
+        showToast("Removed from applied");
+      } else {
+        await updateUserRfpStatus({ mark_applied: rfpId });
+        showToast("Marked as applied");
+      }
+    } catch (e) {
+      // Revert on failure
+      setAppliedRfpIds((prev) => {
+        const next = new Set(prev);
+        if (currentlyApplied) next.add(rfpId);
+        else next.delete(rfpId);
+        return next;
+      });
+      console.error("Failed to update applied status:", e);
+      showToast(e instanceof Error ? e.message : "Failed to update — try again");
+    }
+  }, [appliedRfpIds]);
+
+  const handleMarkInProgress = useCallback(async (rfpId: string) => {
+    try {
+      await updateUserRfpStatus({ mark_in_progress: rfpId });
+      setInProgressRfpIds((prev) => new Set([...prev, rfpId]));
+    } catch (e) {
+      console.error("Failed to mark RFP in progress:", e);
+    }
+  }, []);
+
   const [showNotInterestedList, setShowNotInterestedList] = useState(false);
   const [listFilter, setListFilter] = useState<"all" | "saved">("all");
   const [filters, setFilters] = useState<RFPFilters>(EMPTY_FILTERS);
@@ -773,6 +815,11 @@ export default function DashboardPage() {
           setCachedUser(data);
         }
       });
+      getCurrentUser(true).then((full) => {
+        if (cancelled || !full) return;
+        setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+        setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+      });
       return () => { cancelled = true; };
     }
     getCurrentUser(false)
@@ -785,6 +832,11 @@ export default function DashboardPage() {
           if (cached) {
             setProfile(cached);
             setProfileLoadDone(true);
+            getCurrentUser(true).then((full) => {
+              if (cancelled || !full) return;
+              setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+              setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+            });
             return;
           }
           getCurrentUser(true)
@@ -794,6 +846,8 @@ export default function DashboardPage() {
               const mapped = apiProfile ?? getEmptyCompanyProfile();
               setProfile(mapped);
               setCachedProfile(full.user_id, mapped);
+              setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+              setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
               setProfileLoadDone(true);
             })
             .catch(() => {
@@ -1057,6 +1111,8 @@ export default function DashboardPage() {
               const { match } = rfp;
               const isSelected = rfp.id === selectedId;
               const isSaved = savedRfpIds.has(rfp.id);
+              const isApplied = appliedRfpIds.has(rfp.id);
+              const isInProgress = inProgressRfpIds.has(rfp.id);
               const reasonSnippet = generateMatchSummary(rfp, match);
 
               return (
@@ -1106,6 +1162,19 @@ export default function DashboardPage() {
                         Saved
                       </span>
                     )}
+                    {isApplied && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Applied
+                      </span>
+                    )}
+                    {isInProgress && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-violet-50 text-violet-700">
+                        In progress
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between">
                     <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
@@ -1138,6 +1207,9 @@ export default function DashboardPage() {
               MatchBadge={MatchBadge}
               isSaved={savedRfpIds.has(selectedRfp.id)}
               onSave={() => handleSaveRfp(selectedRfp.id)}
+              isApplied={appliedRfpIds.has(selectedRfp.id)}
+              onToggleApplied={() => handleToggleApplied(selectedRfp.id)}
+              isInProgress={inProgressRfpIds.has(selectedRfp.id)}
               cachedSummary={summaryCache[selectedRfp.id]}
               onSummaryReady={handleSummaryReady}
             />
@@ -1159,6 +1231,9 @@ function RFPDetailPanel({
   MatchBadge,
   isSaved,
   onSave,
+  isApplied,
+  onToggleApplied,
+  isInProgress,
   cachedSummary,
   onSummaryReady,
 }: {
@@ -1168,6 +1243,9 @@ function RFPDetailPanel({
   MatchBadge: React.ComponentType<{ score: number; tier?: RFPMatch["tier"]; disqualified?: boolean }>;
   isSaved: boolean;
   onSave: () => void;
+  isApplied: boolean;
+  onToggleApplied: () => void;
+  isInProgress: boolean;
   cachedSummary?: string;
   onSummaryReady: (rfpId: string, summary: string) => void;
 }) {
@@ -1369,10 +1447,10 @@ function RFPDetailPanel({
         <div className="p-6 md:p-8 border-b border-slate-100">
           <div className="flex items-start justify-between gap-4 mb-4">
             <h2 className="text-xl font-bold text-slate-900">RFP Match</h2>
-            <div className="flex items-center gap-3 shrink-0 flex-wrap">
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
               <button
                 type="button"
-                onClick={onSave}
+                onClick={(e) => { e.stopPropagation(); onSave(); }}
                 className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
                   isSaved
                     ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100"
@@ -1384,6 +1462,36 @@ function RFPDetailPanel({
                 </svg>
                 {isSaved ? "Saved" : "Save"}
               </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onToggleApplied(); }}
+                className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
+                  isApplied
+                    ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100"
+                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                {isApplied ? (
+                  <>
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Applied
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    I&apos;ve applied
+                  </>
+                )}
+              </button>
+              {isInProgress && (
+                <span className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-50 text-violet-700 border border-violet-100">
+                  In progress
+                </span>
+              )}
               <Link
                 href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors"

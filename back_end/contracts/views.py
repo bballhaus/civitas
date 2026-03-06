@@ -30,6 +30,7 @@ from .services import (
     contract_dict_to_object,
 )
 from .services.token_storage import create_token, delete_token
+from .services.user_rfp_status import get_rfp_status, add_applied_rfp, remove_applied_rfp, add_in_progress_rfp
 
 logger = logging.getLogger(__name__)
 
@@ -169,9 +170,12 @@ class CurrentUserView(APIView):
             logger.info("Auth/me: fetching user + profile from S3 for user_id=%s username=%s", user.id, user.username)
             profile_dict = get_or_create_profile(user.id)
             profile = profile_dict_to_object(profile_dict)
+            rfp_status = get_rfp_status(user.id)
             serializer = UserWithProfileSerializer({
                 'user': user,
                 'profile': profile,
+                'applied_rfp_ids': rfp_status['applied_rfp_ids'],
+                'in_progress_rfp_ids': rfp_status['in_progress_rfp_ids'],
             })
             logger.info("Auth/me: returning user + profile for user_id=%s", user.id)
         else:
@@ -179,8 +183,43 @@ class CurrentUserView(APIView):
             serializer = UserWithProfileSerializer({
                 'user': user,
                 'profile': None,
+                'applied_rfp_ids': [],
+                'in_progress_rfp_ids': [],
             })
         return Response(serializer.data)
+
+
+class UserRfpStatusView(APIView):
+    """PATCH to mark an RFP as applied or in progress (POA generated). Stored in user data in S3."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def patch(self, request):
+        data = request.data if isinstance(request.data, dict) else {}
+        mark_applied = data.get('mark_applied')
+        remove_applied = data.get('remove_applied')
+        mark_in_progress = data.get('mark_in_progress')
+        if not mark_applied and not remove_applied and not mark_in_progress:
+            return Response(
+                {'error': 'Provide mark_applied, remove_applied, and/or mark_in_progress with an RFP id (string).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        user_id = request.user.id
+        result = get_rfp_status(user_id)
+        if remove_applied:
+            rfp_id = str(remove_applied).strip()
+            if rfp_id:
+                result = remove_applied_rfp(user_id, rfp_id)
+        if mark_applied:
+            rfp_id = str(mark_applied).strip()
+            if rfp_id:
+                result = add_applied_rfp(user_id, rfp_id)
+        if mark_in_progress:
+            rfp_id = str(mark_in_progress).strip()
+            if rfp_id:
+                result = add_in_progress_rfp(user_id, rfp_id)
+        return Response(result)
 
 
 class ContractExtractView(APIView):

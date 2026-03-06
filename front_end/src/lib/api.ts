@@ -25,6 +25,10 @@ export interface CurrentUser {
   username: string;
   email?: string;
   profile?: AuthMeProfile;
+  /** RFP ids the user has marked as "I've applied" (stored in user data). */
+  applied_rfp_ids?: string[];
+  /** RFP ids the user has generated a Plan of Action for (in progress). */
+  in_progress_rfp_ids?: string[];
 }
 
 /** Profile shape returned by GET /api/auth/me/ (from AWS). */
@@ -287,6 +291,41 @@ export async function getProfileFromBackend(): Promise<AuthMeProfile> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || err.error || "Failed to load profile");
+  }
+  return res.json();
+}
+
+/** Response from PATCH /api/user/rfp-status/ */
+export interface UserRfpStatusResponse {
+  applied_rfp_ids: string[];
+  in_progress_rfp_ids: string[];
+}
+
+/**
+ * Mark an RFP as applied, remove from applied, and/or mark in progress. Stored in user data in S3.
+ * Requires auth (Bearer token or session + CSRF).
+ */
+export async function updateUserRfpStatus(payload: {
+  mark_applied?: string;
+  remove_applied?: string;
+  mark_in_progress?: string;
+}): Promise<UserRfpStatusResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
+  // Always send CSRF when using credentials so session auth works (Bearer may be expired)
+  headers["X-CSRFToken"] = await getCsrfToken();
+  const res = await fetch(`${API_BASE}/user/rfp-status/`, {
+    method: "PATCH",
+    headers,
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string; detail?: string };
+    const msg =
+      res.status === 401
+        ? "Please log in to save your RFP status."
+        : err?.error || err?.detail || (typeof err?.detail === "string" ? err.detail : null) || `Failed to update (${res.status})`;
+    throw new Error(msg);
   }
   return res.json();
 }

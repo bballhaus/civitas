@@ -115,6 +115,7 @@ export default function HomePage() {
   const [rfps, setRfps] = useState<RFP[]>([]);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [expressedIds, setExpressedIds] = useState<Set<string>>(new Set());
+  const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
 
@@ -125,13 +126,14 @@ export default function HomePage() {
 
   useEffect(() => {
     let cancelled = false;
-    getCurrentUser()
+    getCurrentUser(true)
       .then((data) => {
         if (cancelled) return;
         if (data) {
           const cached = getCachedProfile(data.user_id);
           const companyName = cached?.companyName?.trim();
           setDisplayName(companyName || data.username || "there");
+          setAppliedRfpIds(new Set(data.applied_rfp_ids ?? []));
         } else {
           router.replace("/login");
           return;
@@ -157,7 +159,7 @@ export default function HomePage() {
   }, [authChecked]);
 
   const savedRfps = rfps.filter((r) => savedIds.has(r.id));
-  const appliedRfps = rfps.filter((r) => expressedIds.has(r.id));
+  const appliedRfps = rfps.filter((r) => appliedRfpIds.has(r.id));
   const relevantForDeadlines = [
     ...savedRfps,
     ...appliedRfps.filter((r) => !savedIds.has(r.id)),
@@ -246,8 +248,8 @@ export default function HomePage() {
           />
           <StatCard
             label="Applied"
-            value={expressedIds.size}
-            subtext="Interest expressed"
+            value={appliedRfpIds.size}
+            subtext="Marked as applied"
             accent="emerald"
             icon={iconApplied}
           />
@@ -327,10 +329,10 @@ export default function HomePage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </span>
-              Applied / Expressed interest
-              {expressedIds.size > 0 && (
+              Applied
+              {appliedRfpIds.size > 0 && (
                 <span className="text-sm font-semibold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full">
-                  {expressedIds.size}
+                  {appliedRfpIds.size}
                 </span>
               )}
             </div>
@@ -339,7 +341,7 @@ export default function HomePage() {
                 <p className="text-sm text-slate-500">Loading&hellip;</p>
               ) : appliedRfps.length === 0 ? (
                 <p className="text-sm text-slate-600">
-                  {"You haven't expressed interest in any RFPs yet. Use \"Express interest\" on the dashboard when you find a good match."}
+                  You haven&apos;t marked any RFPs as applied yet. Use &quot;I&apos;ve applied&quot; on the dashboard when you&apos;ve submitted an application.
                 </p>
               ) : (
                 <ul className="space-y-2">

@@ -216,3 +216,9 @@ class UserWithProfileSerializer(serializers.Serializer):
     user_id = serializers.IntegerField(source='user.id')
     username = serializers.CharField(source='user.username')
     profile = UserProfileSerializer(allow_null=True, required=False)
+    applied_rfp_ids = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list, allow_empty=True
+    )
+    in_progress_rfp_ids = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list, allow_empty=True
+    )
