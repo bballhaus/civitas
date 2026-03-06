@@ -41,6 +41,8 @@ export interface AuthMeProfile {
   work_counties: string[];
   capabilities: string[];
   agency_experience: string[];
+  size_status?: string[];
+  contract_types?: string[];
   created_at?: string;
   updated_at?: string;
   uploaded_documents?: Array<{ id: string; title: string; document: string; created_at: string }>;
@@ -84,7 +86,7 @@ export function mapBackendProfileToCompanyProfile(
   return {
     companyName: p.name ?? "",
     industry: Array.isArray(p.industry_tags) ? p.industry_tags : [],
-    sizeStatus: [],
+    sizeStatus: Array.isArray(p.size_status) ? p.size_status : [],
     certifications: Array.isArray(p.certifications) ? p.certifications : [],
     clearances: Array.isArray(p.clearances) ? p.clearances : [],
     naicsCodes: Array.isArray(p.naics_codes) ? p.naics_codes : [],
@@ -92,7 +94,7 @@ export function mapBackendProfileToCompanyProfile(
     workCounties: Array.isArray(p.work_counties) ? p.work_counties : [],
     capabilities: Array.isArray(p.capabilities) ? p.capabilities : [],
     agencyExperience: Array.isArray(p.agency_experience) ? p.agency_experience : [],
-    contractTypes: [],
+    contractTypes: Array.isArray(p.contract_types) ? p.contract_types : [],
     contractCount: typeof p.contract_count === "number" ? p.contract_count : 0,
     totalPastContractValue: total,
     pastPerformance: "",
@@ -301,6 +303,8 @@ export interface ProfilePatchPayload {
   work_counties?: string[];
   capabilities?: string[];
   agency_experience?: string[];
+  size_status?: string[];
+  contract_types?: string[];
 }
 
 /**

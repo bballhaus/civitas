@@ -57,7 +57,22 @@ export async function POST(req: Request) {
     }
 
     const client = new Groq({ apiKey });
+
+    // Build structured attachment context
+    const rfpAny = rfp as Record<string, unknown>;
+    const naicsCodes = Array.isArray(rfpAny.naicsCodes) ? (rfpAny.naicsCodes as string[]).join(", ") : "";
+    const clearances = Array.isArray(rfpAny.clearancesRequired) ? (rfpAny.clearancesRequired as string[]).join(", ") : "";
+    const setAsides = Array.isArray(rfpAny.setAsideTypes) ? (rfpAny.setAsideTypes as string[]).join(", ") : "";
+    const deliverables = Array.isArray(rfpAny.deliverables) ? (rfpAny.deliverables as string[]).slice(0, 5).join(", ") : "";
+    const attachmentRollup = rfpAny.attachmentRollup;
+    const hasAttachments = attachmentRollup && typeof attachmentRollup === "object";
+
     const input = `RFP: ${JSON.stringify(rfp)}
+${naicsCodes ? `NAICS codes: ${naicsCodes}` : ""}
+${clearances ? `Clearances required: ${clearances}` : ""}
+${setAsides ? `Set-aside types: ${setAsides}` : ""}
+${deliverables ? `Key deliverables: ${deliverables}` : ""}
+${hasAttachments ? `Attachment data: ${JSON.stringify(attachmentRollup).slice(0, 1500)}` : ""}
 Profile: ${profile ? JSON.stringify(profile) : "No profile"}
 Rule-based summary: ${currentSummary}
 Positive reasons: ${
