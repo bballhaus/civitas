@@ -431,11 +431,17 @@ export default function ProfilePage() {
           }
           setPendingRemovals([]);
 
+          const failedFiles: string[] = [];
           for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
             const file = pendingFilesRef.current.get(fileInfo.name);
             if (file) {
-              await uploadContractDocument(file, file.name);
+              try {
+                await uploadContractDocument(file, file.name);
+              } catch (e) {
+                console.error("Upload failed:", file.name, e);
+                failedFiles.push(file.name);
+              }
             }
           }
           pendingFilesRef.current.clear();
@@ -444,6 +450,9 @@ export default function ProfilePage() {
           const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
           setProfile(mapped);
           setCachedProfile(currentUser.user_id, mapped);
+          if (failedFiles.length > 0) {
+            alert(`The following files failed to upload:\n${failedFiles.join("\n")}\n\nPlease try again.`);
+          }
           setEditingSection(null);
           setSectionSaving(false);
           return;
