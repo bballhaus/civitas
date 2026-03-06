@@ -796,18 +796,18 @@ export default function ProfilePage() {
             {hasAnyData && (
               <Link
                 href="/dashboard"
-                className="shrink-0 w-full lg:w-auto flex items-center gap-3 p-4 rounded-lg border border-slate-200 bg-white hover:border-[#3C89C6]/40 hover:bg-slate-50/50 transition-colors group"
+                className="shrink-0 w-full lg:w-auto flex items-center gap-3 p-4 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:shadow-[#3C89C6]/30 hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20"
               >
-                <div className="flex-shrink-0 w-10 h-10 rounded-md bg-[#3C89C6]/10 flex items-center justify-center">
-                  <svg className="w-5 h-5 text-[#3C89C6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-105 group-hover:bg-white/25 transition-all duration-200">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                   </svg>
                 </div>
                 <div className="min-w-0">
-                  <p className="font-semibold text-slate-900">View Matches</p>
-                  <p className="text-sm text-slate-600">RFPs tailored to your profile</p>
+                  <p className="font-semibold text-white">View Matches</p>
+                  <p className="text-sm text-white/85">RFPs tailored to your profile</p>
                 </div>
-                <svg className="w-4 h-4 text-slate-400 group-hover:text-[#3C89C6] shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 text-white/90 group-hover:text-white group-hover:translate-x-0.5 shrink-0 transition-all duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </Link>
