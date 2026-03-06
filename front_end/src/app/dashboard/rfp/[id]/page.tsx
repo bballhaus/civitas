@@ -473,6 +473,10 @@ export default function RFPDetailPage() {
     setProposalLoading(true);
     setProposalError(null);
     if (!trimmed) setProposal(null);
+
+    setInProgressRfpIds((prev) => new Set([...prev, id]));
+    updateUserRfpStatus({ mark_in_progress: id }).catch(() => {});
+
     try {
       const res = await fetch("/api/generate-proposal", {
         method: "POST",
@@ -539,17 +543,30 @@ export default function RFPDetailPage() {
   const handleToggleApplied = useCallback(async () => {
     if (!id) return;
     const currentlyApplied = appliedRfpIds.has(id);
+    const currentlyInProgress = inProgressRfpIds.has(id);
     setAppliedRfpIds((prev) => {
       const next = new Set(prev);
       if (currentlyApplied) next.delete(id);
       else next.add(id);
       return next;
     });
+    if (currentlyApplied) {
+      setInProgressRfpIds((prev) => new Set([...prev, id]));
+    } else if (currentlyInProgress) {
+      setInProgressRfpIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
     try {
       if (currentlyApplied) {
-        await updateUserRfpStatus({ remove_applied: id });
+        await updateUserRfpStatus({ remove_applied: id, mark_in_progress: id });
       } else {
-        await updateUserRfpStatus({ mark_applied: id });
+        await updateUserRfpStatus({
+          mark_applied: id,
+          ...(currentlyInProgress ? { remove_in_progress: id } : {}),
+        });
       }
     } catch (e) {
       setAppliedRfpIds((prev) => {
@@ -558,9 +575,18 @@ export default function RFPDetailPage() {
         else next.delete(id);
         return next;
       });
+      if (currentlyApplied) {
+        setInProgressRfpIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      } else if (currentlyInProgress) {
+        setInProgressRfpIds((prev) => new Set([...prev, id]));
+      }
       console.error("Failed to update applied status:", e);
     }
-  }, [id, appliedRfpIds]);
+  }, [id, appliedRfpIds, inProgressRfpIds]);
 
   const handleGeneratePlanOfExecution = async (feedbackText?: string) => {
     if (!rfpData || planLoading) return;
@@ -628,10 +654,10 @@ export default function RFPDetailPage() {
       <div className="min-h-screen bg-[#f5f5f5] flex flex-col items-center justify-center gap-4 p-6">
         <p className="text-slate-700">{error ?? "RFP not found"}</p>
         <Link
-          href="/dashboard"
+          href="/home"
           className="text-[#2563eb] hover:underline font-medium"
         >
-          ← Back to Dashboard
+          ← Back to Home
         </Link>
       </div>
     );
@@ -648,13 +674,13 @@ export default function RFPDetailPage() {
             <span className="text-xl font-bold text-slate-900">Civitas</span>
           </Link>
           <Link
-            href="/dashboard"
+            href="/home"
             className="text-slate-600 hover:text-slate-900 text-sm font-medium flex items-center gap-1"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
-            Back to Dashboard
+            Back to Home
           </Link>
         </div>
       </nav>
@@ -1064,149 +1090,9 @@ export default function RFPDetailPage() {
             )}
           </div>
 
-          {/* Groq-generated summary */}
-          <div className="p-6 md:p-8 border-b border-slate-100">
-            <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <h2 className="text-sm font-bold text-slate-900">
-                  Match Summary
-                </h2>
-                {summaryLoading && (
-                  <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
-                )}
-              </div>
-              <p className="text-slate-700 leading-relaxed">{displaySummary}</p>
-              {summaryError && (
-                <p className="mt-2 text-xs text-amber-600">
-                  AI summary unavailable. Showing rule-based summary.
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Score Breakdown */}
-          {rfp.match.breakdown.length > 0 && !rfp.match.disqualified && (
-            <div className="p-6 md:p-8 border-b border-slate-100">
-              <h2 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h2>
-              <div className="space-y-3">
-                {rfp.match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
-                  const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
-                  const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
-                  const barColor =
-                    fillRatio >= 0.75 ? "bg-emerald-500" :
-                    fillRatio >= 0.5 ? "bg-yellow-400" :
-                    fillRatio >= 0.25 ? "bg-orange-400" :
-                    fillRatio > 0 ? "bg-red-400" :
-                    "bg-slate-200";
-                  const textColor =
-                    fillRatio >= 0.75 ? "text-emerald-700" :
-                    fillRatio >= 0.5 ? "text-yellow-600" :
-                    fillRatio >= 0.25 ? "text-orange-600" :
-                    b.points === 0 && b.maxPoints > 0 ? "text-red-600" :
-                    "text-slate-500";
-                  return (
-                    <div key={i}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-slate-700">{b.category}</span>
-                        {b.maxPoints > 0 && (
-                          <span className={`text-xs font-bold ${textColor}`}>{b.points}/{b.maxPoints}</span>
-                        )}
-                      </div>
-                      {b.maxPoints > 0 ? (
-                        <div className="h-2 rounded-full overflow-hidden relative w-full">
-                          <div className="absolute inset-0 bg-slate-200 rounded-full" />
-                          <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${fillPct}%` }} />
-                        </div>
-                      ) : (
-                        <p className={`text-xs ${textColor}`}>{b.detail}</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Match view: generate button, summary, capabilities, about RFP, details. Generated view: POE content. */}
           {viewMode === "match" && (
             <>
-          {/* Generate POE / Plan button (on match view) */}
-          <div className="p-6 md:p-8 border-b border-slate-100">
-            <button
-              type="button"
-              onClick={() => handleGeneratePlanOfExecution()}
-              disabled={planLoading}
-              className="inline-flex items-center justify-center gap-2 min-w-[260px] px-6 py-3 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {planLoading ? (
-                <>
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
-                    <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  Generating…
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                  </svg>
-                  Generate POE / Plan
-                </>
-              )}
-            </button>
-            {planError && <p className="mt-3 text-sm text-red-600">{planError}</p>}
-          </div>
-
-          {/* Groq-generated summary */}
-          <div className="p-6 md:p-8 border-b border-slate-100">
-            <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <h2 className="text-sm font-bold text-slate-900">
-                  Match Summary
-                </h2>
-                {summaryLoading && (
-                  <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
-                )}
-              </div>
-              <p className="text-slate-700 leading-relaxed">{displaySummary}</p>
-              {summaryError && (
-                <p className="mt-2 text-xs text-amber-600">
-                  AI summary unavailable. Showing rule-based summary.
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Capabilities Analysis - AI comparison of company profile vs RFP requirements */}
-          <div className="p-6 md:p-8 border-b border-slate-100">
-            <h2 className="text-sm font-bold text-slate-900 mb-3">Capabilities Analysis</h2>
-            {capabilitiesAnalysisLoading ? (
-              <p className="text-slate-500 text-sm animate-pulse">Analyzing capabilities against requirements…</p>
-            ) : capabilitiesAnalysis ? (
-              <MarkdownContent content={capabilitiesAnalysis} />
-            ) : capabilitiesAnalysisError ? (
-              <p className="text-xs text-amber-600">Capabilities analysis unavailable.</p>
-            ) : (
-              <p className="text-slate-500 text-sm">No company profile available for analysis.</p>
-            )}
-          </div>
-
-          {/* About this RFP - AI summary of contract requirements */}
-          <div className="p-6 md:p-8 border-b border-slate-100">
-            <h2 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h2>
-            {requirementsSummaryLoading ? (
-              <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
-            ) : requirementsSummary ? (
-              <MarkdownContent content={requirementsSummary} />
-            ) : (
-              <p className="text-slate-700 leading-relaxed">{rfp.description}</p>
-            )}
-            {requirementsSummaryError && (
-              <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
-            )}
-          </div>
-
           {/* Details */}
           <div className="p-6 md:p-8 border-b border-slate-100">
             <h2 className="text-sm font-bold text-slate-900 mb-3">Details</h2>

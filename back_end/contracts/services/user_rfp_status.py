@@ -88,6 +88,22 @@ def add_in_progress_rfp(user_id: int, rfp_id: str) -> dict:
     return {"applied_rfp_ids": _ensure_list(data.get("applied_rfp_ids")), "in_progress_rfp_ids": in_progress}
 
 
+def remove_in_progress_rfp(user_id: int, rfp_id: str) -> dict:
+    """Remove rfp_id from user's in_progress list. Returns updated status."""
+    username = _username_for_user_id(user_id)
+    if not username:
+        return get_rfp_status(user_id)
+    data = get_user_data(username) or {}
+    in_progress = _ensure_list(data.get("in_progress_rfp_ids"))
+    rfp_id_str = str(rfp_id).strip()
+    if rfp_id_str and rfp_id_str in in_progress:
+        in_progress = [x for x in in_progress if x != rfp_id_str]
+        data["in_progress_rfp_ids"] = in_progress
+        save_user_data(username, data)
+        logger.info("User %s removed RFP %s from in progress", user_id, rfp_id_str)
+    return {"applied_rfp_ids": _ensure_list(data.get("applied_rfp_ids")), "in_progress_rfp_ids": in_progress}
+
+
 def get_generated_poe(user_id: int, rfp_id: str) -> str | None:
     """Return saved Plan of Execution for this user and RFP from S3, or None."""
     username = _username_for_user_id(user_id)

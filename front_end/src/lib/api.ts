@@ -295,10 +295,11 @@ export async function updateUserRfpStatus(payload: {
   mark_applied?: string;
   remove_applied?: string;
   mark_in_progress?: string;
+  remove_in_progress?: string;
   save_generated_poe?: { rfp_id: string; content: string };
 }): Promise<UserRfpStatusResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
-  headers["X-CSRFToken"] = await getCsrfToken();
+  if (!getAuthToken()) headers["X-CSRFToken"] = await getCsrfToken();
   const res = await fetch(`${API_BASE}/user/rfp-status/`, {
     method: "PATCH",
     headers,
