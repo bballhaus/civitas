@@ -24,6 +24,8 @@ PROFILE_ATTRS = [
     "work_counties",
     "capabilities",
     "agency_experience",
+    "size_status",
+    "contract_types",
     "created_at",
     "updated_at",
     "uploaded_documents",  # list of { id, title, document, created_at } sustained in profile
@@ -199,6 +201,7 @@ def refresh_profile_from_contracts(user):
     agencies = set()
     technology_stack = set()
     contract_types = set()
+    contractor_names = set()
     total_val = Decimal("0")
 
     def _get(obj, key, default=None):
@@ -221,7 +224,10 @@ def refresh_profile_from_contracts(user):
         tech = _get(c, "technology_stack") or []
         scope_kw = _get(c, "scope_keywords") or []
         ct = _get(c, "contract_type")
+        cn = _get(c, "contractor_name")
 
+        if cn and str(cn).strip():
+            contractor_names.add(str(cn).strip())
         certs.update(rc or [])
         clearances_set.update(rcl or [])
         naics.update(naics_list or [])

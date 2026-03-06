@@ -10,7 +10,6 @@ import {
   NAICS_DISPLAY,
 } from "@/data/filter-options";
 import { AppHeader } from "@/components/AppHeader";
-import { MeshBackground } from "@/components/MeshBackground";
 import {
   getApiBase,
   getCurrentUser,
@@ -48,7 +47,6 @@ interface CompanyProfile {
   uploadedFiles?: Array<{
     name: string;
     type: string;
-    size: number;
     uploadedAt: string;
     parsed?: boolean;
     uploadedToBackend?: boolean;
@@ -109,7 +107,11 @@ export default function ProfilePage() {
   const [profileLoadedFromBackend, setProfileLoadedFromBackend] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [dupMessage, setDupMessage] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const dragCounter = useRef(0);
   const pendingFilesRef = useRef<Map<string, File>>(new Map());
+  const deletionsInFlightRef = useRef<Promise<void>[]>([]);
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -331,7 +333,13 @@ export default function ProfilePage() {
       .then((data) => {
         if (!data) {
           setCurrentUser(null);
-          setProfile(null);
+          // Fall back to localStorage profile for unauthenticated users
+          const saved = localStorage.getItem("companyProfile");
+          if (saved) {
+            try { setProfile(JSON.parse(saved)); } catch { setProfile(null); }
+          } else {
+            setProfile(null);
+          }
           setInitialLoadDone(true);
           setLoadingProfile(false);
           return;
@@ -417,6 +425,8 @@ export default function ProfilePage() {
     work_counties: p.workCounties ?? [],
     capabilities: p.capabilities ?? [],
     agency_experience: p.agencyExperience ?? [],
+    size_status: p.sizeStatus ?? [],
+    contract_types: p.contractTypes ?? [],
   });
 
   const saveSection = async () => {
@@ -426,19 +436,33 @@ export default function ProfilePage() {
     try {
       if (editingSection === "documents") {
         if (currentUser && getAuthToken()) {
+          const failedFiles: string[] = [];
           for (const fileInfo of profileToSave.uploadedFiles ?? []) {
             if (fileInfo.uploadedToBackend) continue;
             const file = pendingFilesRef.current.get(fileInfo.name);
             if (file) {
-              await uploadContractDocument(file, file.name);
+              try {
+                await uploadContractDocument(file, file.name);
+              } catch (e) {
+                console.error("Upload failed:", file.name, e);
+                failedFiles.push(file.name);
+              }
             }
           }
           pendingFilesRef.current.clear();
+
+          if (deletionsInFlightRef.current.length > 0) {
+            await Promise.all(deletionsInFlightRef.current);
+            deletionsInFlightRef.current = [];
+          }
 
           const backendProfile = await getProfileFromBackend();
           const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
           setProfile(mapped);
           setCachedProfile(currentUser.user_id, mapped);
+          if (failedFiles.length > 0) {
+            alert(`The following files failed to upload:\n${failedFiles.join("\n")}\n\nPlease try again.`);
+          }
           setEditingSection(null);
           setSectionSaving(false);
           return;
@@ -483,13 +507,6 @@ export default function ProfilePage() {
           }
         }
 
-        if (currentUser && (removalsToProcess.length > 0 || filesToUpload.length > 0)) {
-          const backendProfile = await getProfileFromBackend();
-          const mapped = mapBackendProfileToCompanyProfile(backendProfile) ?? getEmptyCompanyProfile();
-          setProfile(mapped);
-          setCachedProfile(currentUser.user_id, mapped);
-          profileToSave = mapped;
-        }
       } else {
         profileToSave = profile;
       }
@@ -510,14 +527,30 @@ export default function ProfilePage() {
     }
   };
 
-  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || !profile) return;
-    Array.from(files).forEach((file) => {
+  const ACCEPTED_EXTENSIONS = [".pdf", ".doc", ".docx", ".txt"];
+
+  const addFiles = (incoming: File[]) => {
+    if (!profile) return;
+    const accepted = incoming.filter((f) =>
+      ACCEPTED_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext))
+    );
+    if (accepted.length === 0) return;
+    const existingNames = new Set((profile.uploadedFiles ?? []).map((f) => f.name));
+    const newFiles = accepted.filter((f) => {
+      if (existingNames.has(f.name)) return false;
+      existingNames.add(f.name);
+      return true;
+    });
+    const skipped = accepted.length - newFiles.length;
+    if (skipped > 0) {
+      setDupMessage(`${skipped} duplicate file(s) already uploaded — skipped.`);
+    } else {
+      setDupMessage("");
+    }
+    newFiles.forEach((file) => {
       const fileInfo = {
         name: file.name,
         type: file.type || "application/octet-stream",
-        size: file.size,
         uploadedAt: new Date().toISOString(),
         parsed: false,
       };
@@ -530,11 +563,27 @@ export default function ProfilePage() {
     });
   };
 
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    addFiles(Array.from(e.target.files));
+  };
+
   const removeFile = (index: number) => {
     if (!profile?.uploadedFiles) return;
     const file = profile.uploadedFiles[index];
-    const key = file.contractId || file.name;
-    setPendingRemovals((prev) => [...prev, key]);
+
+    setProfile((prev) => {
+      if (!prev?.uploadedFiles) return prev;
+      return { ...prev, uploadedFiles: prev.uploadedFiles.filter((_, i) => i !== index) };
+    });
+    pendingFilesRef.current.delete(file.name);
+
+    if (file.contractId && currentUser && getAuthToken()) {
+      const p = deleteContractDocument(file.contractId).catch((e) =>
+        console.error("Failed to delete file from backend:", e)
+      );
+      deletionsInFlightRef.current.push(p);
+    }
   };
 
   function SearchFirstDropdown({
@@ -643,9 +692,8 @@ export default function ProfilePage() {
 
   if (!isClient) {
     return (
-      <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff] flex items-center justify-center">
-        <MeshBackground />
-        <div className="relative animate-spin rounded-full h-12 w-12 border-b-2 border-[#3C89C6]"></div>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#3C89C6]"></div>
       </div>
     );
   }
@@ -653,10 +701,9 @@ export default function ProfilePage() {
   // Show loading until user + profile fetch is done (must be before profile === null check).
   if (!initialLoadDone) {
     return (
-      <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
-        <MeshBackground />
+      <div className="min-h-screen bg-slate-50">
         <AppHeader />
-        <div className="relative max-w-7xl mx-auto px-6 py-10 flex flex-col items-center justify-center min-h-[40vh] gap-4">
+        <div className="max-w-7xl mx-auto px-6 py-10 flex flex-col items-center justify-center min-h-[40vh] gap-4">
           <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#3C89C6]"></div>
           <p className="text-slate-600 font-medium">Loading your profile…</p>
         </div>
@@ -666,10 +713,9 @@ export default function ProfilePage() {
 
   if (profile === null) {
     return (
-      <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
-        <MeshBackground />
+      <div className="min-h-screen bg-slate-50">
         <AppHeader />
-        <div className="relative max-w-3xl mx-auto px-6 py-16 text-center">
+        <div className="max-w-3xl mx-auto px-6 py-16 text-center">
           <h1 className="text-2xl font-bold text-slate-900 mb-2">No profile yet</h1>
           <p className="text-slate-600 mb-6">Create or save your company profile to see a summary here.</p>
           <button
@@ -713,7 +759,17 @@ export default function ProfilePage() {
       <h2 className={sectionTitleClass.replace(" mb-4", "")}>{title}</h2>
       {editingSection === sectionId ? (
         <div className="flex items-center gap-2 shrink-0">
-          <button type="button" onClick={() => setEditingSection(null)} className={btnSecondary}>
+          <button type="button" onClick={() => {
+            if (sectionId === "documents") {
+              setProfile((prev) =>
+                prev
+                  ? { ...prev, uploadedFiles: (prev.uploadedFiles ?? []).filter((f) => f.parsed !== false) }
+                  : null
+              );
+              setDupMessage("");
+            }
+            setEditingSection(null);
+          }} className={btnSecondary}>
             Cancel
           </button>
           <button type="button" onClick={saveSection} disabled={sectionSaving} className={btnPrimary + " disabled:opacity-50"}>
@@ -737,11 +793,10 @@ export default function ProfilePage() {
   );
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
-      <MeshBackground />
+    <div className="min-h-screen bg-slate-50">
       <AppHeader />
 
-      <div className="relative max-w-7xl mx-auto px-6 py-10 flex gap-10">
+      <div className="max-w-7xl mx-auto px-6 py-10 flex gap-10">
         {hasAnyData && (
           <aside className="hidden lg:block w-56 shrink-0">
             <nav className="sticky top-32">
@@ -1100,23 +1155,43 @@ export default function ProfilePage() {
               <SectionHeader title="Uploaded Documents" sectionId="documents" />
               {editingSection === "documents" ? (
                 <div className="space-y-4">
-                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center hover:border-[#3C89C6] transition-colors">
+                  <div
+                    className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                      dragging
+                        ? "border-[#3C89C6] bg-slate-100"
+                        : "border-slate-300 hover:border-[#3C89C6]"
+                    }`}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current++; setDragging(true); }}
+                    onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current--; if (dragCounter.current <= 0) { dragCounter.current = 0; setDragging(false); } }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      dragCounter.current = 0;
+                      setDragging(false);
+                      addFiles(Array.from(e.dataTransfer.files));
+                    }}
+                  >
+                    {dragging && (
+                      <div className="absolute inset-0 bg-slate-200/60 rounded-lg flex items-center justify-center z-10 pointer-events-none">
+                        <p className="text-2xl font-bold text-[#3C89C6]">Drop files here</p>
+                      </div>
+                    )}
                     <input type="file" id="profile-file-upload" multiple accept=".pdf,.doc,.docx,.txt" onChange={handleFileUpload} className="hidden" />
-                    <label htmlFor="profile-file-upload" className="cursor-pointer flex flex-col items-center">
+                    <label htmlFor="profile-file-upload" className={`cursor-pointer flex flex-col items-center ${dragging ? "opacity-30" : ""}`}>
                       <svg className="w-12 h-12 text-slate-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                       </svg>
-                      <span className="text-sm font-medium text-slate-700">Click to upload files</span>
+                      <span className="text-sm font-medium text-slate-700">Drag & drop files here, or click to upload</span>
                       <span className="text-xs text-slate-500 mt-1">PDF, DOC, DOCX, TXT</span>
                     </label>
                   </div>
                   {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
                     <div className="mt-4 space-y-2">
                       <h3 className="text-sm font-medium text-slate-700 mb-2">
-                        Uploaded Files ({profile.uploadedFiles.filter((f) => !pendingRemovals.includes(f.contractId || f.name)).length})
+                        Uploaded Files ({profile.uploadedFiles.length})
                       </h3>
                       {profile.uploadedFiles.map((file, index) => {
-                        if (pendingRemovals.includes(file.contractId || file.name)) return null;
                         return (
                           <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
                             <div className="flex items-center space-x-3">
@@ -1133,15 +1208,18 @@ export default function ProfilePage() {
                                     <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
                                   )}
                                 </div>
-                                <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(2)} KB</p>
+                                <p className="text-xs text-slate-500">{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}</p>
                               </div>
                             </div>
-                            <button type="button" onClick={() => removeFile(index)} className="text-red-600 hover:text-red-700 text-sm font-medium">
+                            <button type="button" onClick={() => removeFile(index)} disabled={sectionSaving} className="text-red-600 hover:text-red-700 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed">
                               Remove
                             </button>
                           </div>
                         );
                       })}
+                      {dupMessage && (
+                        <p className="text-sm text-amber-600 mt-2">{dupMessage}</p>
+                      )}
                     </div>
                   )}
                 </div>

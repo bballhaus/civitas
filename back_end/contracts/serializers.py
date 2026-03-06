@@ -198,6 +198,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'work_counties',
             'capabilities',
             'agency_experience',
+            'size_status',
+            'contract_types',
             'uploaded_documents',
             'created_at',
             'updated_at',

@@ -177,7 +177,7 @@ def _upload_to_s3(file, s3_key, content_type=None):
         extra = {}
         if content_type:
             extra["ContentType"] = content_type
-        client.upload_fileobj(file, bucket, s3_key, **extra)
+        client.upload_fileobj(file, bucket, s3_key, ExtraArgs=extra if extra else None)
         return True
     except Exception as e:
         logger.warning("S3 upload failed for key=%s: %s", s3_key, e)
@@ -252,7 +252,8 @@ def create_contract(user_id, metadata, file=None):
             if _upload_to_s3(file, key, content_type=content_type):
                 s3_key = key
             else:
-                logger.warning("create_contract: S3 upload failed for user_id=%s; saving contract without document link", user_id)
+                logger.warning("create_contract: S3 upload failed for user_id=%s; aborting contract creation", user_id)
+                return None
         doc_url = _get_document_url(s3_key) if s3_key else ""
         meta["document_s3_key"] = s3_key
         meta["document"] = doc_url

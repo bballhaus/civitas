@@ -79,6 +79,8 @@ class UserProfile(models.Model):
         default=list, blank=True,
         help_text="Agencies worked for (from past contracts)"
     )
+    size_status = models.JSONField(default=list, blank=True)
+    contract_types = models.JSONField(default=list, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

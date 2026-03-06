@@ -34,18 +34,37 @@ s3 = boto3.client(
     region_name=os.environ.get('AWS_REGION', 'us-east-1')
 )
 
+
+def load_existing_events():
+    """Read previously scraped events from the JSON file so we can resume.
+
+    Returns a list of event dictionaries. If the file doesn't exist or
+    can't be parsed, returns an empty list.
+    """
+    if os.path.exists(OUTPUT_JSON):
+        try:
+            with open(OUTPUT_JSON, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('events', [])
+        except Exception:
+            return []
+    return []
+
 def upload_event_to_s3(event_data):
     """Upload single event JSON + its attachments immediately after scraping."""
     safe_id = event_data['event_id'].replace('/', '_')
 
     # Event JSON → scrapes/caleprocure/events/{id}.json
-    s3.put_object(
-        Bucket=S3_BUCKET,
-        Key=f"scrapes/caleprocure/events/{safe_id}.json",
-        Body=json.dumps(event_data, indent=2, ensure_ascii=False),
-        ContentType='application/json'
-    )
-    print(f"  ☁ Uploaded event JSON: {safe_id}.json")
+    try:
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key=f"scrapes/caleprocure/events/{safe_id}.json",
+            Body=json.dumps(event_data, indent=2, ensure_ascii=False),
+            ContentType='application/json'
+        )
+        print(f"  ☁ Uploaded event JSON: {safe_id}.json")
+    except Exception as e:
+        print(f"  ✗ Failed to upload event JSON: {e}")
 
     # Attachments → scrapes/caleprocure/attachments/{id}/{filename}
     # (mirrors your uploads/{user_id}/{contract_id}/{filename} pattern)
@@ -54,29 +73,35 @@ def upload_event_to_s3(event_data):
         for filename in os.listdir(event_download_dir):
             local_path = os.path.join(event_download_dir, filename)
             s3_key = f"scrapes/caleprocure/attachments/{safe_id}/{filename}"
-            with open(local_path, 'rb') as f:
-                s3.put_object(
-                    Bucket=S3_BUCKET,
-                    Key=s3_key,
-                    Body=f.read(),
-                    ContentType='application/pdf'
-                )
-            print(f"  ☁ Uploaded attachment: {filename}")
+            try:
+                with open(local_path, 'rb') as f:
+                    s3.put_object(
+                        Bucket=S3_BUCKET,
+                        Key=s3_key,
+                        Body=f.read(),
+                        ContentType='application/pdf'
+                    )
+                print(f"  ☁ Uploaded attachment: {filename}")
+            except Exception as e:
+                print(f"  ✗ Failed to upload attachment {filename}: {e}")
 
 
 def upload_to_s3(all_events):
     """Upload the final combined JSON at the end."""
-    s3.put_object(
-        Bucket=S3_BUCKET,
-        Key='scrapes/caleprocure/all_events.json',
-        Body=json.dumps({
-            'scrape_date': datetime.now().isoformat(),
-            'total_events': len(all_events),
-            'events': all_events
-        }, indent=2, ensure_ascii=False),
-        ContentType='application/json'
-    )
-    print(f"☁ Uploaded combined JSON: scrapes/caleprocure/all_events.json")
+    try:
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key='scrapes/caleprocure/all_events.json',
+            Body=json.dumps({
+                'scrape_date': datetime.now().isoformat(),
+                'total_events': len(all_events),
+                'events': all_events
+            }, indent=2, ensure_ascii=False),
+            ContentType='application/json'
+        )
+        print(f"☁ Uploaded combined JSON: scrapes/caleprocure/all_events.json")
+    except Exception as e:
+        print(f"✗ Failed to upload combined JSON: {e}")
 
 
 def scrape_event_page(driver, wait):
@@ -279,7 +304,11 @@ def main():
     driver = webdriver.Chrome(service=service, options=options)
     wait = WebDriverWait(driver, 20)
 
-    all_events = []
+    # attempt to resume from previous run
+    all_events = load_existing_events()
+    start_index = len(all_events)
+    if start_index:
+        print(f"Resuming from event #{start_index + 1} (skipping {start_index} already processed)")
 
     try:
         print("\n1. Loading search page...")
@@ -295,10 +324,17 @@ def main():
         total_events = min(len(visible_rows), MAX_EVENTS)
         print(f"   Found {len(visible_rows)} events, scraping first {total_events}")
 
+        if start_index >= total_events:
+            print(f"All {total_events} events have already been processed. Exiting.")
+            return
+
         print("\n3. Scraping events...")
         print("=" * 80)
 
         for i in range(total_events):
+            if i < start_index:
+                print(f"\nSkipping event {i + 1}/{total_events} (already scraped)")
+                continue
             print(f"\nEvent {i + 1}/{total_events}:")
 
             try:

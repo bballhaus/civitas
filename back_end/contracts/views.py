@@ -726,8 +726,7 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
         serializer = self.get_serializer(data=request.data, partial=kwargs.get('partial', True))
         serializer.is_valid(raise_exception=True)
         for key, value in serializer.validated_data.items():
-            if key in profile_dict:
-                profile_dict[key] = value
+            profile_dict[key] = value
         profile_dict['user_id'] = user_id
         save_profile(profile_dict)  # writes to S3 users/{username}.json
         logger.info("Profile save: updated user JSON in S3 for user_id=%s", user_id)

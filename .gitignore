@@ -72,3 +72,5 @@ __pycache__/
 .venv/
 venv/
 
+# webscraping downloads
+/webscraping/downloads/
