@@ -268,6 +268,53 @@ export async function getProfileFromBackend(): Promise<AuthMeProfile> {
   return res.json();
 }
 
+/** Response from PATCH /api/user/rfp-status/ */
+export interface UserRfpStatusResponse {
+  applied_rfp_ids: string[];
+  in_progress_rfp_ids: string[];
+}
+
+/**
+ * Fetch saved Plan of Execution for the current user and RFP. Returns null if none saved.
+ */
+export async function getGeneratedPoe(rfpId: string): Promise<string | null> {
+  const res = await fetch(
+    `${getApiBase()}/user/generated-poe/?rfp_id=${encodeURIComponent(rfpId)}`,
+    { credentials: "include", headers: { ...authHeaders() } }
+  );
+  if (!res.ok) return null;
+  const data = (await res.json()) as { plan_of_execution?: string | null };
+  return data.plan_of_execution ?? null;
+}
+
+/**
+ * Mark an RFP as applied, remove from applied, mark in progress, and/or save generated POE. Stored in user data in S3.
+ * Requires auth (Bearer token or session + CSRF).
+ */
+export async function updateUserRfpStatus(payload: {
+  mark_applied?: string;
+  remove_applied?: string;
+  mark_in_progress?: string;
+  save_generated_poe?: { rfp_id: string; content: string };
+}): Promise<UserRfpStatusResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
+  headers["X-CSRFToken"] = await getCsrfToken();
+  const res = await fetch(`${API_BASE}/user/rfp-status/`, {
+    method: "PATCH",
+    headers,
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string; detail?: string };
+    const msg =
+      res.status === 401
+        ? "Please log in to save your RFP status."
+        : err?.error || err?.detail || (typeof err?.detail === "string" ? err.detail : null) || `Failed to update (${res.status})`;
+    throw new Error(msg);
+  }
+  return res.json();
+}
 /** Payload for PATCH /api/profile/ (snake_case, writable fields only). */
 export interface ProfilePatchPayload {
   name?: string;
@@ -381,24 +428,6 @@ export async function updateUser(data: { email?: string }): Promise<CurrentUser>
   return res.json();
 }
 
-/**
- * Update user RFP status (applied, in-progress, etc.).
- */
-export async function updateUserRfpStatus(data: Record<string, string>): Promise<CurrentUser> {
-  const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
-  if (!getAuthToken()) headers["X-CSRFToken"] = await getCsrfToken();
-  const res = await fetch(`${API_BASE}/auth/me/`, {
-    method: "PATCH",
-    headers,
-    credentials: "include",
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to update RFP status");
-  }
-  return res.json();
-}
 
 /**
  * Change password.

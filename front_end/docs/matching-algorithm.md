@@ -62,9 +62,9 @@ This ensures that any non-zero similarity earns at least 15% of the category's m
 
 These factors appear in the breakdown for transparency but do not contribute to the numeric score:
 
-- **Contract Scale** — Compares estimated RFP value against the company's past contract history. Flags if the RFP value exceeds past experience by 10x+.
-- **Security Clearance** (when met) — Confirms the company holds the required clearance.
-- **Set-Aside Eligibility** (when met) — Confirms the company qualifies for the set-aside.
+- **Contract Scale** — Compares estimated RFP value against your company's past contract history. Flags if the RFP value exceeds past experience by 10x+.
+- **Security Clearance** (when met) — Confirms your company holds the required clearance.
+- **Set-Aside Eligibility** (when met) — Confirms your company qualifies for the set-aside.
 - **Deadline Status** — Shows whether the deadline is open, TBD, or unparseable.
 
 ### Stage 4 — Tier Assignment

@@ -12,7 +12,7 @@ import {
   generateMatchSummary,
 } from "@/lib/rfp-matching";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { getCurrentUser, updateUserRfpStatus } from "@/lib/api";
+import { getCurrentUser, getGeneratedPoe, updateUserRfpStatus } from "@/lib/api";
 import { getCachedEvents } from "@/lib/events-cache";
 
 type RFPWithMatch = RFP & { match: RFPMatch };
@@ -42,12 +42,13 @@ export default function RFPDetailPage() {
   const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
   const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
   const [expandedBreakdownCategory, setExpandedBreakdownCategory] = useState<string | null>(null);
-  const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
-  const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
-  const [userRfpStatusLoaded, setUserRfpStatusLoaded] = useState(false);
   const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
   const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
   const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
+  const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
+  const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
+  const [userRfpStatusLoaded, setUserRfpStatusLoaded] = useState(false);
+  const [viewMode, setViewMode] = useState<"match" | "generated">("match");
 
   const rfp: RFPWithMatch | null = rfpData && profileLoaded
     ? { ...rfpData, match: computeMatch(rfpData, profile) }
@@ -81,6 +82,24 @@ export default function RFPDetailPage() {
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (!id) return;
+    getGeneratedPoe(id).then((saved) => {
+      if (saved) setPlanOfExecution(saved);
+    });
+  }, [id]);
+
+  // Save generated POE when leaving the page while on generated view
+  useEffect(() => {
+    return () => {
+      if (viewMode === "generated" && planOfExecution && id) {
+        updateUserRfpStatus({
+          save_generated_poe: { rfp_id: id, content: planOfExecution },
+        }).catch(() => {});
+      }
+    };
+  }, [viewMode, planOfExecution, id]);
 
   useEffect(() => {
     if (!id) {
@@ -573,6 +592,7 @@ export default function RFPDetailPage() {
       const data = await res.json();
       setPlanOfExecution(data.plan ?? "");
       setPlanFeedback("");
+      setViewMode("generated");
     } catch (err) {
       setPlanError(
         err instanceof Error ? err.message : "Failed to generate plan"
@@ -580,6 +600,19 @@ export default function RFPDetailPage() {
     } finally {
       setPlanLoading(false);
     }
+  };
+
+  const goToMatchView = () => {
+    if (viewMode === "generated" && planOfExecution && id) {
+      updateUserRfpStatus({
+        save_generated_poe: { rfp_id: id, content: planOfExecution },
+      }).catch(() => {});
+    }
+    setViewMode("match");
+  };
+
+  const goToGeneratedView = () => {
+    setViewMode("generated");
   };
 
   if (loading) {
@@ -1057,9 +1090,7 @@ export default function RFPDetailPage() {
               <h2 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h2>
               <div className="space-y-3">
                 {rfp.match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
-                  // All bars are the same full width; colored fill shows points/maxPoints ratio
                   const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
-                  // Color based on fill percentage: red → orange → yellow → green
                   const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
                   const barColor =
                     fillRatio >= 0.75 ? "bg-emerald-500" :
@@ -1073,7 +1104,6 @@ export default function RFPDetailPage() {
                     fillRatio >= 0.25 ? "text-orange-600" :
                     b.points === 0 && b.maxPoints > 0 ? "text-red-600" :
                     "text-slate-500";
-
                   return (
                     <div key={i}>
                       <div className="flex items-center justify-between mb-1">
@@ -1096,6 +1126,57 @@ export default function RFPDetailPage() {
               </div>
             </div>
           )}
+
+          {/* Match view: generate button, summary, capabilities, about RFP, details. Generated view: POE content. */}
+          {viewMode === "match" && (
+            <>
+          {/* Generate POE / Plan button (on match view) */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <button
+              type="button"
+              onClick={() => handleGeneratePlanOfExecution()}
+              disabled={planLoading}
+              className="inline-flex items-center justify-center gap-2 min-w-[260px] px-6 py-3 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {planLoading ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+                    <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Generating…
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                  </svg>
+                  Generate POE / Plan
+                </>
+              )}
+            </button>
+            {planError && <p className="mt-3 text-sm text-red-600">{planError}</p>}
+          </div>
+
+          {/* Groq-generated summary */}
+          <div className="p-6 md:p-8 border-b border-slate-100">
+            <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
+              <div className="flex items-start justify-between gap-2 mb-3">
+                <h2 className="text-sm font-bold text-slate-900">
+                  Match Summary
+                </h2>
+                {summaryLoading && (
+                  <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
+                )}
+              </div>
+              <p className="text-slate-700 leading-relaxed">{displaySummary}</p>
+              {summaryError && (
+                <p className="mt-2 text-xs text-amber-600">
+                  AI summary unavailable. Showing rule-based summary.
+                </p>
+              )}
+            </div>
+          </div>
 
           {/* Capabilities Analysis - AI comparison of company profile vs RFP requirements */}
           <div className="p-6 md:p-8 border-b border-slate-100">
@@ -1154,6 +1235,129 @@ export default function RFPDetailPage() {
                 </svg>
               </a>
             )}
+          </div>
+            </>
+          )}
+
+          {/* Generated POE / Plan view */}
+          {viewMode === "generated" && (
+            <div className="p-6 md:p-8 border-b border-slate-100">
+              <h2 className="text-sm font-bold text-slate-900 mb-3">Generated POE / Plan</h2>
+              {planLoading ? (
+                <p className="text-slate-500 text-sm animate-pulse">Generating plan…</p>
+              ) : planOfExecution ? (
+                <div className="rounded-xl border-2 border-slate-200 bg-slate-50 overflow-hidden">
+                  <div className="p-4">
+                    <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
+                      {planOfExecution}
+                    </div>
+                    <div className="mt-4 pt-4 border-t border-slate-200 flex flex-wrap gap-3 items-end">
+                      <button
+                        type="button"
+                        onClick={handleDownloadPlanOfExecution}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors shadow-sm"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Download
+                      </button>
+                      <div className="flex-1 min-w-[200px]">
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Add feedback to improve (optional)</label>
+                        <textarea
+                          value={planFeedback}
+                          onChange={(e) => setPlanFeedback(e.target.value)}
+                          placeholder="e.g. Add more detail on certification timelines..."
+                          rows={2}
+                          className="w-full px-3 py-2 text-sm text-slate-800 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent placeholder:text-slate-600 resize-none"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleGeneratePlanOfExecution(planFeedback)}
+                        disabled={planLoading}
+                        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {planLoading ? (
+                          <>
+                            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+                              <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            Regenerating…
+                          </>
+                        ) : (
+                          "Regenerate with feedback"
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                  <p className="text-slate-600 text-sm mb-4">No generated plan yet. Generate a Plan of Execution to see it here.</p>
+                  <button
+                    type="button"
+                    onClick={() => handleGeneratePlanOfExecution()}
+                    disabled={planLoading}
+                    className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {planLoading ? (
+                      <>
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+                          <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Generating…
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                        </svg>
+                        Generate POE / Plan
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+              {planError && <p className="mt-3 text-sm text-red-600">{planError}</p>}
+            </div>
+          )}
+
+          {/* Card navigation: switch between RFP Match and Generated POE */}
+          <div className="p-6 md:p-8 flex items-center justify-between gap-4 border-t border-slate-100 bg-slate-50/50">
+            <button
+              type="button"
+              onClick={goToMatchView}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                viewMode === "match"
+                  ? "bg-slate-200 text-slate-700 cursor-default"
+                  : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-sm"
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              RFP Match
+            </button>
+            <span className="text-xs text-slate-400">
+              {viewMode === "match" ? "View generated plan" : "Back to match & analysis"}
+            </span>
+            <button
+              type="button"
+              onClick={goToGeneratedView}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                viewMode === "generated"
+                  ? "bg-emerald-100 text-emerald-800 cursor-default"
+                  : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-sm"
+              }`}
+            >
+              Generated POE
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
           </div>
 
         </article>

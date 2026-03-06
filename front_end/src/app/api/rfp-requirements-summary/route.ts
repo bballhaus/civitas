@@ -9,7 +9,7 @@ You will be given:
 3) Optionally, an attachmentRollup object containing about-RFP summary text, key requirement bullets, and combined constraints extracted from attachments
 
 Your task: Write a concise summary (approximately 150–250 words) that captures:
-- **Scope & deliverables** – What the contractor must deliver
+- **Scope & deliverables** – What you / your company must deliver
 - **Key requirements** – Mandatory capabilities, certifications, or qualifications
 - **Timeline & deadlines** – Important dates or milestones if mentioned
 - **Contract terms** – Type of contract (e.g., fixed-price, T&M), estimated value if provided
@@ -19,7 +19,8 @@ Format your response in markdown for readability:
 - Use **bold** for section headings (e.g., **Scope & Deliverables**, **Key Requirements**, **Timeline & Deadlines**)
 - Use bullet points (- or *) for lists of requirements, deliverables, or dates
 - Use short paragraphs between sections
-- Keep it scannable so vendors can quickly understand whether to pursue the opportunity.`;
+- Keep it scannable so vendors can quickly understand whether to pursue the opportunity.
+- Phrase the summary so it addresses the reader as the potential vendor: use "you" and "your company" where appropriate (e.g. "what you must deliver"). Do not use "the contractor" or "the company" when describing requirements that apply to the reader.`;
 
 export async function POST(req: Request) {
   try {
