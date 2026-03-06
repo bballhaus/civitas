@@ -1521,63 +1521,63 @@ function RFPDetailPanel({
             ];
             const breakdownItems = match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral");
             const hasBreakdown = breakdownItems.length > 0 && !match.disqualified;
-            const numRows = hasBreakdown ? Math.max(metaRows.length, breakdownItems.length) : metaRows.length;
 
             return (
-              <div className={`grid gap-y-1.5 ${hasBreakdown ? "md:grid-cols-2 md:gap-x-6" : "grid-cols-1"}`}>
-                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-0.5">Important information</h3>
-                {hasBreakdown && <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-0.5 md:mb-0">Score Breakdown</h3>}
-                {Array.from({ length: numRows }).map((_, i) => (
-                  <React.Fragment key={i}>
-                    <div className="min-h-8 flex items-center text-left">
-                      {metaRows[i] ? (
-                        <>
-                          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">{metaRows[i].label}</span>
-                          <span className="ml-1.5 text-sm text-slate-800">{metaRows[i].value}</span>
-                        </>
-                      ) : null}
-                    </div>
-                    {hasBreakdown ? (
-                      <div className="min-h-8 flex items-center">
-                        {breakdownItems[i] ? (() => {
-                          const b = breakdownItems[i];
-                          const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
-                          const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
-                          const barColor =
-                            fillRatio >= 0.75 ? "bg-emerald-500" :
-                            fillRatio >= 0.5 ? "bg-yellow-400" :
-                            fillRatio >= 0.25 ? "bg-orange-400" :
-                            fillRatio > 0 ? "bg-red-400" :
-                            "bg-slate-200";
-                          const textColor =
-                            fillRatio >= 0.75 ? "text-emerald-700" :
-                            fillRatio >= 0.5 ? "text-yellow-600" :
-                            fillRatio >= 0.25 ? "text-orange-600" :
-                            b.points === 0 && b.maxPoints > 0 ? "text-red-600" :
-                            "text-slate-500";
-                          return (
-                            <div className="flex items-center gap-3 w-full">
-                              <span className="text-sm font-medium text-slate-700 w-28 shrink-0 truncate" title={b.category}>{b.category}</span>
-                              {b.maxPoints > 0 ? (
-                                <>
-                                  <div className="h-2 rounded-full overflow-hidden relative flex-1">
-                                    <div className="absolute inset-0 bg-slate-200 rounded-full" />
-                                    <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${fillPct}%` }} />
-                                  </div>
-                                  <span className={`text-sm font-bold w-12 text-right shrink-0 ${textColor}`}>
-                                    {b.points}/{b.maxPoints}
-                                  </span>
-                                </>
-                              ) : (
-                                <span className={`text-sm ${textColor} flex-1`}>{b.detail}</span>
-                              )}
-                            </div>
-                          );
-                        })() : null}
+              <div className={`flex flex-col gap-y-4 ${hasBreakdown ? "md:flex-row md:items-start md:gap-0" : ""}`}>
+                {/* Left: Important information — width adapts to content */}
+                <div className="min-w-0 md:w-auto md:shrink-0 md:pr-6">
+                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Important information</h3>
+                  <div className="space-y-1.5 text-left">
+                    {metaRows.map((row, i) => (
+                      <div key={i} className="min-h-8 flex items-center">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 shrink-0">{row.label}</span>
+                        <span className="ml-1.5 text-sm text-slate-800 break-words">{row.value}</span>
                       </div>
-                    ) : null}
-                  </React.Fragment>
-                ))}
+                    ))}
+                  </div>
+                </div>
+                {/* Vertical bar + Score breakdown */}
+                {hasBreakdown && (
+                  <div className="min-w-0 flex-1 md:border-l md:border-slate-200 md:pl-6">
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Score Breakdown</h3>
+                    <div className="space-y-1.5">
+                      {breakdownItems.map((b, i) => {
+                        const fillPct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
+                        const fillRatio = b.maxPoints > 0 ? b.points / b.maxPoints : 0;
+                        const barColor =
+                          fillRatio >= 0.75 ? "bg-emerald-500" :
+                          fillRatio >= 0.5 ? "bg-yellow-400" :
+                          fillRatio >= 0.25 ? "bg-orange-400" :
+                          fillRatio > 0 ? "bg-red-400" :
+                          "bg-slate-200";
+                        const textColor =
+                          fillRatio >= 0.75 ? "text-emerald-700" :
+                          fillRatio >= 0.5 ? "text-yellow-600" :
+                          fillRatio >= 0.25 ? "text-orange-600" :
+                          b.points === 0 && b.maxPoints > 0 ? "text-red-600" :
+                          "text-slate-500";
+                        return (
+                          <div key={i} className="min-h-8 flex items-center gap-3">
+                            <span className="text-sm font-medium text-slate-700 w-28 shrink-0 truncate" title={b.category}>{b.category}</span>
+                            {b.maxPoints > 0 ? (
+                              <>
+                                <div className="h-2 rounded-full overflow-hidden relative flex-1 min-w-0">
+                                  <div className="absolute inset-0 bg-slate-200 rounded-full" />
+                                  <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barColor}`} style={{ width: `${fillPct}%` }} />
+                                </div>
+                                <span className={`text-sm font-bold w-12 text-right shrink-0 ${textColor}`}>
+                                  {b.points}/{b.maxPoints}
+                                </span>
+                              </>
+                            ) : (
+                              <span className={`text-sm ${textColor} flex-1 min-w-0`}>{b.detail}</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })()}

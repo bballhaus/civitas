@@ -1914,3 +1914,12 @@ Read user data from S3 for username=erikaecl
 Retrieved profile from S3 for user_id=1 username=erikaecl
 Read user data from S3 for username=erikaecl
 Auth/me: returning user + profile for user_id=1
+Read user data from S3 for username=erikaecl
+Auth/me: returning user only (no S3) for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: fetching user + profile from S3 for user_id=1 username=erikaecl
+get_or_create_profile: loading from S3 (user_id=1)
+Read user data from S3 for username=erikaecl
+Retrieved profile from S3 for user_id=1 username=erikaecl
+Read user data from S3 for username=erikaecl
+Auth/me: returning user + profile for user_id=1
