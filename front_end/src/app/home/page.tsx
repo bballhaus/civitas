@@ -103,17 +103,14 @@ function StatCard({
     violet: "text-violet-700",
   };
   return (
-    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 overflow-hidden transition-all hover:shadow-xl hover:-translate-y-0.5 group">
-      <div className="px-5 py-5 flex items-start gap-4">
-        <div className={`bg-gradient-to-br ${styles[accent]} w-11 h-11 rounded-xl flex items-center justify-center text-white shrink-0 ring-4 shadow-md transition-transform group-hover:scale-110`}>
+    <div className="bg-white/80 backdrop-blur-sm rounded-lg border border-white/60 shadow-sm shadow-slate-200/50 overflow-hidden group">
+      <div className="px-3 py-2 flex items-center gap-2">
+        <div className={`bg-gradient-to-br ${styles[accent]} w-6 h-6 rounded-md flex items-center justify-center text-white shrink-0`}>
           {icon}
         </div>
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-            {label}
-          </p>
-          <p className={`text-3xl font-extrabold mt-0.5 ${textStyles[accent]}`}>{value}</p>
-          <p className="text-xs text-slate-500 mt-1">{subtext}</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">{label}</p>
+          <p className={`text-lg font-extrabold leading-tight ${textStyles[accent]}`}>{value}</p>
         </div>
       </div>
     </div>
