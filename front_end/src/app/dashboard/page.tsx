@@ -1970,6 +1970,7 @@ function RFPDetailPanel({
                         placeholder="e.g. Add more detail on timelines..."
                         rows={2}
                         className="w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2563eb] focus:border-transparent resize-none"
+                        style={{ color: '#000000' }}
                       />
                     </div>
                     <button
