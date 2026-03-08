@@ -849,10 +849,6 @@ export default function ProfilePage() {
                         <dd className="mt-0.5 text-slate-700">{currentUser.email}</dd>
                       </div>
                     )}
-                    <div>
-                      <dt className="text-sm font-medium text-slate-500">Account ID</dt>
-                      <dd className="mt-0.5 text-slate-600 text-sm">{currentUser.user_id}</dd>
-                    </div>
                   </dl>
                 ) : (
                   <p className="text-slate-500 text-sm">Log in to see your account information.</p>
@@ -1237,10 +1233,6 @@ export default function ProfilePage() {
                       <dd className="mt-0.5 text-slate-700">{currentUser.email}</dd>
                     </div>
                   )}
-                  <div>
-                    <dt className="text-sm font-medium text-slate-500">Account ID</dt>
-                    <dd className="mt-0.5 text-slate-600 text-sm">{currentUser.user_id}</dd>
-                  </div>
                 </dl>
               ) : (
                 <p className="text-slate-500 text-sm">Log in to see your account information.</p>
