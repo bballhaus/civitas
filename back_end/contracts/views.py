@@ -6,6 +6,8 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.middleware.csrf import get_token
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
@@ -53,6 +55,7 @@ class CsrfView(APIView):
         return Response({'csrfToken': token})
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class SignupView(APIView):
     """Create a new user. Auto-creates UserProfile and optionally logs in."""
 
@@ -121,6 +124,7 @@ class SignupView(APIView):
         return Response(data, status=status.HTTP_201_CREATED)
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class LoginView(APIView):
     """Login with username and password. Uses Django session auth."""
 
@@ -532,11 +536,18 @@ class ProfileExtractView(APIView):
             if 'printing' in all_text or 'publishing' in all_text:
                 capabilities.add('Printing & Publishing')
 
-            # Contract types - use extracted contract_type first, then infer
+            # Contract types - use extracted contract_type first, then infer (may be str or list from LLM)
             ct = features.get('contract_type', '')
-            if ct and ct.strip():
+            added_from_ct = False
+            if isinstance(ct, list):
+                for c in ct:
+                    if c and isinstance(c, str) and c.strip():
+                        contract_types.add(c.strip())
+                        added_from_ct = True
+            elif ct and isinstance(ct, str) and ct.strip():
                 contract_types.add(ct.strip())
-            else:
+                added_from_ct = True
+            if not added_from_ct:
                 contract_types.add('Competitive')
                 if 'fixed' in work_desc or 'firm' in work_desc:
                     contract_types.add('Fixed Price')
