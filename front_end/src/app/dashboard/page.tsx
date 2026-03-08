@@ -354,10 +354,10 @@ function MatchBadge({ score, tier, disqualified, size = "sm" }: { score: number;
 }
 
 const MATCH_SCORE_OPTIONS = [
-  { value: null as number | null, label: "All" },
-  { value: 75, label: "Best" },
-  { value: 55, label: "Strong" },
-  { value: 25, label: "Good" },
+  { value: null as number | null, label: "All matches" },
+  { value: 75, label: "Excellent fit (75%+)" },
+  { value: 50, label: "Strong fit (50–75%)" },
+  { value: 25, label: "Worth a look (25–50%)" },
 ] as const;
 
 const SEARCHABLE_FILTER_KEYS: (keyof RFPFilters)[] = ["workCities", "workCounties", "naicsCodes"];
