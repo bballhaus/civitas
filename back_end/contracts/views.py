@@ -35,6 +35,7 @@ from .services.user_rfp_status import (
     add_applied_rfp,
     remove_applied_rfp,
     add_in_progress_rfp,
+    remove_in_progress_rfp,
     get_generated_poe,
     save_generated_poe,
 )
@@ -207,10 +208,11 @@ class UserRfpStatusView(APIView):
         mark_applied = data.get('mark_applied')
         remove_applied = data.get('remove_applied')
         mark_in_progress = data.get('mark_in_progress')
+        remove_in_progress = data.get('remove_in_progress')
         save_generated_poe_payload = data.get('save_generated_poe')
-        if not mark_applied and not remove_applied and not mark_in_progress and not save_generated_poe_payload:
+        if not mark_applied and not remove_applied and not mark_in_progress and not remove_in_progress and not save_generated_poe_payload:
             return Response(
-                {'error': 'Provide mark_applied, remove_applied, mark_in_progress, and/or save_generated_poe (object with rfp_id and content).'},
+                {'error': 'Provide mark_applied, remove_applied, mark_in_progress, remove_in_progress, and/or save_generated_poe.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         user_id = request.user.id
@@ -223,6 +225,10 @@ class UserRfpStatusView(APIView):
             rfp_id = str(mark_applied).strip()
             if rfp_id:
                 result = add_applied_rfp(user_id, rfp_id)
+        if remove_in_progress:
+            rfp_id = str(remove_in_progress).strip()
+            if rfp_id:
+                result = remove_in_progress_rfp(user_id, rfp_id)
         if mark_in_progress:
             rfp_id = str(mark_in_progress).strip()
             if rfp_id:

@@ -806,8 +806,8 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     if (certMatch.matched.length > 0) {
       const pts = 10 * certMatch.ratio;
       score += pts;
-      positiveReasons.push(`Certification match: ${certOverlap.slice(0, 2).join(", ")}`);
-      breakdown.push({ category: "Certifications", points: Math.round(pts), maxPoints: 12, status: ratio >= 0.75 ? "strong" : "partial", detail: `${certOverlap.length}/${rfp.certifications.length} certifications match.`, matchedTokens: certOverlap, rfpTokens: rfp.certifications, profileTokens: profile.certifications ?? [] });
+      positiveReasons.push(`Certification match: ${certMatch.matched.slice(0, 2).join(", ")}`);
+      breakdown.push({ category: "Certifications", points: Math.round(pts), maxPoints: 12, status: certMatch.ratio >= 0.75 ? "strong" : "partial", detail: `${certMatch.matched.length}/${rfp.certifications.length} certifications match.`, matchedTokens: certMatch.matched, rfpTokens: rfp.certifications, profileTokens: profile.certifications ?? [] });
     } else {
       negativeReasons.push("RFP lists certifications you may not have.");
       breakdown.push({ category: "Certifications", points: 0, maxPoints: 12, status: "missing", detail: "None of the listed certifications found in your profile.", rfpTokens: rfp.certifications, profileTokens: profile.certifications ?? [] });
