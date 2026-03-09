@@ -443,8 +443,10 @@ class ProfileExtractView(APIView):
                     certifications.add('NAICS Codes')
             
             # Capabilities from work_description, industry_tags, scope_keywords, and technology_stack
-            work_desc = features.get('work_description', '').lower()
-            all_text = work_desc + ' ' + ' '.join(tag.lower() for tag in industry_tags)
+            work_desc_raw = features.get('work_description', '')
+            work_desc = ' '.join(work_desc_raw) if isinstance(work_desc_raw, list) else (work_desc_raw or '')
+            work_desc = work_desc.lower() if isinstance(work_desc, str) else ''
+            all_text = work_desc + ' ' + ' '.join(tag.lower() for tag in industry_tags if isinstance(tag, str))
 
             # Add scope_keywords directly as capabilities (they describe the work type)
             scope_keywords = features.get('scope_keywords', [])
