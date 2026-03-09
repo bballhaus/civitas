@@ -147,6 +147,24 @@ export default function ProfilePage() {
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
   const pendingFilesRef = useRef<Map<string, File>>(new Map());
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastStep2 = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (message: string, type: "success" | "error" | "info" = "info") => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    if (toastStep2.current) clearTimeout(toastStep2.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  };
+  const showSaveSuccess = () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    if (toastStep2.current) clearTimeout(toastStep2.current);
+    setToast({ message: "Profile saved!", type: "success" });
+    toastStep2.current = setTimeout(() => {
+      setToast({ message: "Matches updated!", type: "success" });
+      toastTimer.current = setTimeout(() => setToast(null), 3000);
+    }, 1500);
+  };
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -301,7 +319,7 @@ export default function ProfilePage() {
     const unparsedFiles = profile.uploadedFiles?.filter(file => !file.parsed) || [];
     
     if (unparsedFiles.length === 0) {
-      alert("No new documents to parse. All uploaded files have already been processed.");
+      showToast("No new documents to parse. All uploaded files have already been processed.", "info");
       return;
     }
 
@@ -350,13 +368,13 @@ export default function ProfilePage() {
         // Save merged profile
         localStorage.setItem("companyProfile", JSON.stringify(mergedProfile));
 
-        alert(`Successfully parsed ${filesToParse.length} document(s) and updated your profile!`);
+        showToast(`Successfully parsed ${filesToParse.length} document(s) and updated your profile!`, "success");
       } else {
-        alert("Could not find file data to parse. Please try uploading the files again.");
+        showToast("Could not find file data to parse. Please try uploading the files again.", "error");
       }
     } catch (error) {
       console.error("Error parsing documents:", error);
-      alert(`Error parsing documents: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`);
+      showToast(`Error parsing documents: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`, "error");
     } finally {
       setIsParsing(false);
     }
@@ -507,7 +525,7 @@ export default function ProfilePage() {
           setPendingRemovals([]);
           setCachedProfile(currentUser.user_id, mapped);
           if (failedFiles.length > 0) {
-            alert(`The following files failed to upload:\n${failedFiles.join("\n")}\n\nPlease try again.`);
+            showToast(`Some files failed to upload: ${failedFiles.join(", ")}. Please try again.`, "error");
           }
           setEditingSection(null);
           setSectionSaving(false);
@@ -549,7 +567,7 @@ export default function ProfilePage() {
             }
           } catch (error) {
             console.error("Error parsing documents:", error);
-            alert(`Warning: Could not parse some documents. Profile saved without updates from those files.`);
+            showToast("Warning: Could not parse some documents. Profile saved without updates from those files.", "error");
           }
         }
 
@@ -574,9 +592,10 @@ export default function ProfilePage() {
         localStorage.setItem("companyProfile", JSON.stringify(profileToSave));
       }
       setEditingSection(null);
+      showSaveSuccess();
     } catch (error) {
       console.error("Error saving profile:", error);
-      alert(`Failed to save: ${error instanceof Error ? error.message : "Unknown error"}`);
+      showToast(`Failed to save: ${error instanceof Error ? error.message : "Unknown error"}`, "error");
     } finally {
       setSectionSaving(false);
     }
@@ -869,18 +888,40 @@ export default function ProfilePage() {
               <p className="text-slate-600">Click Edit on any section to change it here. Save updates your profile.</p>
             </div>
             {hasAnyData && (
-              <Link
-                href="/dashboard"
-                className="shrink-0 w-full lg:w-auto flex items-center justify-center gap-3 px-5 py-3 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:shadow-[#3C89C6]/30 hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20"
-              >
-                <svg className="w-5 h-5 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                </svg>
-                <span className="font-semibold">View Matches</span>
-                <svg className="w-4 h-4 text-white/90 group-hover:text-white group-hover:translate-x-0.5 shrink-0 transition-all duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </Link>
+              <div className="relative shrink-0">
+                <Link
+                  href="/dashboard"
+                  className="w-full lg:w-auto flex items-center justify-center gap-3 px-5 py-3 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:shadow-[#3C89C6]/30 hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20"
+                >
+                  <svg className="w-5 h-5 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                  </svg>
+                  <span className="font-semibold">View Matches</span>
+                  <svg className="w-4 h-4 text-white/90 group-hover:text-white group-hover:translate-x-0.5 shrink-0 transition-all duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+                {/* Toast — absolutely positioned below the button */}
+                {toast && (
+                  <div
+                    className={`absolute top-full right-0 mt-2 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-all whitespace-nowrap ${
+                      toast.type === "success"
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : toast.type === "error"
+                        ? "bg-red-50 text-red-700 border border-red-200"
+                        : "bg-slate-50 text-slate-700 border border-slate-200"
+                    }`}
+                  >
+                    {toast.type === "success" && (
+                      <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                    )}
+                    {toast.type === "error" && (
+                      <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    )}
+                    {toast.message}
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -1296,6 +1337,7 @@ export default function ProfilePage() {
         )}
         </div>
       </div>
+
     </div>
   );
 }
