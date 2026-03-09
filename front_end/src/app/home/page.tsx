@@ -15,9 +15,18 @@ const STORAGE_KEYS = {
 };
 const RFP_PRELOAD_KEY = "civitas_preload_rfp";
 
-function preloadRfpAndNavigate(rfp: RFP, router: ReturnType<typeof useRouter>) {
+export type PreloadFilter = "saved" | "applied" | "in_progress" | null;
+
+function preloadRfpAndNavigate(
+  rfp: RFP,
+  router: ReturnType<typeof useRouter>,
+  filter: PreloadFilter = null
+) {
   try {
-    sessionStorage.setItem(RFP_PRELOAD_KEY, JSON.stringify(rfp));
+    sessionStorage.setItem(
+      RFP_PRELOAD_KEY,
+      JSON.stringify({ rfp, filter })
+    );
   } catch {
     // ignore quota / private mode
   }
@@ -326,7 +335,7 @@ export default function HomePage() {
                       <li key={rfp.id}>
                         <button
                           type="button"
-                          onClick={() => preloadRfpAndNavigate(rfp, router)}
+                          onClick={() => preloadRfpAndNavigate(rfp, router, "saved")}
                           className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/50 transition-all hover:shadow-sm border-l-2 border-l-blue-400"
                         >
                           <p className="font-semibold text-slate-900 text-sm line-clamp-2">
@@ -381,7 +390,7 @@ export default function HomePage() {
                       <li key={rfp.id}>
                         <button
                           type="button"
-                          onClick={() => preloadRfpAndNavigate(rfp, router)}
+                          onClick={() => preloadRfpAndNavigate(rfp, router, "applied")}
                           className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/50 transition-all hover:shadow-sm border-l-2 border-l-emerald-400"
                         >
                           <p className="font-semibold text-slate-900 text-sm line-clamp-2">
@@ -436,7 +445,7 @@ export default function HomePage() {
                       <li key={rfp.id}>
                         <button
                           type="button"
-                          onClick={() => preloadRfpAndNavigate(rfp, router)}
+                          onClick={() => preloadRfpAndNavigate(rfp, router, "in_progress")}
                           className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-violet-200 hover:bg-violet-50/50 transition-all hover:shadow-sm border-l-2 border-l-violet-400"
                         >
                           <p className="font-semibold text-slate-900 text-sm line-clamp-2">
@@ -489,11 +498,11 @@ export default function HomePage() {
             ) : (
               <div className={upcomingDeadlines.length >= 2 ? "min-h-0 max-h-[11rem] overflow-y-scroll overflow-x-hidden" : ""}>
                 <ul className="space-y-2">
-                  {upcomingDeadlines.map((rfp) => (
-                    <li key={rfp.id}>
-                      <button
-                        type="button"
-                        onClick={() => preloadRfpAndNavigate(rfp, router)}
+{upcomingDeadlines.map((rfp) => (
+                  <li key={rfp.id}>
+                    <button
+                      type="button"
+                      onClick={() => preloadRfpAndNavigate(rfp, router, null)}
                         className="w-full text-left flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-100 hover:border-amber-200 hover:bg-amber-50/50 transition-all hover:shadow-sm border-l-2 border-l-amber-400"
                       >
                         <div className="min-w-0">
