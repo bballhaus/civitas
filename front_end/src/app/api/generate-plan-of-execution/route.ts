@@ -17,13 +17,25 @@ Your task: Write an internal Plan of Execution that outlines:
    - **Location/Service Area**: Whether your service areas align with the RFP location. Note any travel or local presence needs.
    - **Agency Experience**: Whether you have worked with this agency before. Note relevance.
 
-3. **Action Items to Fulfill Requirements** – A prioritized list of what you need to do to be bid-ready: obtain certifications, build capability, form partnerships, gather documentation, etc. Include rough effort or timeline where helpful.
+3. **Action Items to Close Gaps** – This is the MOST IMPORTANT section. For EVERY gap identified in the Capability Gap Analysis, provide a definitive, concrete action item. Do NOT be vague. Each action item MUST include:
+   - **What** specifically needs to be done (e.g. "Apply for ISO 27001 certification through [registrar]", NOT "consider getting certified")
+   - **How** to accomplish it (specific steps, resources, or partners needed)
+   - **Timeline** estimate (e.g. "2-4 weeks", "before submission deadline")
+   - **Priority** level (Critical / High / Medium / Low) based on whether it's a hard requirement or a competitive advantage
+
+   Organize action items into categories:
+   - **Certifications & Compliance**: Steps to obtain missing certifications or meet compliance requirements
+   - **Capability Building**: How to build or acquire missing technical/service capabilities (hiring, training, subcontracting, partnering)
+   - **Documentation & Bid Prep**: Specific documents to prepare, past performance references to gather, forms to complete
+   - **Partnerships & Teaming**: If gaps are too large to close alone, identify specific types of teaming partners or subcontractors needed
+
+   Be decisive and actionable — use language like "You must...", "Obtain...", "Partner with...", "Hire...", "Register for..." rather than "Consider...", "You may want to...", "It might be helpful to...".
 
 4. **Execution Phases** – If you win, outline high-level phases: kickoff, key milestones, resource needs, and critical path items based on the RFP scope.
 
-5. **Risks & Considerations** – Identify gaps that are hard to close, capacity concerns, deadline pressure, or other factors you should weigh before deciding to bid.
+5. **Risks & Considerations** – Identify gaps that are hard to close, capacity concerns, deadline pressure, or other factors you should weigh before deciding to bid. For each risk, suggest a concrete mitigation strategy.
 
-Use the user's profile extensively to make the gap analysis accurate. Be direct and practical. This is an internal planning tool, so be candid about gaps and effort. Use clear headings and bullet points where helpful. Aim for approximately 600–1000 words. Always address the reader as "you" and refer to their business as "your company". Never use "the company" or "the contractor" in your output. Use second person ("Your company...", "You...") or neutral ("Required...", "Gap:...").`;
+Use the user's profile extensively to make the gap analysis accurate. Be direct and practical. This is an internal planning tool, so be candid about gaps and effort. Use clear headings and bullet points where helpful. Aim for approximately 800–1200 words. Always address the reader as "you" and refer to their business as "your company". Never use "the company" or "the contractor" in your output. Use second person ("Your company...", "You...") or neutral ("Required...", "Gap:...").`;
 
 const REFINE_PROMPT = `You are an expert government contracting consultant. The user has received a draft Plan of Execution and has provided feedback. Your task is to produce an improved version that incorporates their feedback.
 

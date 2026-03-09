@@ -12,7 +12,7 @@ import {
   generateMatchSummary,
 } from "@/lib/rfp-matching";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { getCurrentUser, getGeneratedPoe, updateUserRfpStatus } from "@/lib/api";
+import { getCurrentUser, getGeneratedPoe, updateUserRfpStatus, listContracts } from "@/lib/api";
 import { getCachedEvents } from "@/lib/events-cache";
 
 type RFPWithMatch = RFP & { match: RFPMatch };
@@ -478,11 +478,23 @@ export default function RFPDetailPage() {
     updateUserRfpStatus({ mark_in_progress: id }).catch(() => {});
 
     try {
+      // Fetch past contract document URLs for style reference
+      let pastDocumentUrls: string[] = [];
+      try {
+        const contracts = await listContracts();
+        pastDocumentUrls = contracts
+          .map((c) => c.document)
+          .filter((url): url is string => !!url && url.length > 0);
+      } catch {
+        // Non-critical: proceed without style reference
+      }
+
       const res = await fetch("/api/generate-proposal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...proposalPayload(),
+          pastDocumentUrls,
           ...(trimmed && {
             currentProposal: proposal,
             feedback: trimmed,
