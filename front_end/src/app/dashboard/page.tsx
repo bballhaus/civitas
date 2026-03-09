@@ -1533,6 +1533,7 @@ function RFPDetailPanel({
               certifications: rfp.certifications,
               estimatedValue: rfp.estimatedValue,
               description: rfp.description,
+              attachmentRollup: rfp.attachmentRollup,
             },
           }),
         });
