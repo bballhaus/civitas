@@ -625,7 +625,6 @@ export default function ProfilePage() {
       } else {
         localStorage.setItem("companyProfile", JSON.stringify(profileToSave));
       }
-      showToast("Updated match preferences");
       setEditingSection(null);
     } catch (error) {
       console.error("Error saving profile:", error);
