@@ -345,7 +345,11 @@ export async function saveProfileToBackend(payload: ProfilePatchPayload): Promis
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || err.error || "Failed to save profile");
+    const msg = err.detail || err.error || "Failed to save profile";
+    if (res.status === 401 && (String(msg).toLowerCase().includes("credential") || String(msg).toLowerCase().includes("authentic"))) {
+      throw new Error("Your session may have expired. Please log out and log back in, then try saving again.");
+    }
+    throw new Error(msg);
   }
   const data = await res.json();
   console.log(`${LOG_PREFIX} Profile saved to backend; user JSON updated in S3`);
