@@ -85,11 +85,46 @@ function scrollToSection(id: string) {
   });
 }
 
-function ListOrEmpty({ items }: { items: string[] }) {
-  if (!items?.length) return <p className="text-slate-500 italic text-sm">Not provided</p>;
+const TITLE_LOWER = new Set(["and", "or", "of", "the", "in", "for", "a", "an", "to", "at", "by", "on"]);
+function smartTitleCase(s: string): string {
+  return s.split(/\s+/).map((word, i) => {
+    const lower = word.toLowerCase();
+    if (i > 0 && TITLE_LOWER.has(lower)) return lower;
+    if (word.length <= 4 && word === word.toUpperCase() && /^[A-Z]/.test(word)) return word;
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  }).join(" ");
+}
+
+/**
+ * Clean a display array: split comma-separated entries, remove "null"/empty,
+ * deduplicate case-insensitively, and optionally title-case.
+ */
+function cleanDisplayArray(arr: string[], doTitleCase = false): string[] {
+  const items: string[] = [];
+  for (const entry of arr) {
+    if (entry == null) continue;
+    for (const part of String(entry).split(",")) {
+      const trimmed = part.trim();
+      if (!trimmed || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined") continue;
+      items.push(trimmed);
+    }
+  }
+  const seen = new Map<string, string>();
+  for (const item of items) {
+    const key = item.toLowerCase();
+    if (!seen.has(key)) {
+      seen.set(key, doTitleCase ? smartTitleCase(item) : item);
+    }
+  }
+  return [...seen.values()];
+}
+
+function ListOrEmpty({ items, titleCase }: { items: string[]; titleCase?: boolean }) {
+  const clean = cleanDisplayArray(items ?? [], titleCase);
+  if (!clean.length) return <p className="text-slate-500 italic text-sm">Not provided</p>;
   return (
     <ul className="list-disc list-inside text-slate-700 space-y-1">
-      {items.map((item) => (
+      {clean.map((item) => (
         <li key={item}>{item}</li>
       ))}
     </ul>
@@ -217,13 +252,33 @@ export default function ProfilePage() {
     };
   };
 
+  /** Normalize a raw localStorage object (which may have snake_case keys) into our CompanyProfile shape. */
+  const normalizeStorageProfile = (raw: Record<string, unknown>): CompanyProfile => ({
+    companyName: (raw.companyName ?? raw.company_name ?? "") as string,
+    industry: cleanDisplayArray((raw.industry ?? raw.industry_tags ?? []) as string[]),
+    sizeStatus: cleanDisplayArray((raw.sizeStatus ?? (raw.size_status ? [raw.size_status as string] : [])) as string[]),
+    certifications: cleanDisplayArray((raw.certifications ?? []) as string[]),
+    clearances: cleanDisplayArray((raw.clearances ?? []) as string[]),
+    naicsCodes: cleanDisplayArray((raw.naicsCodes ?? raw.naics_codes ?? []) as string[]),
+    workCities: cleanDisplayArray((raw.workCities ?? raw.work_cities ?? []) as string[]),
+    workCounties: cleanDisplayArray((raw.workCounties ?? raw.work_counties ?? []) as string[]),
+    capabilities: cleanDisplayArray((raw.capabilities ?? []) as string[]),
+    agencyExperience: cleanDisplayArray((raw.agencyExperience ?? raw.agency_experience ?? []) as string[]),
+    contractTypes: cleanDisplayArray((raw.contractTypes ?? raw.contract_types ?? []) as string[]),
+    contractCount: (raw.contractCount ?? raw.contract_count ?? 0) as number,
+    totalPastContractValue: String(raw.totalPastContractValue ?? raw.total_contract_value ?? "0"),
+    pastPerformance: (raw.pastPerformance ?? "") as string,
+    strategicGoals: (raw.strategicGoals ?? "") as string,
+    uploadedFiles: (raw.uploadedFiles ?? []) as CompanyProfile["uploadedFiles"],
+  });
+
   /** Load profile from localStorage only when not logged in (fallback). When logged in we only trust backend/AWS. */
   const loadProfileFromStorage = () => {
     const saved = localStorage.getItem("companyProfile");
     const extracted = localStorage.getItem("extractedProfileData");
     if (saved) {
       try {
-        setProfile(JSON.parse(saved));
+        setProfile(normalizeStorageProfile(JSON.parse(saved)));
         return;
       } catch (e) {
         console.error("Error loading profile:", e);
@@ -231,11 +286,7 @@ export default function ProfilePage() {
     }
     if (extracted) {
       try {
-        const parsed = JSON.parse(extracted);
-        setProfile({
-          ...parsed,
-          uploadedFiles: parsed.uploadedFiles ?? [],
-        });
+        setProfile(normalizeStorageProfile(JSON.parse(extracted)));
       } catch (e) {
         console.error("Error loading extracted data:", e);
       }
@@ -333,7 +384,8 @@ export default function ProfilePage() {
       .then((data) => {
         if (!data) {
           setCurrentUser(null);
-          setProfile(null);
+          // Fall back to localStorage when not logged in
+          loadProfileFromStorage();
           setInitialLoadDone(true);
           setLoadingProfile(false);
           return;
@@ -353,6 +405,8 @@ export default function ProfilePage() {
       })
       .catch((e) => {
         console.error("Failed to load user:", e);
+        // Backend unreachable — fall back to localStorage
+        loadProfileFromStorage();
       })
       .finally(() => {
         setInitialLoadDone(true);
@@ -899,11 +953,11 @@ export default function ProfilePage() {
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Industry</p>
-                    <ListOrEmpty items={profile.industry ?? []} />
+                    <ListOrEmpty items={profile.industry ?? []} titleCase />
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Size / status</p>
-                    <ListOrEmpty items={profile.sizeStatus ?? []} />
+                    <ListOrEmpty items={profile.sizeStatus ?? []} titleCase />
                   </div>
                 </div>
               )}
@@ -993,11 +1047,11 @@ export default function ProfilePage() {
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Work cities</p>
-                    <ListOrEmpty items={profile.workCities ?? []} />
+                    <ListOrEmpty items={profile.workCities ?? []} titleCase />
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Work counties</p>
-                    <ListOrEmpty items={profile.workCounties ?? []} />
+                    <ListOrEmpty items={profile.workCounties ?? []} titleCase />
                   </div>
                 </div>
               )}
@@ -1040,15 +1094,15 @@ export default function ProfilePage() {
                 <div className="space-y-3">
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Capabilities</p>
-                    <ListOrEmpty items={profile.capabilities ?? []} />
+                    <ListOrEmpty items={profile.capabilities ?? []} titleCase />
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Agency experience</p>
-                    <ListOrEmpty items={profile.agencyExperience ?? []} />
+                    <ListOrEmpty items={profile.agencyExperience ?? []} titleCase />
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Contract types</p>
-                    <ListOrEmpty items={profile.contractTypes ?? []} />
+                    <ListOrEmpty items={profile.contractTypes ?? []} titleCase />
                   </div>
                 </div>
               )}

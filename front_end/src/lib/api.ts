@@ -76,6 +76,54 @@ export interface CompanyProfileFromApi {
   }>;
 }
 
+/**
+ * Clean a string array from backend data:
+ * - Split comma-separated entries into individual items
+ * - Remove "null", "undefined", empty strings
+ * - Trim whitespace
+ * - Title-case each item (e.g. "sacramento" → "Sacramento", "san jose" → "San Jose")
+ * - Deduplicate (case-insensitive)
+ */
+function cleanStringArray(arr: unknown, opts?: { titleCase?: boolean }): string[] {
+  if (!Array.isArray(arr)) return [];
+  const doTitleCase = opts?.titleCase ?? false;
+  const items: string[] = [];
+  for (const entry of arr) {
+    if (entry == null) continue;
+    const str = String(entry);
+    // Split comma-separated entries
+    for (const part of str.split(",")) {
+      const trimmed = part.trim();
+      if (!trimmed || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined") continue;
+      items.push(trimmed);
+    }
+  }
+  // Deduplicate case-insensitively (keep first occurrence's casing)
+  const seen = new Map<string, string>();
+  for (const item of items) {
+    const key = item.toLowerCase();
+    if (!seen.has(key)) {
+      seen.set(key, doTitleCase ? titleCase(item) : item);
+    }
+  }
+  return [...seen.values()];
+}
+
+const TITLE_CASE_LOWER = new Set(["and", "or", "of", "the", "in", "for", "a", "an", "to", "at", "by", "on"]);
+function titleCase(s: string): string {
+  return s
+    .split(/\s+/)
+    .map((word, i) => {
+      const lower = word.toLowerCase();
+      // Always capitalize first word; skip small words otherwise
+      if (i > 0 && TITLE_CASE_LOWER.has(lower)) return lower;
+      // Don't lowercase all-caps abbreviations (SB, DBE, HVAC, ADA, etc.)
+      if (word.length <= 4 && word === word.toUpperCase() && /^[A-Z]/.test(word)) return word;
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+}
+
 export function mapBackendProfileToCompanyProfile(
   p: AuthMeProfile | null | undefined
 ): CompanyProfileFromApi | null {
@@ -85,16 +133,16 @@ export function mapBackendProfileToCompanyProfile(
       ? String(p.total_past_contract_value)
       : String(p.total_past_contract_value ?? "0");
   return {
-    companyName: p.name ?? "",
-    industry: Array.isArray(p.industry_tags) ? p.industry_tags : [],
+    companyName: titleCase((p.name ?? "").trim()),
+    industry: cleanStringArray(p.industry_tags, { titleCase: true }),
     sizeStatus: [],
-    certifications: Array.isArray(p.certifications) ? p.certifications : [],
-    clearances: Array.isArray(p.clearances) ? p.clearances : [],
-    naicsCodes: Array.isArray(p.naics_codes) ? p.naics_codes : [],
-    workCities: Array.isArray(p.work_cities) ? p.work_cities : [],
-    workCounties: Array.isArray(p.work_counties) ? p.work_counties : [],
-    capabilities: Array.isArray(p.capabilities) ? p.capabilities : [],
-    agencyExperience: Array.isArray(p.agency_experience) ? p.agency_experience : [],
+    certifications: cleanStringArray(p.certifications),
+    clearances: cleanStringArray(p.clearances),
+    naicsCodes: cleanStringArray(p.naics_codes),
+    workCities: cleanStringArray(p.work_cities, { titleCase: true }),
+    workCounties: cleanStringArray(p.work_counties, { titleCase: true }),
+    capabilities: cleanStringArray(p.capabilities, { titleCase: true }),
+    agencyExperience: cleanStringArray(p.agency_experience, { titleCase: true }),
     contractTypes: [],
     contractCount: typeof p.contract_count === "number" ? p.contract_count : 0,
     totalPastContractValue: total,

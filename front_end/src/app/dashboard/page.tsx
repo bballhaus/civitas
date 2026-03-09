@@ -37,6 +37,27 @@ import {
   parseDeadline as parseDeadlineLib,
 } from "@/lib/rfp-matching";
 
+// Normalize a localStorage profile (snake_case) to CompanyProfile (camelCase)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeLocalProfile(raw: any): CompanyProfile {
+  return {
+    companyName: raw.companyName ?? raw.company_name ?? "",
+    industry: raw.industry ?? raw.industry_tags ?? [],
+    sizeStatus: raw.sizeStatus ?? (raw.size_status ? [raw.size_status] : []),
+    certifications: raw.certifications ?? [],
+    clearances: raw.clearances ?? [],
+    naicsCodes: raw.naicsCodes ?? raw.naics_codes ?? [],
+    workCities: raw.workCities ?? raw.work_cities ?? [],
+    workCounties: raw.workCounties ?? raw.work_counties ?? [],
+    capabilities: raw.capabilities ?? [],
+    agencyExperience: raw.agencyExperience ?? raw.agency_experience ?? [],
+    contractTypes: raw.contractTypes ?? raw.contract_types ?? [],
+    contractCount: raw.contractCount ?? raw.contract_count ?? 0,
+    totalPastContractValue: raw.totalPastContractValue ?? String(raw.total_contract_value ?? "0"),
+    pastContracts: raw.pastContracts ?? raw.past_contracts ?? [],
+  };
+}
+
 // Filter options - same as profile-setup page
 const FILTER_OPTIONS = {
   industry: [
@@ -885,14 +906,14 @@ export default function DashboardPage() {
         const extracted = localStorage.getItem("extractedProfileData");
         if (saved) {
           try {
-            setProfile(JSON.parse(saved));
+            setProfile(normalizeLocalProfile(JSON.parse(saved)));
           } catch {
             // ignore
           }
         }
         if (extracted) {
           try {
-            setProfile(JSON.parse(extracted));
+            setProfile(normalizeLocalProfile(JSON.parse(extracted)));
           } catch {
             // ignore
           }
@@ -900,7 +921,18 @@ export default function DashboardPage() {
         setProfileLoadDone(true);
       })
       .catch(() => {
-        if (!cancelled) setProfileLoadDone(true);
+        if (cancelled) return;
+        // Backend unreachable (e.g. CORS on localhost) — fall back to localStorage
+        setCurrentUser(null);
+        const saved = localStorage.getItem("companyProfile");
+        const extracted = localStorage.getItem("extractedProfileData");
+        if (saved) {
+          try { setProfile(normalizeLocalProfile(JSON.parse(saved))); } catch { /* ignore */ }
+        }
+        if (extracted) {
+          try { setProfile(normalizeLocalProfile(JSON.parse(extracted))); } catch { /* ignore */ }
+        }
+        setProfileLoadDone(true);
       });
     return () => { cancelled = true; };
   }, []);

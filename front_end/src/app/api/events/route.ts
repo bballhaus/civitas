@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { normalizeCapability } from "@/lib/capabilities";
 
 interface ScrapedEvent {
   event_id: string;
@@ -42,6 +43,17 @@ const s3 = new S3Client({
 });
 const S3_BUCKET = process.env.AWS_S3_BUCKET || "civitas-uploads";
 
+// ---------------------------------------------------------------------------
+// Server-side S3 cache (5-minute TTL)
+// ---------------------------------------------------------------------------
+interface S3Cache {
+  data: { events: ScrapedEvent[] };
+  extractions: Record<string, AttachmentExtraction>;
+  timestamp: number;
+}
+let s3Cache: S3Cache | null = null;
+const S3_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 async function fetchS3Json<T>(key: string): Promise<T | null> {
   try {
     const cmd = new GetObjectCommand({ Bucket: S3_BUCKET, Key: key });
@@ -55,11 +67,27 @@ async function fetchS3Json<T>(key: string): Promise<T | null> {
   }
 }
 
-async function loadAttachmentExtractions(): Promise<Record<string, AttachmentExtraction>> {
-  const data = await fetchS3Json<Record<string, AttachmentExtraction>>(
-    "scrapes/caleprocure/attachment_extractions.json"
+async function loadS3Data(): Promise<{
+  events: ScrapedEvent[];
+  extractions: Record<string, AttachmentExtraction>;
+} | null> {
+  const now = Date.now();
+  if (s3Cache && now - s3Cache.timestamp < S3_CACHE_TTL) {
+    return { events: s3Cache.data.events, extractions: s3Cache.extractions };
+  }
+
+  const data = await fetchS3Json<{ events: ScrapedEvent[] }>(
+    "scrapes/caleprocure/all_events.json"
   );
-  return data ?? {};
+  if (!data) return null;
+
+  const extractions =
+    (await fetchS3Json<Record<string, AttachmentExtraction>>(
+      "scrapes/caleprocure/attachment_extractions.json"
+    )) ?? {};
+
+  s3Cache = { data, extractions, timestamp: now };
+  return { events: data.events ?? [], extractions };
 }
 
 // Infer location from description (look for explicit City/County fields first, then pattern match)
@@ -149,7 +177,7 @@ function extractEstimatedValue(description: string): string {
   return match ? match[0] : "";
 }
 
-// Infer capabilities from title and description
+// Infer capabilities from title and description using regex patterns
 function inferCapabilities(title: string, description: string): string[] {
   const text = `${title} ${description}`.toLowerCase();
   const caps: string[] = [];
@@ -166,16 +194,25 @@ function inferCapabilities(title: string, description: string): string[] {
   if (text.match(/\b(devops|cicd|pipeline|containerization|kubernetes|docker)\b/)) caps.push("DevOps");
   if (text.match(/\b(system\s+integrat|enterprise\s+integrat)\b/)) caps.push("System Integration");
   if (text.match(/\b(ai|artificial\s+intelligence|machine\s+learning|ml\b|neural|nlp)\b/)) caps.push("AI/ML Services");
+  if (text.match(/\b(help\s+desk|service\s+desk|it\s+support|tech\s+support)\b/)) caps.push("IT Help Desk & Support");
+  if (text.match(/\b(telecommunications|telephone|voip|pbx)\b/)) caps.push("Telecommunications");
 
-  // Construction / Engineering — broadened patterns to catch typical RFP language
+  // Construction / Engineering — broadened patterns
   if (text.match(/\b(construction|general\s+contractor|demolition|grading|excavat)\b/)) caps.push("Building Construction");
   if (text.match(/\b(road|highway|paving|asphalt|bridge|pavement|striping|culvert|guardrail|sidewalk|curb|gutter)\b/)) caps.push("Road & Highway Construction");
   if (text.match(/\b(concrete|masonry|foundation|structural|rebar|formwork)\b/)) caps.push("Concrete & Masonry");
   if (text.match(/\b(renovation|remodel|rehabilitat|restoration|retrofit|siding|roofing|roof\s+replace|replace\w*\s+service|upgrade|moderniz)\b/)) caps.push("Renovation & Remodeling");
   if (text.match(/\b(demolition|deconstruct|abate)\b/)) caps.push("Demolition");
   if (text.match(/\b(civil\s+engineer|structural\s+engineer|geotechnical|survey|engineer\w*\s+service)\b/)) caps.push("Civil Engineering");
+  if (text.match(/\b(structural\s+engineer|structural\s+analysis|structural\s+design)\b/)) caps.push("Structural Engineering");
   if (text.match(/\b(electrical|wiring|power\s+distribut|lighting|generator|solar|high\s+voltage|switchgear|panel)\b/)) caps.push("Electrical Systems");
   if (text.match(/\b(plumbing|piping|water\s+system|sewer|drain|storm\s*water|catch\s*basin|inlet)\b/)) caps.push("Plumbing & Piping");
+  if (text.match(/\b(roofing|roof\s+replace|waterproof|membrane|flashing)\b/)) caps.push("Roofing & Waterproofing");
+  if (text.match(/\b(paint|coating|surface\s+prep|blast|primer)\b/)) caps.push("Painting & Coatings");
+  if (text.match(/\b(weld|metalwork|fabricat|steel\s+erect)\b/)) caps.push("Welding & Metalwork");
+  if (text.match(/\b(heavy\s+equipment|crane|dozer|loader|backhoe|grader)\b/)) caps.push("Heavy Equipment Operation");
+  if (text.match(/\b(survey|geotechnical|bore\s+hole|soil\s+test|topograph)\b/)) caps.push("Surveying & Geotechnical");
+  if (text.match(/\b(architect|design\s+service|schematic|blueprint)\b/)) caps.push("Architecture & Design");
 
   // Facilities / Maintenance
   if (text.match(/\b(janitorial|cleaning|custodial|sanitation|housekeeping)\b/)) caps.push("Janitorial & Cleaning");
@@ -184,6 +221,19 @@ function inferCapabilities(title: string, description: string): string[] {
   if (text.match(/\b(landscap|grounds|irrigation|vegetation|horticultur|tree\s+trim)\b/)) caps.push("Landscaping & Grounds");
   if (text.match(/\b(pest\s+control|extermination|fumigat)\b/)) caps.push("Pest Control");
   if (text.match(/\b(waste|refuse|recycl|disposal|trash|garbage|hazardous\s+waste)\b/)) caps.push("Waste Management & Disposal");
+  if (text.match(/\b(fire\s+alarm|fire\s+life\s+safety|fire\s+suppression|sprinkler)\b/)) caps.push("Fire & Safety Services");
+  if (text.match(/\b(audio|visual|av\s+system|sound\s+system|projector)\b/)) caps.push("Audio/Visual Systems");
+  if (text.match(/\b(sign|wayfinding|directory|marquee)\b/)) caps.push("Signage & Wayfinding");
+  if (text.match(/\b(furniture|cubicle|workstation|office\s+equip)\b/)) caps.push("Furniture & Office Equipment");
+
+  // Environmental
+  if (text.match(/\b(remediat|environmental\s+clean|contamination|hazmat|abatement)\b/)) caps.push("Environmental Remediation");
+  if (text.match(/\b(environmental\s+test|environmental\s+monitor|air\s+quality|water\s+quality|soil\s+sample)\b/)) caps.push("Environmental Testing & Monitoring");
+  if (text.match(/\b(forestry|vegetation\s+manage|fuel\s+reduction|prescribed\s+burn)\b/)) caps.push("Forestry & Vegetation Management");
+  if (text.match(/\b(gis|geographic|mapping|spatial|lidar)\b/)) caps.push("GIS & Mapping");
+  if (text.match(/\b(water\s+treatment|wastewater|sewage|water\s+plant)\b/)) caps.push("Water & Wastewater Treatment");
+  if (text.match(/\b(tree\s+trim|tree\s+remov|arborist|stump)\b/)) caps.push("Tree Trimming & Removal");
+  if (text.match(/\b(hazardous\s+material|hazmat|asbestos|lead\s+paint|mold\s+remediat)\b/)) caps.push("Hazardous Materials Handling");
 
   // Professional Services
   if (text.match(/\b(consult|advisory|strateg|assessment)\b/)) caps.push("Consulting & Advisory");
@@ -194,40 +244,108 @@ function inferCapabilities(title: string, description: string): string[] {
   if (text.match(/\b(staffing|temporary|recruiting|personnel|labor\s+service)\b/)) caps.push("Staffing & Recruiting");
   if (text.match(/\b(accounting|financial|bookkeeping|payroll|audit|budget)\b/)) caps.push("Accounting & Financial Services");
   if (text.match(/\b(legal|attorney|counsel|litigation|investigat)\b/)) caps.push("Legal Services");
+  if (text.match(/\b(marketing|advertising|public\s+relations|outreach|communicat)\b/)) caps.push("Communications & Public Relations");
+  if (text.match(/\b(translat|interpret|bilingual|multilingual)\b/)) caps.push("Translation & Interpretation");
+  if (text.match(/\b(inspect|compliance|code\s+enforce|regulat)\b/)) caps.push("Inspection & Compliance");
 
-  // Other
+  // Transportation & Logistics
   if (text.match(/\b(equipment\s+procure|furnish.*equipment|supply.*equipment|rental)\b/)) caps.push("Equipment Procurement");
   if (text.match(/\b(vehicle|fleet|automotive|towing|truck|tractor)\b/)) caps.push("Vehicle & Fleet Services");
   if (text.match(/\b(courier|delivery|shipping|freight|pick\s*up.*deliver)\b/)) caps.push("Courier & Delivery");
-  if (text.match(/\b(remediat|environmental\s+clean|contamination|hazmat|abatement)\b/)) caps.push("Environmental Remediation");
+  if (text.match(/\b(logistics|warehouse|storage|inventory|distribution)\b/)) caps.push("Logistics & Warehousing");
+  if (text.match(/\b(moving|relocation|movers)\b/)) caps.push("Moving & Relocation");
+  if (text.match(/\b(towing|tow\s+service|recovery\s+service)\b/)) caps.push("Towing & Recovery");
+  if (text.match(/\b(transit|bus\s+service|shuttle|passenger\s+transport)\b/)) caps.push("Transportation & Transit");
+
+  // Health & Safety
   if (text.match(/\b(medical|clinical|health\s+service|nursing|pharmacy|bio.?hazard)\b/)) caps.push("Medical & Health Services");
   if (text.match(/\b(fire\s+train|live\s+fire|fire\s+alarm|fire\s+life\s+safety|emergency\s+service)\b/)) caps.push("Fire & Safety Services");
-  if (text.match(/\b(printing|print\s+service|envelope|publishing)\b/)) caps.push("Printing & Publishing");
+  if (text.match(/\b(security\s+guard|armed\s+guard|unarmed\s+guard|patrol|surveillance)\b/)) caps.push("Security Guard Services");
+  if (text.match(/\b(emergency\s+manage|disaster|preparedness|continuity)\b/)) caps.push("Emergency Management");
+  if (text.match(/\b(social\s+service|outreach|community|case\s+manage)\b/)) caps.push("Social Services & Outreach");
 
-  // Return empty array if nothing matched — Phase 2 will give full points for "no requirement"
-  return caps;
+  // Other
+  if (text.match(/\b(printing|print\s+service|envelope|publishing)\b/)) caps.push("Printing & Publishing");
+  if (text.match(/\b(photo|video|film|record|media\s+product)\b/)) caps.push("Photography & Videography");
+  if (text.match(/\b(food\s+service|catering|kitchen|bakery|vending)\b/)) caps.push("Food Services & Catering");
+  if (text.match(/\b(fuel|gasoline|diesel|propane|energy\s+supply)\b/)) caps.push("Fuel & Energy Supply");
+  if (text.match(/\b(uniform|protective\s+equip|ppe|safety\s+gear)\b/)) caps.push("Uniforms & Protective Equipment");
+  if (text.match(/\b(laboratory|lab\s+service|scientific|specimen)\b/)) caps.push("Laboratory & Scientific Services");
+  if (text.match(/\b(research|r\s*&\s*d|study|pilot\s+program)\b/)) caps.push("Research & Development");
+  if (text.match(/\b(records\s+manage|archiv|document\s+storage|digitiz)\b/)) caps.push("Records Management & Archiving");
+  if (text.match(/\b(marine|maritime|harbor|dock|pier)\b/)) caps.push("Marine & Maritime Services");
+
+  // Deduplicate
+  return [...new Set(caps)];
+}
+
+/**
+ * Industry → default capabilities mapping.
+ * Used as a last resort when regex finds nothing, so every RFP gets at least
+ * one capability for the matching algorithm to work with.
+ */
+const INDUSTRY_FALLBACK_CAPS: Record<string, string[]> = {
+  "Construction":                    ["Building Construction"],
+  "Engineering":                     ["Civil Engineering", "Structural Engineering"],
+  "IT Services":                     ["Software Development", "Cloud Services"],
+  "Facilities Maintenance":          ["Facilities Maintenance & Repair"],
+  "Environmental Services":          ["Environmental Testing & Monitoring"],
+  "Transportation":                  ["Transportation & Transit"],
+  "Equipment & Supplies":            ["Equipment Procurement"],
+  "Healthcare":                      ["Medical & Health Services"],
+  "Social & Rehabilitation Services":["Social Services & Outreach"],
+  "Security":                        ["Security Guard Services"],
+  "Public Safety & Emergency":       ["Emergency Management"],
+  "Legal Services":                  ["Legal Services"],
+  "Food & Agriculture":              ["Food Services & Catering"],
+  "Education":                       ["Training & Support"],
+  "Consulting":                      ["Consulting & Advisory"],
+  "Research & Development":          ["Research & Development"],
+  "Manufacturing":                   ["Printing & Publishing"],
+  "Real Estate & Leasing":           ["Facilities Maintenance & Repair"],
+  "Government Services":             ["Consulting & Advisory"],
+};
+
+/**
+ * Resolve capabilities for an RFP.
+ * Strategy: regex-first (based on actual title/description text),
+ * with industry-based fallback so every RFP gets at least one capability.
+ * LLM-extracted capabilities are NOT used as primary source because
+ * the extraction quality is too low (e.g. "Cloud Services" on towing RFPs).
+ */
+function resolveCapabilities(
+  _extraction: AttachmentExtraction | null,
+  title: string,
+  description: string,
+  industry: string,
+): string[] {
+  // Primary: regex inference from actual title/description text
+  const caps = inferCapabilities(title, description);
+  if (caps.length > 0) return caps;
+
+  // Fallback: assign default capability based on inferred industry
+  const fallback = INDUSTRY_FALLBACK_CAPS[industry];
+  if (fallback) return [...fallback];
+
+  return ["Consulting & Advisory"];  // absolute last resort
 }
 
 export async function GET() {
   try {
-    const data = await fetchS3Json<{ events: ScrapedEvent[] }>(
-      "scrapes/caleprocure/all_events.json"
-    );
-    if (!data) {
+    const loaded = await loadS3Data();
+    if (!loaded) {
       return NextResponse.json(
         { error: "Could not load events from S3" },
         { status: 500 }
       );
     }
 
-    // Load attachment extractions (empty object if file doesn't exist)
-    const extractions = await loadAttachmentExtractions();
+    const { events, extractions } = loaded;
     const extractionCount = Object.keys(extractions).length;
     if (extractionCount > 0) {
       console.log(`Loaded ${extractionCount} attachment extractions`);
     }
 
-    const events: ScrapedEvent[] = data.events ?? [];
     const rfps = events.map((e, i) => {
       const extraction = extractions[e.event_id] || null;
 
@@ -240,9 +358,15 @@ export async function GET() {
         ? extraction.certifications_required
         : ([] as string[]);
 
-      const capabilities = extraction?.capabilities_required?.length
-        ? extraction.capabilities_required
-        : inferCapabilities(e.title || "", e.description || "");
+      const industry = inferIndustry(e.department || "", e.title, e.description);
+
+      // Regex-first capability resolution with industry fallback
+      const capabilities = resolveCapabilities(
+        extraction,
+        e.title || "",
+        e.description || "",
+        industry,
+      );
 
       const estimatedValue = extraction?.contract_value_estimate
         || extractEstimatedValue(e.description || "")
@@ -267,7 +391,7 @@ export async function GET() {
         location,
         deadline: e.end_date ? e.end_date.replace(/\s+/g, " ").trim() : "",
         estimatedValue,
-        industry: inferIndustry(e.department || "", e.title, e.description),
+        industry,
         naicsCodes,
         capabilities,
         certifications,
