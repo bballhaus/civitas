@@ -31,6 +31,8 @@ Your task: Write an internal Plan of Execution that outlines:
 
    Be decisive and actionable — use language like "You must...", "Obtain...", "Partner with...", "Hire...", "Register for..." rather than "Consider...", "You may want to...", "It might be helpful to...".
 
+CRITICAL: Action items must be about REAL-WORLD PREPARATION to win and execute the contract — NOT about updating their profile, capabilities list, or any software system. Never say "review and update your capabilities list", "update your profile", "update your certifications list", "update your service area list", or similar. Instead, focus on tangible actions like obtaining certifications, hiring staff, acquiring equipment, establishing local presence, gathering references, preparing bid documents, and partnering with subcontractors. The profile data you receive is just context about the company — do not reference it as something to be edited.
+
 4. **Execution Phases** – If you win, outline high-level phases: kickoff, key milestones, resource needs, and critical path items based on the RFP scope.
 
 5. **Risks & Considerations** – Identify gaps that are hard to close, capacity concerns, deadline pressure, or other factors you should weigh before deciding to bid. For each risk, suggest a concrete mitigation strategy.
