@@ -805,6 +805,7 @@ export default function DashboardPage() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [sortBy, setSortBy] = useState<"score" | "deadline" | "value">("score");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const filtersContainerRef = useRef<HTMLDivElement>(null);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
   const scrollLockYRef = useRef(0);
@@ -1079,9 +1080,9 @@ export default function DashboardPage() {
       <AppHeader />
 
       {/* Split view */}
-      <div className="relative z-[1] flex flex-col lg:flex-row h-[calc(100vh-65px)]">
+      <div className="relative z-[1] flex flex-col lg:flex-row lg:h-[calc(100vh-65px)] lg:overflow-hidden">
         {/* Left: RFP list */}
-        <aside className="w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-visible">
+          <aside className={`w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] h-[calc(100vh-65px)] lg:h-auto lg:overflow-visible ${mobileView === "detail" ? "hidden lg:flex" : "flex"}`}>
           <div ref={filtersContainerRef} className="p-4 border-b border-slate-200 bg-white space-y-3">
             <h1 className="text-base font-bold text-slate-800">
               Hi{displayName !== "there" ? ` ${displayName}` : " there"}!{" "}
@@ -1193,7 +1194,8 @@ export default function DashboardPage() {
             </div>
           </div>
           <div
-            className={`flex-1 min-h-0 p-3 space-y-3 ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
+            className={`flex-1 min-h-0 p-3 space-y-3 overflow-y-auto ${filterPanelOpen ? "!overflow-hidden" : ""}`}
+            style={{ WebkitOverflowScrolling: "touch" } as React.CSSProperties}          
           >
             {error ? (
               <p className="text-sm text-amber-600 py-4 px-4 bg-amber-50 rounded-lg">{error}. Showing sample data.</p>
@@ -1248,8 +1250,8 @@ export default function DashboardPage() {
                   key={rfp.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => setSelectedRfpId(rfp.id)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedRfpId(rfp.id); } }}
+                  onClick={() => { setSelectedRfpId(rfp.id); setMobileView("detail"); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedRfpId(rfp.id); setMobileView("detail"); } }}
                   className={`block w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md cursor-pointer ${
                     match.disqualified ? "opacity-60 " : ""
                   }${isSelected ? "border-[#2563eb] shadow-md" : "border-transparent hover:border-slate-200"}`}
@@ -1320,13 +1322,27 @@ export default function DashboardPage() {
 
         {/* Right: RFP detail */}
         <main
-          className={`flex-1 min-w-0 bg-transparent relative ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
+          className={`w-full lg:flex-1 min-w-0 bg-transparent relative h-[calc(100vh-65px)] lg:h-auto ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"} ${mobileView === "list" ? "hidden lg:block" : "block"}`}
         >
           {toast && (
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-lg">
               {toast}
             </div>
           )}
+          {mobileView === "detail" && (
+          <div className="lg:hidden sticky top-0 z-10 bg-white/90 backdrop-blur-sm border-b border-slate-200 px-4 py-2">
+            <button
+              type="button"
+              onClick={() => setMobileView("list")}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-[#2563eb] hover:text-[#1d4ed8]"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Back to matches
+            </button>
+          </div>
+        )}
           {selectedRfp && selectedRfp.id !== deferredSelectedRfp?.id ? (
             <div className="p-6 flex flex-col items-center justify-center min-h-[200px] text-slate-500">
               <p className="font-semibold text-slate-700 truncate max-w-full text-center">{selectedRfp.title}</p>
