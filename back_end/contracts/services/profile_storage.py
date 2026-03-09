@@ -191,6 +191,12 @@ def refresh_profile_from_contracts(user):
     from .contract_storage import list_contracts_for_profile
 
     contract_list = list_contracts_for_profile(user.id)
+    # Filter out documents that don't belong to this user (S3 key mismatch)
+    user_prefix = f"uploads/{user.id}/"
+    contract_list = [
+        c for c in contract_list
+        if not (isinstance(c, dict) and c.get("document_s3_key") and not c["document_s3_key"].startswith(user_prefix))
+    ]
     certs = set()
     clearances_set = set()
     naics = set()
