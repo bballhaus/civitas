@@ -173,12 +173,19 @@ function deriveFilterOptionsFromRfps(rfps: RFP[]): Record<keyof RFPFilters, stri
     const set = new Set([...staticList, ...dynamic.map((s) => s.trim()).filter(Boolean)]);
     return [...set].sort();
   };
-  const locations = rfps.flatMap((r) =>
-    (r.location || "")
-      .split(/[,;]/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 2)
-  );
+
+  const rfpCities = new Set<string>();
+  const rfpCounties = new Set<string>();
+  for (const rfp of rfps) {
+    const loc = (rfp.location || "").toLowerCase();
+    for (const city of FILTER_OPTIONS.workCities) {
+      if (loc.includes(city.toLowerCase())) rfpCities.add(city);
+    }
+    for (const county of FILTER_OPTIONS.workCounties) {
+      if (loc.includes(county.toLowerCase())) rfpCounties.add(county);
+    }
+  }
+
   const rfpNaicsCodes = rfps.flatMap((r) => (r.naicsCodes || []).map(String).map((c) => c.trim()).filter(Boolean));
   const allNaicsCodes = merge(FILTER_OPTIONS.naicsCodes, rfpNaicsCodes);
   const naicsDisplay = allNaicsCodes.map((code) => (NAICS_MAP[code] ? `${code} - ${NAICS_MAP[code]}` : code));
@@ -187,8 +194,8 @@ function deriveFilterOptionsFromRfps(rfps: RFP[]): Record<keyof RFPFilters, stri
     agencies: merge(FILTER_OPTIONS.agencies, rfps.map((r) => r.agency || "").filter(Boolean)),
     contractValueRanges: [...FILTER_OPTIONS.contractValueRanges],
     capabilities: merge(FILTER_OPTIONS.capabilities, rfps.flatMap((r) => r.capabilities || [])),
-    workCities: merge(FILTER_OPTIONS.workCities, locations),
-    workCounties: merge(FILTER_OPTIONS.workCounties, locations),
+    workCities: [...rfpCities].sort(),
+    workCounties: [...rfpCounties].sort(),
     contractTypes: merge(FILTER_OPTIONS.contractTypes, rfps.map((r) => r.contractType || "").filter(Boolean)),
     sizeStatus: [...FILTER_OPTIONS.sizeStatus],
     certifications: merge(FILTER_OPTIONS.certifications, rfps.flatMap((r) => r.certifications || [])),
@@ -795,7 +802,8 @@ export default function DashboardPage() {
   }, []);
 
   const [showNotInterestedList, setShowNotInterestedList] = useState(false);
-  const [listFilter, setListFilter] = useState<"all" | "saved">("all");
+  const [listFilter, setListFilter] = useState<"all" | "saved" | "applied" | "in_progress">("all");
+  const [preloadRfpId, setPreloadRfpId] = useState<string | null>(null);
   const [filters, setFilters] = useState<RFPFilters>(EMPTY_FILTERS);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
@@ -805,6 +813,7 @@ export default function DashboardPage() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [sortBy, setSortBy] = useState<"score" | "deadline" | "value">("score");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const filtersContainerRef = useRef<HTMLDivElement>(null);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
   const scrollLockYRef = useRef(0);
@@ -982,13 +991,21 @@ export default function DashboardPage() {
     return [...list].sort((a, b) => b.match.score - a.match.score);
   }, [rfps, profile]);
 
-  const { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps } = React.useMemo(() => {
+  const { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps, savedCount, appliedCount, inProgressCount } = React.useMemo(() => {
     const rfpsWithMatch = allRfpsWithMatch.filter((r) => !notInterestedRfpIds.has(r.id));
     const hiddenRfps = allRfpsWithMatch.filter((r) => notInterestedRfpIds.has(r.id));
     const hiddenCount = hiddenRfps.length;
-    const baseDisplayedRfps = listFilter === "saved"
-      ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
-      : rfpsWithMatch;
+    const savedCount = rfpsWithMatch.filter((r) => savedRfpIds.has(r.id)).length;
+    const appliedCount = rfpsWithMatch.filter((r) => appliedRfpIds.has(r.id)).length;
+    const inProgressCount = rfpsWithMatch.filter((r) => inProgressRfpIds.has(r.id)).length;
+    const baseDisplayedRfps =
+      listFilter === "saved"
+        ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
+        : listFilter === "applied"
+          ? rfpsWithMatch.filter((r) => appliedRfpIds.has(r.id))
+          : listFilter === "in_progress"
+            ? rfpsWithMatch.filter((r) => inProgressRfpIds.has(r.id))
+            : rfpsWithMatch;
     let displayed = countActiveFilters(filters) > 0
       ? baseDisplayedRfps.filter((r) => rfpMatchesFilters(r, filters))
       : baseDisplayedRfps;
@@ -1011,8 +1028,15 @@ export default function DashboardPage() {
       }
       return sortDirection === "desc" ? -cmp : cmp;
     });
-    return { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps: displayed };
-  }, [allRfpsWithMatch, notInterestedRfpIds, listFilter, savedRfpIds, filters, deferredSearchQuery, minScore, sortBy, sortDirection]);
+    if (preloadRfpId) {
+      const idx = displayed.findIndex((r) => r.id === preloadRfpId);
+      if (idx > 0) {
+        const [picked] = displayed.splice(idx, 1);
+        displayed = [picked, ...displayed];
+      }
+    }
+    return { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps: displayed, savedCount, appliedCount, inProgressCount };
+  }, [allRfpsWithMatch, notInterestedRfpIds, listFilter, savedRfpIds, appliedRfpIds, inProgressRfpIds, filters, deferredSearchQuery, minScore, sortBy, sortDirection, preloadRfpId]);
 
   const dynamicFilterOptions = React.useMemo(
     () => deriveFilterOptionsFromRfps(rfpsWithMatch),
@@ -1028,28 +1052,48 @@ export default function DashboardPage() {
   const selectedRfp = displayedRfps.find((r) => r.id === selectedId);
   // Defer heavy panel content so card selection (border) updates immediately
   const deferredSelectedRfp = useDeferredValue(selectedRfp ?? null);
+  const rightRfpNotOnScreen =
+    selectedRfpId != null && deferredSelectedRfp?.id !== selectedRfpId;
 
+  // Only clear selection when the list is non-empty and the selected RFP isn't in it.
+  // When the list is empty (e.g. 0 applied), keep selection so loading can show until data arrives.
   useEffect(() => {
+    if (displayedRfps.length === 0) return;
     if (selectedRfpId && !displayedRfps.some((r) => r.id === selectedRfpId)) {
       setSelectedRfpId(displayedRfps[0]?.id ?? null);
     }
   }, [displayedRfps, selectedRfpId]);
 
-  // When arriving from home page (saved/applied/in progress/due soon), open dashboard with that RFP selected
+  // When arriving from home page (saved/applied/in progress/due soon), open dashboard with that RFP selected and filter applied
   useEffect(() => {
-    if (typeof window === "undefined" || displayedRfps.length === 0) return;
+    if (typeof window === "undefined") return;
     const raw = sessionStorage.getItem("civitas_preload_rfp");
     if (!raw) return;
+    let preloadId: string | null = null;
     try {
-      const preload = JSON.parse(raw) as { id?: string };
-      if (preload?.id && displayedRfps.some((r) => r.id === preload.id)) {
-        setSelectedRfpId(preload.id);
+      const parsed = JSON.parse(raw) as { id?: string; rfp?: { id?: string }; filter?: "saved" | "applied" | "in_progress" };
+      const rfp = parsed.rfp ?? parsed;
+      const id = rfp?.id ?? parsed.id;
+      const filter = parsed.filter ?? null;
+      if (filter === "saved" || filter === "applied" || filter === "in_progress") {
+        setListFilter(filter);
+      }
+      if (id) {
+        preloadId = id;
+        setSelectedRfpId(id);
+        setPreloadRfpId(id);
       }
     } catch {
       // ignore invalid JSON
     }
     sessionStorage.removeItem("civitas_preload_rfp");
-  }, [displayedRfps]);
+    if (preloadId) {
+      const t = setTimeout(() => setPreloadRfpId(null), 0);
+      return () => clearTimeout(t);
+    }
+  // Run once on mount to read preload from home page
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional mount-only
+  }, []);
 
   // Show list as soon as events are ready; profile loads in background (matches update when it arrives).
   if (loading) {
@@ -1071,14 +1115,20 @@ export default function DashboardPage() {
       <AppHeader />
 
       {/* Split view */}
-      <div className="relative z-[1] flex flex-col lg:flex-row h-[calc(100vh-65px)]">
+      <div className="relative z-[1] flex flex-col lg:flex-row lg:h-[calc(100vh-65px)] lg:overflow-hidden">
         {/* Left: RFP list */}
-        <aside className="w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-visible">
+          <aside className={`w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] h-[calc(100vh-65px)] lg:h-auto lg:overflow-visible ${mobileView === "detail" ? "hidden lg:flex" : "flex"}`}>
           <div ref={filtersContainerRef} className="p-4 border-b border-slate-200 bg-white space-y-3">
             <h1 className="text-base font-bold text-slate-800">
               Hi{displayName !== "there" ? ` ${displayName}` : " there"}!{" "}
-              <span className="text-[#2563eb]">{matchCount}</span> {listFilter === "saved" ? "saved" : ""} match{matchCount !== 1 ? "es" : ""} to review.
+              <span className="text-[#2563eb]">{matchCount}</span> {listFilter === "saved" ? "saved" : listFilter === "applied" ? "applied" : listFilter === "in_progress" ? "in progress" : ""} match{matchCount !== 1 ? "es" : ""} to review.
             </h1>
+            {rightRfpNotOnScreen && (
+              <p className="flex items-center gap-2 text-sm text-slate-500" aria-live="polite">
+                <span className="animate-spin rounded-full h-4 w-4 border-2 border-slate-300 border-t-[#2563eb] shrink-0" aria-hidden />
+                Loading…
+              </p>
+            )}
             <input
               type="text"
               value={searchQuery}
@@ -1086,7 +1136,7 @@ export default function DashboardPage() {
               placeholder="Search RFPs by title, agency, location..."
               className="w-full px-3 py-2 text-sm text-slate-800 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563eb] focus:border-transparent placeholder:text-slate-500"
             />
-            <div className="flex flex-nowrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <SortByDropdown
                 sortBy={sortBy}
                 sortDirection={sortDirection}
@@ -1138,6 +1188,8 @@ export default function DashboardPage() {
                   />
                 )}
               </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setListFilter(listFilter === "saved" ? "all" : "saved")}
@@ -1150,12 +1202,41 @@ export default function DashboardPage() {
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" clipRule="evenodd" />
                 </svg>
-                Saved ({savedRfpIds.size})
+                Saved ({savedCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setListFilter(listFilter === "applied" ? "all" : "applied")}
+                className={`shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                  listFilter === "applied"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Applied ({appliedCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setListFilter(listFilter === "in_progress" ? "all" : "in_progress")}
+                className={`shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                  listFilter === "in_progress"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                </svg>
+                In progress ({inProgressCount})
               </button>
             </div>
           </div>
           <div
-            className={`flex-1 min-h-0 p-3 space-y-3 ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
+            className={`flex-1 min-h-0 p-3 space-y-3 overflow-y-auto ${filterPanelOpen ? "!overflow-hidden" : ""}`}
+            style={{ WebkitOverflowScrolling: "touch" } as React.CSSProperties}          
           >
             {error ? (
               <p className="text-sm text-amber-600 py-4 px-4 bg-amber-50 rounded-lg">{error}. Showing sample data.</p>
@@ -1210,8 +1291,8 @@ export default function DashboardPage() {
                   key={rfp.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => setSelectedRfpId(rfp.id)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedRfpId(rfp.id); } }}
+                  onClick={() => { setSelectedRfpId(rfp.id); setMobileView("detail"); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedRfpId(rfp.id); setMobileView("detail"); } }}
                   className={`block w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md cursor-pointer ${
                     match.disqualified ? "opacity-60 " : ""
                   }${isSelected ? "border-[#2563eb] shadow-md" : "border-transparent hover:border-slate-200"}`}
@@ -1282,14 +1363,35 @@ export default function DashboardPage() {
 
         {/* Right: RFP detail */}
         <main
-          className={`flex-1 min-w-0 bg-transparent relative ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
+          className={`w-full lg:flex-1 min-w-0 bg-transparent relative h-[calc(100vh-65px)] lg:h-auto ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"} ${mobileView === "list" ? "hidden lg:block" : "block"}`}
         >
           {toast && (
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-lg">
               {toast}
             </div>
           )}
-          {selectedRfp && selectedRfp.id !== deferredSelectedRfp?.id ? (
+          {mobileView === "detail" && (
+          <div className="lg:hidden sticky top-0 z-10 bg-white/90 backdrop-blur-sm border-b border-slate-200 px-4 py-2">
+            <button
+              type="button"
+              onClick={() => setMobileView("list")}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-[#2563eb] hover:text-[#1d4ed8]"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Back to matches
+            </button>
+          </div>
+        )}
+          {rightRfpNotOnScreen ? (
+            <div className="flex items-center justify-center h-full pr-4">
+              <div className="flex flex-col items-center gap-2 text-slate-500">
+                <div className="animate-spin rounded-full h-8 w-8 border-2 border-slate-300 border-t-[#2563eb]" aria-hidden />
+                <p className="text-sm font-medium">Loading…</p>
+              </div>
+            </div>
+          ) : selectedRfp && selectedRfp.id !== deferredSelectedRfp?.id ? (
             <div className="p-6 flex flex-col items-center justify-center min-h-[200px] text-slate-500">
               <p className="font-semibold text-slate-700 truncate max-w-full text-center">{selectedRfp.title}</p>
               <p className="mt-2 text-sm">Loading…</p>

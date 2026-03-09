@@ -73,6 +73,7 @@ export default function UploadPage() {
     const selectedFiles = e.target.files;
     if (!selectedFiles) return;
     addFiles(Array.from(selectedFiles));
+    e.target.value = ""; // reset so same file(s) can be re-selected after removal
   };
 
   const removeFile = (index: number) => {
