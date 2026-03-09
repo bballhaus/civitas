@@ -8,19 +8,26 @@ You will be given:
 2) The full RFP description text
 3) Optionally, an attachmentRollup object containing about-RFP summary text, key requirement bullets, and combined constraints extracted from attachments
 
-Your task: Write a concise summary (approximately 150–250 words) that captures:
-- **Scope & deliverables** – What you / your company must deliver
-- **Key requirements** – Mandatory capabilities, certifications, or qualifications
-- **Timeline & deadlines** – Important dates or milestones if mentioned
-- **Contract terms** – Type of contract (e.g., fixed-price, T&M), estimated value if provided
-- **Notable constraints** – Location requirements, security clearances, or other critical terms
+Your task: Write a concise summary (approximately 150–300 words) with these sections IN ORDER:
 
-Format your response in markdown for readability:
-- Use **bold** for section headings (e.g., **Scope & Deliverables**, **Key Requirements**, **Timeline & Deadlines**)
-- Use bullet points (- or *) for lists of requirements, deliverables, or dates
-- Use short paragraphs between sections
-- Keep it scannable so vendors can quickly understand whether to pursue the opportunity.
-- Phrase the summary so it addresses the reader as the potential vendor: use "you" and "your company" where appropriate (e.g. "what you must deliver"). Do not use "the contractor" or "the company" when describing requirements that apply to the reader.`;
+**Deliverables**
+This is the MOST IMPORTANT section. List every concrete deliverable, work item, or service the contractor must provide as bullet points. Be specific — extract exact tasks, quantities, materials, and measurable outputs from the description and attachments. Examples: "Remove and replace 500 LF of concrete pavement", "Provide 24/7 janitorial services for Building A". If the RFP is vague, note what information is missing.
+
+**Key Requirements**
+Bullet-point any mandatory qualifications: certifications, licenses, experience minimums, insurance, bonding, or technical capabilities required.
+
+**Timeline & Deadlines**
+Important dates, milestones, or contract duration. Include bid due date if mentioned.
+
+**Contract Terms**
+Contract type, estimated value, location, and any notable constraints (set-asides, security clearances, prevailing wage, etc.).
+
+Formatting rules:
+- Use **bold** for each section heading
+- Use bullet points (- ) for ALL deliverables and requirements — never write deliverables as a paragraph
+- Keep it scannable so vendors can quickly decide whether to pursue
+- Address the reader as "you" / "your company" — do not say "the contractor"
+- If the RFP description is too brief to extract specific deliverables, say so clearly and recommend reviewing the attached documents`;
 
 export async function POST(req: Request) {
   try {
@@ -100,7 +107,7 @@ Summarize the contract requirements:`;
         { role: "user", content: input },
       ],
       temperature: 0.3,
-      max_tokens: 500,
+      max_tokens: 700,
     });
 
     const summary =

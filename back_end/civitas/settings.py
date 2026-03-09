@@ -73,6 +73,9 @@ CSRF_TRUSTED_ORIGINS = [
 _extra_csrf = os.getenv('CSRF_TRUSTED_ORIGINS_EXTRA', '')
 if _extra_csrf:
     CSRF_TRUSTED_ORIGINS.extend(s.strip() for s in _extra_csrf.split(',') if s.strip())
+# Local dev: also trust the autoPort frontend
+if DEBUG:
+    CSRF_TRUSTED_ORIGINS.append('http://localhost:58620')
 # So the CSRF cookie is sent on cross-origin POST (required for Render frontend → backend).
 # On localhost (HTTP), use Lax + Secure=False so the browser will set and send the cookie.
 _secure_cookies = os.environ.get('SECURE_COOKIES', 'false').lower() == 'true'
@@ -234,6 +237,9 @@ CORS_ALLOWED_ORIGINS = [
     'https://civitas-ai.onrender.com',
     'https://civitas-aipr.onrender.com',
 ]
+# Local dev: also allow any localhost port (for autoPort)
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
 
 # Contract extraction (LLM)
 # Provider: 'groq' (free/cheap, fast) or 'openai'
