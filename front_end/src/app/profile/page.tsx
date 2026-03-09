@@ -94,37 +94,88 @@ function smartTitleCase(s: string): string {
   }).join(" ");
 }
 
+/** Strip leading/trailing quotes, brackets, and stray punctuation from extracted text. */
+function stripBulletText(s: string): string {
+  return s
+    .replace(/^[\s'"\[\]]+/, "")
+    .replace(/\s*\.?['"\]]+$/, "")
+    .trim();
+}
+
 /**
  * Clean a display array: split comma-separated entries, remove "null"/empty,
+ * strip quotes/brackets, optionally split on period (sentence boundaries),
  * deduplicate case-insensitively, and optionally title-case.
  */
-function cleanDisplayArray(arr: string[], doTitleCase = false): string[] {
+function cleanDisplayArray(
+  arr: string[],
+  doTitleCase = false,
+  splitOnPeriod = false,
+  dropRedundantCounties = false
+): string[] {
+  const skipValue = (s: string) =>
+    !s ||
+    s.toLowerCase() === "null" ||
+    s.toLowerCase() === "undefined" ||
+    s.toLowerCase() === "unknown";
   const items: string[] = [];
   for (const entry of arr) {
     if (entry == null) continue;
     for (const part of String(entry).split(",")) {
-      const trimmed = part.trim();
-      if (!trimmed || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined") continue;
-      items.push(trimmed);
+      let trimmed = part.trim();
+      if (skipValue(trimmed)) continue;
+      trimmed = stripBulletText(trimmed);
+      if (skipValue(trimmed)) continue;
+      if (splitOnPeriod && /\.\s+/.test(trimmed)) {
+        const subParts = trimmed.split(/\.\s+/).map((p) => stripBulletText(p)).filter((p) => p.length > 0);
+        for (const sub of subParts) {
+          const cleaned = sub.replace(/^\s*and\s+/i, "").trim();
+          if (cleaned && !skipValue(cleaned)) items.push(cleaned);
+        }
+      } else {
+        const cleaned = trimmed.replace(/^\s*and\s+/i, "").trim();
+        if (cleaned && !skipValue(cleaned)) items.push(cleaned);
+      }
     }
   }
+  const stripTrailingPeriod = (s: string) => s.replace(/\.$/, "").trim();
   const seen = new Map<string, string>();
   for (const item of items) {
-    const key = item.toLowerCase();
+    const display = stripTrailingPeriod(doTitleCase ? smartTitleCase(item) : item);
+    const key = display.toLowerCase();
     if (!seen.has(key)) {
-      seen.set(key, doTitleCase ? smartTitleCase(item) : item);
+      seen.set(key, display);
     }
   }
-  return [...seen.values()];
+  let result = [...seen.values()];
+  if (dropRedundantCounties) {
+    const lowerSet = new Set(result.map((s) => s.toLowerCase()));
+    result = result.filter(
+      (item) => !lowerSet.has(`${item.toLowerCase()} county`)
+    );
+  }
+  return result.map((s) =>
+    s && s.length ? s.charAt(0).toUpperCase() + s.slice(1) : s
+  );
 }
 
-function ListOrEmpty({ items, titleCase }: { items: string[]; titleCase?: boolean }) {
-  const clean = cleanDisplayArray(items ?? [], titleCase);
+function ListOrEmpty({
+  items,
+  titleCase,
+  splitOnPeriod,
+  dropRedundantCounties,
+}: {
+  items: string[];
+  titleCase?: boolean;
+  splitOnPeriod?: boolean;
+  dropRedundantCounties?: boolean;
+}) {
+  const clean = cleanDisplayArray(items ?? [], titleCase, splitOnPeriod, dropRedundantCounties);
   if (!clean.length) return <p className="text-slate-500 italic text-sm">Not provided</p>;
   return (
     <ul className="list-disc list-inside text-slate-700 space-y-1">
-      {clean.map((item) => (
-        <li key={item}>{item}</li>
+      {clean.map((item, i) => (
+        <li key={`${item}-${i}`}>{item}</li>
       ))}
     </ul>
   );
@@ -1259,7 +1310,7 @@ export default function ProfilePage() {
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Work counties</p>
-                    <ListOrEmpty items={profile.workCounties ?? []} titleCase />
+                    <ListOrEmpty items={profile.workCounties ?? []} titleCase dropRedundantCounties />
                   </div>
                 </div>
               )}
@@ -1302,15 +1353,15 @@ export default function ProfilePage() {
                 <div className="space-y-3">
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Capabilities</p>
-                    <ListOrEmpty items={profile.capabilities ?? []} titleCase />
+                    <ListOrEmpty items={profile.capabilities ?? []} titleCase splitOnPeriod />
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Agency experience</p>
-                    <ListOrEmpty items={profile.agencyExperience ?? []} titleCase />
+                    <ListOrEmpty items={profile.agencyExperience ?? []} titleCase splitOnPeriod />
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Contract types</p>
-                    <ListOrEmpty items={profile.contractTypes ?? []} titleCase />
+                    <ListOrEmpty items={profile.contractTypes ?? []} titleCase splitOnPeriod />
                   </div>
                 </div>
               )}
