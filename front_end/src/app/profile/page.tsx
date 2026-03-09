@@ -197,17 +197,6 @@ export default function ProfilePage() {
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
   const pendingFilesRef = useRef<Map<string, File>>(new Map());
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const showToast = (message: string) => {
-    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-    setToast(message);
-    toastTimeoutRef.current = setTimeout(() => {
-      setToast(null);
-      toastTimeoutRef.current = null;
-    }, 2500);
-  };
 
   // Parse documents with backend API
   const parseDocumentsWithBackend = async (files: File[]): Promise<any> => {
@@ -571,7 +560,7 @@ export default function ProfilePage() {
           if (failedFiles.length > 0) {
             alert(`The following files failed to upload:\n${failedFiles.join("\n")}\n\nPlease try again.`);
           }
-          showToast("Updated match preferences");
+
           setEditingSection(null);
           setSectionSaving(false);
           return;
@@ -1392,11 +1381,6 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-lg">
-          {toast}
-        </div>
-      )}
     </div>
   );
 }
