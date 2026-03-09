@@ -793,7 +793,7 @@ export default function DashboardPage() {
   }, []);
 
   const [showNotInterestedList, setShowNotInterestedList] = useState(false);
-  const [listFilter, setListFilter] = useState<"all" | "saved">("all");
+  const [listFilter, setListFilter] = useState<"all" | "saved" | "applied" | "in_progress">("all");
   const [filters, setFilters] = useState<RFPFilters>(EMPTY_FILTERS);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
@@ -980,13 +980,21 @@ export default function DashboardPage() {
     return [...list].sort((a, b) => b.match.score - a.match.score);
   }, [rfps, profile]);
 
-  const { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps } = React.useMemo(() => {
+  const { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps, savedCount, appliedCount, inProgressCount } = React.useMemo(() => {
     const rfpsWithMatch = allRfpsWithMatch.filter((r) => !notInterestedRfpIds.has(r.id));
     const hiddenRfps = allRfpsWithMatch.filter((r) => notInterestedRfpIds.has(r.id));
     const hiddenCount = hiddenRfps.length;
-    const baseDisplayedRfps = listFilter === "saved"
-      ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
-      : rfpsWithMatch;
+    const savedCount = rfpsWithMatch.filter((r) => savedRfpIds.has(r.id)).length;
+    const appliedCount = rfpsWithMatch.filter((r) => appliedRfpIds.has(r.id)).length;
+    const inProgressCount = rfpsWithMatch.filter((r) => inProgressRfpIds.has(r.id)).length;
+    const baseDisplayedRfps =
+      listFilter === "saved"
+        ? rfpsWithMatch.filter((r) => savedRfpIds.has(r.id))
+        : listFilter === "applied"
+          ? rfpsWithMatch.filter((r) => appliedRfpIds.has(r.id))
+          : listFilter === "in_progress"
+            ? rfpsWithMatch.filter((r) => inProgressRfpIds.has(r.id))
+            : rfpsWithMatch;
     let displayed = countActiveFilters(filters) > 0
       ? baseDisplayedRfps.filter((r) => rfpMatchesFilters(r, filters))
       : baseDisplayedRfps;
@@ -1009,8 +1017,8 @@ export default function DashboardPage() {
       }
       return sortDirection === "desc" ? -cmp : cmp;
     });
-    return { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps: displayed };
-  }, [allRfpsWithMatch, notInterestedRfpIds, listFilter, savedRfpIds, filters, deferredSearchQuery, minScore, sortBy, sortDirection]);
+    return { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps: displayed, savedCount, appliedCount, inProgressCount };
+  }, [allRfpsWithMatch, notInterestedRfpIds, listFilter, savedRfpIds, appliedRfpIds, inProgressRfpIds, filters, deferredSearchQuery, minScore, sortBy, sortDirection]);
 
   const dynamicFilterOptions = React.useMemo(
     () => deriveFilterOptionsFromRfps(rfpsWithMatch),
@@ -1075,7 +1083,7 @@ export default function DashboardPage() {
           <div ref={filtersContainerRef} className="p-4 border-b border-slate-200 bg-white space-y-3">
             <h1 className="text-base font-bold text-slate-800">
               Hi{displayName !== "there" ? ` ${displayName}` : " there"}!{" "}
-              <span className="text-[#2563eb]">{matchCount}</span> {listFilter === "saved" ? "saved" : ""} match{matchCount !== 1 ? "es" : ""} to review.
+              <span className="text-[#2563eb]">{matchCount}</span> {listFilter === "saved" ? "saved" : listFilter === "applied" ? "applied" : listFilter === "in_progress" ? "in progress" : ""} match{matchCount !== 1 ? "es" : ""} to review.
             </h1>
             <input
               type="text"
@@ -1084,7 +1092,7 @@ export default function DashboardPage() {
               placeholder="Search RFPs by title, agency, location..."
               className="w-full px-3 py-2 text-sm text-slate-800 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563eb] focus:border-transparent placeholder:text-slate-500"
             />
-            <div className="flex flex-nowrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <SortByDropdown
                 sortBy={sortBy}
                 sortDirection={sortDirection}
@@ -1136,6 +1144,8 @@ export default function DashboardPage() {
                   />
                 )}
               </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setListFilter(listFilter === "saved" ? "all" : "saved")}
@@ -1148,7 +1158,35 @@ export default function DashboardPage() {
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" clipRule="evenodd" />
                 </svg>
-                Saved ({savedRfpIds.size})
+                Saved ({savedCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setListFilter(listFilter === "applied" ? "all" : "applied")}
+                className={`shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                  listFilter === "applied"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Applied ({appliedCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setListFilter(listFilter === "in_progress" ? "all" : "in_progress")}
+                className={`shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                  listFilter === "in_progress"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                </svg>
+                In progress ({inProgressCount})
               </button>
             </div>
           </div>
