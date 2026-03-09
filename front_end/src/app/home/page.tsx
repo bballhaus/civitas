@@ -21,7 +21,7 @@ function preloadRfpAndNavigate(rfp: RFP, router: ReturnType<typeof useRouter>) {
   } catch {
     // ignore quota / private mode
   }
-  router.push(`/dashboard/rfp/${encodeURIComponent(rfp.id)}`);
+  router.push("/dashboard");
 }
 
 function loadSet(key: string): Set<string> {
