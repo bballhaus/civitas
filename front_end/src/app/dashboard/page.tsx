@@ -1907,7 +1907,7 @@ function RFPDetailPanel({
 
         {/* Generated Proposal — persistent header, collapsible body */}
         {(proposal || proposalLoading || proposalError) && (
-          <div className="border-b border-slate-100 bg-slate-50/50">
+          <div className="mx-4 mt-4 rounded-xl border border-slate-200 bg-slate-50/50 shadow-sm overflow-hidden">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setProposalDropdownOpen((o) => !o); }}
@@ -1932,18 +1932,20 @@ function RFPDetailPanel({
               </div>
             </button>
             {proposalDropdownOpen && (
-              <div className="px-4 pb-4 max-h-[60vh] overflow-y-auto">
-                {proposalLoading && !proposal ? (
-                  <p className="text-sm text-slate-500 animate-pulse">Generating proposal…</p>
-                ) : proposalError ? (
-                  <p className="text-sm text-red-600">{proposalError}</p>
-                ) : proposal ? (
-                  <div className="space-y-3">
+              <>
+                <div className="px-4 pb-2 max-h-[50vh] overflow-y-auto">
+                  {proposalLoading && !proposal ? (
+                    <p className="text-sm text-slate-500 animate-pulse">Generating proposal…</p>
+                  ) : proposalError ? (
+                    <p className="text-sm text-red-600">{proposalError}</p>
+                  ) : proposal ? (
                     <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                        {proposal}
-                      </div>
+                      <MarkdownContent content={proposal} />
                     </div>
+                  ) : null}
+                </div>
+                {proposal && (
+                  <div className="px-4 pb-4 pt-2 border-t border-slate-200 bg-slate-50">
                     <div className="flex flex-wrap gap-2 items-start">
                       <div className="flex-1 min-w-[180px]">
                         <label className="block text-xs font-medium text-slate-600 mb-1">Improve with feedback (optional)</label>
@@ -1966,15 +1968,15 @@ function RFPDetailPanel({
                       </button>
                     </div>
                   </div>
-                ) : null}
-              </div>
+                )}
+              </>
             )}
           </div>
         )}
 
         {/* Generated Plan of Execution — persistent header, collapsible body */}
         {(planOfExecution || planLoading || planError) && (
-          <div className="border-b border-slate-100 bg-slate-50/50">
+          <div className="mx-4 mt-4 rounded-xl border border-slate-200 bg-slate-50/50 shadow-sm overflow-hidden">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setPoeDropdownOpen((o) => !o); }}
@@ -1999,18 +2001,20 @@ function RFPDetailPanel({
               </div>
             </button>
             {poeDropdownOpen && (
-              <div className="px-4 pb-4 max-h-[60vh] overflow-y-auto">
-                {planLoading && !planOfExecution ? (
-                  <p className="text-sm text-slate-500 animate-pulse">Generating plan…</p>
-                ) : planError ? (
-                  <p className="text-sm text-red-600">{planError}</p>
-                ) : planOfExecution ? (
-                  <div className="space-y-3">
+              <>
+                <div className="px-4 pb-2 max-h-[50vh] overflow-y-auto">
+                  {planLoading && !planOfExecution ? (
+                    <p className="text-sm text-slate-500 animate-pulse">Generating plan…</p>
+                  ) : planError ? (
+                    <p className="text-sm text-red-600">{planError}</p>
+                  ) : planOfExecution ? (
                     <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                        {planOfExecution}
-                      </div>
+                      <MarkdownContent content={planOfExecution} />
                     </div>
+                  ) : null}
+                </div>
+                {planOfExecution && (
+                  <div className="px-4 pb-4 pt-2 border-t border-slate-200 bg-slate-50">
                     <div className="flex flex-wrap gap-2 items-start">
                       <div className="flex-1 min-w-[180px]">
                         <label className="block text-xs font-medium text-slate-600 mb-1">Improve with feedback (optional)</label>
@@ -2033,8 +2037,8 @@ function RFPDetailPanel({
                       </button>
                     </div>
                   </div>
-                ) : null}
-              </div>
+                )}
+              </>
             )}
           </div>
         )}
