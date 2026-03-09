@@ -173,12 +173,19 @@ function deriveFilterOptionsFromRfps(rfps: RFP[]): Record<keyof RFPFilters, stri
     const set = new Set([...staticList, ...dynamic.map((s) => s.trim()).filter(Boolean)]);
     return [...set].sort();
   };
-  const locations = rfps.flatMap((r) =>
-    (r.location || "")
-      .split(/[,;]/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 2)
-  );
+
+  const rfpCities = new Set<string>();
+  const rfpCounties = new Set<string>();
+  for (const rfp of rfps) {
+    const loc = (rfp.location || "").toLowerCase();
+    for (const city of FILTER_OPTIONS.workCities) {
+      if (loc.includes(city.toLowerCase())) rfpCities.add(city);
+    }
+    for (const county of FILTER_OPTIONS.workCounties) {
+      if (loc.includes(county.toLowerCase())) rfpCounties.add(county);
+    }
+  }
+
   const rfpNaicsCodes = rfps.flatMap((r) => (r.naicsCodes || []).map(String).map((c) => c.trim()).filter(Boolean));
   const allNaicsCodes = merge(FILTER_OPTIONS.naicsCodes, rfpNaicsCodes);
   const naicsDisplay = allNaicsCodes.map((code) => (NAICS_MAP[code] ? `${code} - ${NAICS_MAP[code]}` : code));
@@ -187,8 +194,8 @@ function deriveFilterOptionsFromRfps(rfps: RFP[]): Record<keyof RFPFilters, stri
     agencies: merge(FILTER_OPTIONS.agencies, rfps.map((r) => r.agency || "").filter(Boolean)),
     contractValueRanges: [...FILTER_OPTIONS.contractValueRanges],
     capabilities: merge(FILTER_OPTIONS.capabilities, rfps.flatMap((r) => r.capabilities || [])),
-    workCities: merge(FILTER_OPTIONS.workCities, locations),
-    workCounties: merge(FILTER_OPTIONS.workCounties, locations),
+    workCities: [...rfpCities].sort(),
+    workCounties: [...rfpCounties].sort(),
     contractTypes: merge(FILTER_OPTIONS.contractTypes, rfps.map((r) => r.contractType || "").filter(Boolean)),
     sizeStatus: [...FILTER_OPTIONS.sizeStatus],
     certifications: merge(FILTER_OPTIONS.certifications, rfps.flatMap((r) => r.certifications || [])),
