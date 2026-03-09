@@ -30,6 +30,7 @@ def _load_env_fallback():
     want_keys = {
         'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
         'AWS_STORAGE_BUCKET_NAME', 'AWS_S3_REGION_NAME',
+        'GROQ_API_KEY',
     }
     try:
         with open(env_path, 'r') as f:

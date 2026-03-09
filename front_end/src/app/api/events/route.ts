@@ -394,7 +394,7 @@ export async function GET() {
       console.log(`Loaded ${extractionCount} attachment extractions`);
     }
 
-    const rfps = events.map((e, i) => {
+    const rfps = events.filter((e) => !!e.title?.trim()).map((e, i) => {
       const extraction = extractionsMap[e.event_id] || null;
 
       // Use attachment-derived data when available, fall back to inferred

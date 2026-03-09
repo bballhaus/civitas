@@ -26,7 +26,7 @@ import {
   type CurrentUser,
 } from "@/lib/api";
 
-type SectionId = "company" | "certifications" | "naics" | "capabilities" | "contract" | "documents" | null;
+type SectionId = "company" | "certifications" | "naics" | "capabilities" | "contract" | null;
 
 interface CompanyProfile {
   companyName: string;
@@ -66,11 +66,10 @@ const btnSecondary =
 
 const PROFILE_SECTIONS: { id: string; label: string }[] = [
   { id: "section-company", label: "Company Information" },
+  { id: "section-contract", label: "Contract History" },
   { id: "section-certifications", label: "Certifications & Clearances" },
   { id: "section-naics", label: "NAICS & Geography" },
   { id: "section-capabilities", label: "Capabilities & Experience" },
-  { id: "section-contract", label: "Contract History" },
-  { id: "section-documents", label: "Uploaded Documents" },
 ];
 
 function scrollToSection(id: string) {
@@ -95,37 +94,88 @@ function smartTitleCase(s: string): string {
   }).join(" ");
 }
 
+/** Strip leading/trailing quotes, brackets, and stray punctuation from extracted text. */
+function stripBulletText(s: string): string {
+  return s
+    .replace(/^[\s'"\[\]]+/, "")
+    .replace(/\s*\.?['"\]]+$/, "")
+    .trim();
+}
+
 /**
  * Clean a display array: split comma-separated entries, remove "null"/empty,
+ * strip quotes/brackets, optionally split on period (sentence boundaries),
  * deduplicate case-insensitively, and optionally title-case.
  */
-function cleanDisplayArray(arr: string[], doTitleCase = false): string[] {
+function cleanDisplayArray(
+  arr: string[],
+  doTitleCase = false,
+  splitOnPeriod = false,
+  dropRedundantCounties = false
+): string[] {
+  const skipValue = (s: string) =>
+    !s ||
+    s.toLowerCase() === "null" ||
+    s.toLowerCase() === "undefined" ||
+    s.toLowerCase() === "unknown";
   const items: string[] = [];
   for (const entry of arr) {
     if (entry == null) continue;
     for (const part of String(entry).split(",")) {
-      const trimmed = part.trim();
-      if (!trimmed || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined") continue;
-      items.push(trimmed);
+      let trimmed = part.trim();
+      if (skipValue(trimmed)) continue;
+      trimmed = stripBulletText(trimmed);
+      if (skipValue(trimmed)) continue;
+      if (splitOnPeriod && /\.\s+/.test(trimmed)) {
+        const subParts = trimmed.split(/\.\s+/).map((p) => stripBulletText(p)).filter((p) => p.length > 0);
+        for (const sub of subParts) {
+          const cleaned = sub.replace(/^\s*and\s+/i, "").trim();
+          if (cleaned && !skipValue(cleaned)) items.push(cleaned);
+        }
+      } else {
+        const cleaned = trimmed.replace(/^\s*and\s+/i, "").trim();
+        if (cleaned && !skipValue(cleaned)) items.push(cleaned);
+      }
     }
   }
+  const stripTrailingPeriod = (s: string) => s.replace(/\.$/, "").trim();
   const seen = new Map<string, string>();
   for (const item of items) {
-    const key = item.toLowerCase();
+    const display = stripTrailingPeriod(doTitleCase ? smartTitleCase(item) : item);
+    const key = display.toLowerCase();
     if (!seen.has(key)) {
-      seen.set(key, doTitleCase ? smartTitleCase(item) : item);
+      seen.set(key, display);
     }
   }
-  return [...seen.values()];
+  let result = [...seen.values()];
+  if (dropRedundantCounties) {
+    const lowerSet = new Set(result.map((s) => s.toLowerCase()));
+    result = result.filter(
+      (item) => !lowerSet.has(`${item.toLowerCase()} county`)
+    );
+  }
+  return result.map((s) =>
+    s && s.length ? s.charAt(0).toUpperCase() + s.slice(1) : s
+  );
 }
 
-function ListOrEmpty({ items, titleCase }: { items: string[]; titleCase?: boolean }) {
-  const clean = cleanDisplayArray(items ?? [], titleCase);
+function ListOrEmpty({
+  items,
+  titleCase,
+  splitOnPeriod,
+  dropRedundantCounties,
+}: {
+  items: string[];
+  titleCase?: boolean;
+  splitOnPeriod?: boolean;
+  dropRedundantCounties?: boolean;
+}) {
+  const clean = cleanDisplayArray(items ?? [], titleCase, splitOnPeriod, dropRedundantCounties);
   if (!clean.length) return <p className="text-slate-500 italic text-sm">Not provided</p>;
   return (
     <ul className="list-disc list-inside text-slate-700 space-y-1">
-      {clean.map((item) => (
-        <li key={item}>{item}</li>
+      {clean.map((item, i) => (
+        <li key={`${item}-${i}`}>{item}</li>
       ))}
     </ul>
   );
@@ -495,10 +545,11 @@ export default function ProfilePage() {
 
   const saveSection = async () => {
     if (!profile) return;
+    setDupMessage("");
     setSectionSaving(true);
     let profileToSave = profile;
     try {
-      if (editingSection === "documents") {
+      if (editingSection === "contract") {
         if (currentUser && getAuthToken()) {
           for (const key of pendingRemovals) {
             try { await deleteContractDocument(key); } catch (e) { console.error("Delete failed:", key, e); }
@@ -527,6 +578,7 @@ export default function ProfilePage() {
           if (failedFiles.length > 0) {
             showToast(`Some files failed to upload: ${failedFiles.join(", ")}. Please try again.`, "error");
           }
+          showToast("Updated match preferences");
           setEditingSection(null);
           setSectionSaving(false);
           return;
@@ -591,6 +643,7 @@ export default function ProfilePage() {
       } else {
         localStorage.setItem("companyProfile", JSON.stringify(profileToSave));
       }
+      showToast("Updated match preferences");
       setEditingSection(null);
       showSaveSuccess();
     } catch (error) {
@@ -646,7 +699,24 @@ export default function ProfilePage() {
     if (!profile?.uploadedFiles) return;
     const file = profile.uploadedFiles[index];
     const key = file.contractId || file.name;
+    // New/unparsed files: remove immediately (nothing persisted yet)
+    if (!file.parsed && !file.uploadedToBackend) {
+      pendingFilesRef.current.delete(file.name);
+      setProfile((prev) =>
+        prev
+          ? { ...prev, uploadedFiles: (prev.uploadedFiles ?? []).filter((_, i) => i !== index) }
+          : null
+      );
+      return;
+    }
     setPendingRemovals((prev) => [...prev, key]);
+  };
+
+  const unremoveFile = (index: number) => {
+    if (!profile?.uploadedFiles) return;
+    const file = profile.uploadedFiles[index];
+    const key = file.contractId || file.name;
+    setPendingRemovals((prev) => prev.filter((k) => k !== key));
   };
 
   function SearchFirstDropdown({
@@ -823,7 +893,7 @@ export default function ProfilePage() {
       {editingSection === sectionId ? (
         <div className="flex items-center gap-2 shrink-0">
           <button type="button" onClick={() => {
-            if (sectionId === "documents") {
+            if (sectionId === "contract") {
               setProfile((prev) =>
                 prev
                   ? { ...prev, uploadedFiles: (prev.uploadedFiles ?? []).filter((f) => f.parsed !== false) }
@@ -836,7 +906,7 @@ export default function ProfilePage() {
             Cancel
           </button>
           <button type="button" onClick={saveSection} disabled={sectionSaving} className={btnPrimary + " disabled:opacity-50"}>
-            {sectionSaving ? (sectionId === "documents" ? "Parsing & Saving..." : "Saving...") : "Save"}
+            {sectionSaving ? (sectionId === "contract" ? "Parsing & Saving..." : "Saving...") : "Save"}
           </button>
         </div>
       ) : (
@@ -844,7 +914,10 @@ export default function ProfilePage() {
           type="button"
           onClick={async () => {
             const ok = await ensureProfileLoaded();
-            if (ok) setEditingSection(sectionId);
+            if (ok) {
+              if (sectionId === "contract") setDupMessage("");
+              setEditingSection(sectionId);
+            }
           }}
           disabled={loadingProfile}
           className={btnSecondary}
@@ -1004,6 +1077,181 @@ export default function ProfilePage() {
               )}
             </section>
 
+            {/* Contract History & Uploaded Documents (combined section); Edit in line with Uploaded Documents */}
+            <section id="section-contract" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
+              <h2 className={sectionTitleClass}>Contract History</h2>
+              <div className="space-y-6">
+                {/* Contract history: always read-only */}
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Contract count</p>
+                    <p className="text-slate-900">{profile.contractCount ?? 0}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Total past contract value</p>
+                    <p className="text-slate-900">{profile.totalPastContractValue || "—"}</p>
+                  </div>
+                  {(profile.pastPerformance || profile.strategicGoals) && (
+                    <>
+                      {profile.pastPerformance && (
+                        <div>
+                          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Past performance</p>
+                          <p className="text-slate-700 whitespace-pre-wrap">{profile.pastPerformance}</p>
+                        </div>
+                      )}
+                      {profile.strategicGoals && (
+                        <div>
+                          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Strategic goals</p>
+                          <p className="text-slate-700 whitespace-pre-wrap">{profile.strategicGoals}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                {/* Uploaded Documents: Edit/Save/Cancel in line with heading */}
+                <div className="border-t border-slate-200 pt-6">
+                  <div className="flex items-center justify-between gap-4 mb-3">
+                    <h3 className="text-sm font-semibold text-slate-800">Uploaded Documents</h3>
+                    {editingSection === "contract" ? (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProfile((prev) =>
+                              prev
+                                ? { ...prev, uploadedFiles: (prev.uploadedFiles ?? []).filter((f) => f.parsed !== false) }
+                                : null
+                            );
+                            setDupMessage("");
+                            setEditingSection(null);
+                          }}
+                          className={btnSecondary}
+                        >
+                          Cancel
+                        </button>
+                        <button type="button" onClick={saveSection} disabled={sectionSaving} className={btnPrimary + " disabled:opacity-50"}>
+                          {sectionSaving ? "Parsing & Saving..." : "Save"}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const ok = await ensureProfileLoaded();
+                          if (ok) {
+                            setDupMessage("");
+                            setEditingSection("contract");
+                          }
+                        }}
+                        disabled={loadingProfile}
+                        className={btnSecondary}
+                      >
+                        {loadingProfile ? "Loading…" : "Edit"}
+                      </button>
+                    )}
+                  </div>
+                  {editingSection === "contract" ? (
+                    <div className="space-y-4">
+                      <div
+                        className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                          dragging
+                            ? "border-[#3C89C6] bg-slate-100"
+                            : "border-slate-300 hover:border-[#3C89C6]"
+                        }`}
+                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current++; setDragging(true); }}
+                        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current--; if (dragCounter.current <= 0) { dragCounter.current = 0; setDragging(false); } }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          dragCounter.current = 0;
+                          setDragging(false);
+                          addFiles(Array.from(e.dataTransfer.files));
+                        }}
+                      >
+                        {dragging && (
+                          <div className="absolute inset-0 bg-slate-200/60 rounded-lg flex items-center justify-center z-10 pointer-events-none">
+                            <p className="text-2xl font-bold text-[#3C89C6]">Drop files here</p>
+                          </div>
+                        )}
+                        <input type="file" id="profile-file-upload" multiple accept=".pdf,.doc,.docx,.txt" onChange={handleFileUpload} className="hidden" />
+                        <label htmlFor="profile-file-upload" className={`cursor-pointer flex flex-col items-center ${dragging ? "opacity-30" : ""}`}>
+                          <svg className="w-12 h-12 text-slate-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                          </svg>
+                          <span className="text-sm font-medium text-slate-700">Drag & drop files here, or click to upload</span>
+                          <span className="text-xs text-slate-500 mt-1">PDF, DOC, DOCX, TXT</span>
+                        </label>
+                      </div>
+                      {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
+                        <div className="space-y-2">
+                          <h4 className="text-sm font-medium text-slate-700 mb-2">
+                            Uploaded Files ({profile.uploadedFiles.filter((f) => !pendingRemovals.includes(f.contractId || f.name)).length})
+                          </h4>
+                          {profile.uploadedFiles.map((file, index) => {
+                            const key = file.contractId || file.name;
+                            const markedForRemoval = pendingRemovals.includes(key);
+                            return (
+                              <div
+                                key={index}
+                                className={`flex items-center justify-between p-3 rounded-md ${markedForRemoval ? "bg-red-50/70" : "bg-slate-50"}`}
+                              >
+                                <div className="flex items-center space-x-3 min-w-0">
+                                  <svg className={`w-5 h-5 shrink-0 ${markedForRemoval ? "text-slate-300" : "text-slate-400"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                  </svg>
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <p className={`text-sm font-medium truncate ${markedForRemoval ? "text-slate-400 line-through" : "text-slate-900"}`}>
+                                        {file.name}
+                                      </p>
+                                      {!markedForRemoval && file.parsed && (
+                                        <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Parsed</span>
+                                      )}
+                                      {!markedForRemoval && !file.parsed && (
+                                        <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
+                                      )}
+                                      {markedForRemoval && (
+                                        <span className="text-xs px-2 py-0.5 bg-slate-200 text-slate-500 rounded-full">Save to remove</span>
+                                      )}
+                                    </div>
+                                    <p className={`text-xs ${markedForRemoval ? "text-slate-400" : "text-slate-500"}`}>
+                                      {file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}
+                                    </p>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => (markedForRemoval ? unremoveFile(index) : removeFile(index))}
+                                  disabled={sectionSaving}
+                                  className={markedForRemoval ? "text-slate-600 hover:text-slate-800 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed shrink-0" : "text-red-600 hover:text-red-700 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed shrink-0"}
+                                >
+                                  {markedForRemoval ? "Undo" : "Remove"}
+                                </button>
+                              </div>
+                            );
+                          })}
+                          {dupMessage && (
+                            <p className="text-sm text-amber-600 mt-2">{dupMessage}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (profile.uploadedFiles?.length ?? 0) > 0 ? (
+                    <ul className="space-y-2">
+                      {profile.uploadedFiles?.map((file, i) => (
+                        <li key={i} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
+                          <span className="text-slate-700 font-medium">{file.name}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-slate-500 italic text-sm">No documents uploaded. Click Edit to add files.</p>
+                  )}
+                </div>
+              </div>
+            </section>
+
             {/* Certifications & Clearances */}
             <section id="section-certifications" className={sectionClass}>
               <SectionHeader title="Certifications & Clearances" sectionId="certifications" />
@@ -1092,7 +1340,7 @@ export default function ProfilePage() {
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Work counties</p>
-                    <ListOrEmpty items={profile.workCounties ?? []} titleCase />
+                    <ListOrEmpty items={profile.workCounties ?? []} titleCase dropRedundantCounties />
                   </div>
                 </div>
               )}
@@ -1135,181 +1383,17 @@ export default function ProfilePage() {
                 <div className="space-y-3">
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Capabilities</p>
-                    <ListOrEmpty items={profile.capabilities ?? []} titleCase />
+                    <ListOrEmpty items={profile.capabilities ?? []} titleCase splitOnPeriod />
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Agency experience</p>
-                    <ListOrEmpty items={profile.agencyExperience ?? []} titleCase />
+                    <ListOrEmpty items={profile.agencyExperience ?? []} titleCase splitOnPeriod />
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Contract types</p>
-                    <ListOrEmpty items={profile.contractTypes ?? []} titleCase />
+                    <ListOrEmpty items={profile.contractTypes ?? []} titleCase splitOnPeriod />
                   </div>
                 </div>
-              )}
-            </section>
-
-            {/* Contract History */}
-            <section id="section-contract" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
-              <SectionHeader title="Contract History" sectionId="contract" />
-              {editingSection === "contract" ? (
-                <div className="space-y-4">
-                  <div>
-                    <label className={labelClass}>Contract Count</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={profile.contractCount ?? 0}
-                      onChange={(e) => handleInputChange("contractCount", parseInt(e.target.value) || 0)}
-                      className={inputClass}
-                      placeholder="0"
-                    />
-                  </div>
-                  <div>
-                    <label className={labelClass}>Total Past Contract Value</label>
-                    <input
-                      type="text"
-                      value={profile.totalPastContractValue ?? ""}
-                      onChange={(e) => handleInputChange("totalPastContractValue", e.target.value)}
-                      className={inputClass}
-                      placeholder="e.g., 1500000 or $1,500,000"
-                    />
-                  </div>
-                  <div>
-                    <label className={labelClass}>Past Performance</label>
-                    <textarea
-                      value={profile.pastPerformance ?? ""}
-                      onChange={(e) => handleInputChange("pastPerformance", e.target.value)}
-                      className={inputClass + " min-h-[100px]"}
-                      placeholder="Describe past performance..."
-                      rows={4}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelClass}>Strategic Goals</label>
-                    <textarea
-                      value={profile.strategicGoals ?? ""}
-                      onChange={(e) => handleInputChange("strategicGoals", e.target.value)}
-                      className={inputClass + " min-h-[100px]"}
-                      placeholder="Describe strategic goals..."
-                      rows={4}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Contract count</p>
-                    <p className="text-slate-900">{profile.contractCount ?? 0}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Total past contract value</p>
-                    <p className="text-slate-900">{profile.totalPastContractValue || "—"}</p>
-                  </div>
-                  {(profile.pastPerformance || profile.strategicGoals) && (
-                    <>
-                      {profile.pastPerformance && (
-                        <div>
-                          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Past performance</p>
-                          <p className="text-slate-700 whitespace-pre-wrap">{profile.pastPerformance}</p>
-                        </div>
-                      )}
-                      {profile.strategicGoals && (
-                        <div>
-                          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Strategic goals</p>
-                          <p className="text-slate-700 whitespace-pre-wrap">{profile.strategicGoals}</p>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </section>
-
-            {/* Uploaded Documents - always show so user can add files */}
-            <section id="section-documents" className={sectionClass} style={{ scrollMarginTop: "128px" }}>
-              <SectionHeader title="Uploaded Documents" sectionId="documents" />
-              {editingSection === "documents" ? (
-                <div className="space-y-4">
-                  <div
-                    className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-                      dragging
-                        ? "border-[#3C89C6] bg-slate-100"
-                        : "border-slate-300 hover:border-[#3C89C6]"
-                    }`}
-                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                    onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current++; setDragging(true); }}
-                    onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); dragCounter.current--; if (dragCounter.current <= 0) { dragCounter.current = 0; setDragging(false); } }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      dragCounter.current = 0;
-                      setDragging(false);
-                      addFiles(Array.from(e.dataTransfer.files));
-                    }}
-                  >
-                    {dragging && (
-                      <div className="absolute inset-0 bg-slate-200/60 rounded-lg flex items-center justify-center z-10 pointer-events-none">
-                        <p className="text-2xl font-bold text-[#3C89C6]">Drop files here</p>
-                      </div>
-                    )}
-                    <input type="file" id="profile-file-upload" multiple accept=".pdf,.doc,.docx,.txt" onChange={handleFileUpload} className="hidden" />
-                    <label htmlFor="profile-file-upload" className={`cursor-pointer flex flex-col items-center ${dragging ? "opacity-30" : ""}`}>
-                      <svg className="w-12 h-12 text-slate-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                      <span className="text-sm font-medium text-slate-700">Drag & drop files here, or click to upload</span>
-                      <span className="text-xs text-slate-500 mt-1">PDF, DOC, DOCX, TXT</span>
-                    </label>
-                  </div>
-                  {profile.uploadedFiles && profile.uploadedFiles.length > 0 && (
-                    <div className="mt-4 space-y-2">
-                      <h3 className="text-sm font-medium text-slate-700 mb-2">
-                        Uploaded Files ({profile.uploadedFiles.filter((f) => !pendingRemovals.includes(f.contractId || f.name)).length})
-                      </h3>
-                      {profile.uploadedFiles.map((file, index) => {
-                        if (pendingRemovals.includes(file.contractId || file.name)) return null;
-                        return (
-                          <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
-                            <div className="flex items-center space-x-3">
-                              <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                              </svg>
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <p className="text-sm font-medium text-slate-900">{file.name}</p>
-                                  {file.parsed && (
-                                    <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Parsed</span>
-                                  )}
-                                  {!file.parsed && (
-                                    <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">New</span>
-                                  )}
-                                </div>
-                                <p className="text-xs text-slate-500">{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : ""}</p>
-                              </div>
-                            </div>
-                            <button type="button" onClick={() => removeFile(index)} disabled={sectionSaving} className="text-red-600 hover:text-red-700 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed">
-                              Remove
-                            </button>
-                          </div>
-                        );
-                      })}
-                      {dupMessage && (
-                        <p className="text-sm text-amber-600 mt-2">{dupMessage}</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (profile.uploadedFiles?.length ?? 0) > 0 ? (
-                <ul className="space-y-2">
-                  {profile.uploadedFiles?.map((file, i) => (
-                    <li key={i} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
-                      <span className="text-slate-700 font-medium">{file.name}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-slate-500 italic text-sm">No documents uploaded. Click Edit to add files.</p>
               )}
             </section>
 
