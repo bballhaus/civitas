@@ -38,6 +38,27 @@ import {
   parseDeadline as parseDeadlineLib,
 } from "@/lib/rfp-matching";
 
+// Normalize a localStorage profile (snake_case) to CompanyProfile (camelCase)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeLocalProfile(raw: any): CompanyProfile {
+  return {
+    companyName: raw.companyName ?? raw.company_name ?? "",
+    industry: raw.industry ?? raw.industry_tags ?? [],
+    sizeStatus: raw.sizeStatus ?? (raw.size_status ? [raw.size_status] : []),
+    certifications: raw.certifications ?? [],
+    clearances: raw.clearances ?? [],
+    naicsCodes: raw.naicsCodes ?? raw.naics_codes ?? [],
+    workCities: raw.workCities ?? raw.work_cities ?? [],
+    workCounties: raw.workCounties ?? raw.work_counties ?? [],
+    capabilities: raw.capabilities ?? [],
+    agencyExperience: raw.agencyExperience ?? raw.agency_experience ?? [],
+    contractTypes: raw.contractTypes ?? raw.contract_types ?? [],
+    contractCount: raw.contractCount ?? raw.contract_count ?? 0,
+    totalPastContractValue: raw.totalPastContractValue ?? String(raw.total_contract_value ?? "0"),
+    pastContracts: raw.pastContracts ?? raw.past_contracts ?? [],
+  };
+}
+
 // Filter options - same as profile-setup page
 const FILTER_OPTIONS = {
   industry: [
@@ -888,14 +909,14 @@ export default function DashboardPage() {
         const extracted = localStorage.getItem("extractedProfileData");
         if (saved) {
           try {
-            setProfile(JSON.parse(saved));
+            setProfile(normalizeLocalProfile(JSON.parse(saved)));
           } catch {
             // ignore
           }
         }
         if (extracted) {
           try {
-            setProfile(JSON.parse(extracted));
+            setProfile(normalizeLocalProfile(JSON.parse(extracted)));
           } catch {
             // ignore
           }
@@ -904,7 +925,18 @@ export default function DashboardPage() {
         }
       })
       .catch(() => {
-        if (!cancelled) setProfileLoadDone(true);
+        if (cancelled) return;
+        // Backend unreachable (e.g. CORS on localhost) — fall back to localStorage
+        setCurrentUser(null);
+        const saved = localStorage.getItem("companyProfile");
+        const extracted = localStorage.getItem("extractedProfileData");
+        if (saved) {
+          try { setProfile(normalizeLocalProfile(JSON.parse(saved))); } catch { /* ignore */ }
+        }
+        if (extracted) {
+          try { setProfile(normalizeLocalProfile(JSON.parse(extracted))); } catch { /* ignore */ }
+        }
+        setProfileLoadDone(true);
       });
     return () => { cancelled = true; };
   }, []);
@@ -1510,6 +1542,7 @@ function RFPDetailPanel({
               certifications: rfp.certifications,
               estimatedValue: rfp.estimatedValue,
               description: rfp.description,
+              attachmentRollup: rfp.attachmentRollup,
             },
           }),
         });
@@ -1681,11 +1714,12 @@ function RFPDetailPanel({
         </div>
 
         {/* Score Breakdown */}
-        {match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").length > 0 && !match.disqualified && (
+        {match.breakdown.length > 0 && !match.disqualified && (
           <div className="p-5 md:p-6 border-b border-slate-100">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Score Breakdown</h3>
             <div className="space-y-3">
-              {match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
+              {match.breakdown.map((b, i) => {
+                const isNeutral = b.status === "neutral";
                 const pct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
                 const barColor =
                   b.status === "strong" ? "bg-emerald-500" :
@@ -1715,11 +1749,17 @@ function RFPDetailPanel({
                             <svg className={`w-3 h-3 text-slate-400 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                           )}
                         </span>
-                        {b.maxPoints > 0 && (
+                        {isNeutral ? (
+                          <span className="text-xs font-medium text-slate-400 italic">Not Applicable</span>
+                        ) : b.maxPoints > 0 ? (
                           <span className={`text-xs font-bold ${textColor}`}>{b.points}/{b.maxPoints}</span>
-                        )}
+                        ) : null}
                       </div>
-                      {b.maxPoints > 0 ? (
+                      {isNeutral ? (
+                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-slate-200" style={{ width: "100%" }} />
+                        </div>
+                      ) : b.maxPoints > 0 ? (
                         <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                           <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
                         </div>
