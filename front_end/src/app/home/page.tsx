@@ -103,17 +103,14 @@ function StatCard({
     violet: "text-violet-700",
   };
   return (
-    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 overflow-hidden transition-all hover:shadow-xl hover:-translate-y-0.5 group">
-      <div className="px-5 py-5 flex items-start gap-4">
-        <div className={`bg-gradient-to-br ${styles[accent]} w-11 h-11 rounded-xl flex items-center justify-center text-white shrink-0 ring-4 shadow-md transition-transform group-hover:scale-110`}>
+    <div className="bg-white/80 backdrop-blur-sm rounded-lg border border-white/60 shadow-sm shadow-slate-200/50 overflow-hidden group">
+      <div className="px-3 py-2 flex items-center gap-2">
+        <div className={`bg-gradient-to-br ${styles[accent]} w-6 h-6 rounded-md flex items-center justify-center text-white shrink-0`}>
           {icon}
         </div>
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-            {label}
-          </p>
-          <p className={`text-3xl font-extrabold mt-0.5 ${textStyles[accent]}`}>{value}</p>
-          <p className="text-xs text-slate-500 mt-1">{subtext}</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">{label}</p>
+          <p className={`text-lg font-extrabold leading-tight ${textStyles[accent]}`}>{value}</p>
         </div>
       </div>
     </div>
@@ -245,18 +242,20 @@ export default function HomePage() {
               {"Here's your overview: saved opportunities, applications, and upcoming deadlines."}
             </p>
           </div>
-          <Link
-            href="/dashboard"
-            className="shrink-0 w-full sm:w-auto flex items-center justify-center gap-3 px-5 py-3 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:shadow-[#3C89C6]/30 hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20"
-          >
+          <button
+            onClick={() => {
+              if (authChecked) router.push("/dashboard");
+            }}
+            disabled={!authChecked}
+            className="shrink-0 w-full sm:w-auto flex items-center justify-center gap-3 px-5 py-3 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:shadow-[#3C89C6]/30 hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-y-0">
             <svg className="w-5 h-5 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
             </svg>
-            <span className="font-semibold">View Matches</span>
+            <span className="font-semibold">{authChecked ? "View Matches" : "Loading…"}</span>
             <svg className="w-4 h-4 text-white/90 group-hover:text-white group-hover:translate-x-0.5 shrink-0 transition-all duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
-          </Link>
+          </button>
         </div>
 
         {/* Quick stats */}
