@@ -562,6 +562,46 @@ function expandWithSynonyms(tokens: Set<string>): Set<string> {
   return expanded;
 }
 
+// ---------------------------------------------------------------------------
+// Agency alias expansion — maps abbreviations/short names to full department names
+// ---------------------------------------------------------------------------
+const AGENCY_ALIAS_GROUPS: string[][] = [
+  ["caltrans", "department of transportation", "calif department of transportation", "ca dept of transportation", "dot"],
+  ["dgs", "department of general services", "ca dept of general services", "calif department of general services"],
+  ["cdcr", "department of corrections & rehabilitation", "department of corrections and rehabilitation", "dept of corrections & rehab", "corrections"],
+  ["calfire", "department of forestry and fire protection", "cal fire"],
+  ["edd", "employment development department", "employment development dept"],
+  ["dmv", "department of motor vehicles"],
+  ["dwr", "department of water resources"],
+  ["dtsc", "department of toxic substances control"],
+  ["cdfw", "department of fish & wildlife", "department of fish and wildlife", "dept of fish & wildlife"],
+  ["cdph", "department of public health", "calif department of public health"],
+  ["dpr", "department of parks & recreation", "department of parks and recreation", "dept of parks & recreation"],
+  ["cde", "department of education", "calif department of education"],
+  ["hcd", "department of housing and community development", "housing & community development"],
+  ["dva", "department of veterans affairs", "calif department of veterans affairs"],
+  ["dof", "department of finance"],
+  ["dss", "department of social services"],
+  ["dhcs", "department of health care services"],
+  ["abc", "department of alcoholic beverage control"],
+  ["fth", "franchise tax board", "ftb"],
+  ["uc", "university of california"],
+  ["csu", "california state university"],
+  ["public works", "dept of public works", "department of public works"],
+];
+
+function expandAgencyAliases(agencyLower: string): string[] {
+  const aliases: string[] = [];
+  for (const group of AGENCY_ALIAS_GROUPS) {
+    if (group.some((alias) => agencyLower.includes(alias) || alias.includes(agencyLower))) {
+      for (const alias of group) {
+        if (alias !== agencyLower) aliases.push(alias);
+      }
+    }
+  }
+  return aliases;
+}
+
 function synonymAwareJaccard(a: Set<string>, b: Set<string>): number {
   const expandedA = expandWithSynonyms(a);
   const expandedB = expandWithSynonyms(b);
@@ -1088,14 +1128,50 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
   }
 
   // --- Agency Experience (max 5 pts) ---
+  // Compare each profile agency individually against the RFP agency (best-match wins).
+  // Uses alias expansion so abbreviations match full names (e.g. "Caltrans" ↔ "Department of Transportation").
   const AGENCY_MAX = 5;
   maxAchievablePoints += AGENCY_MAX;
-  const agencySimilarity = synonymAwareJaccard(rfpAgencyTokens, profileAgencyTokens);
-  if (agencySimilarity > 0) {
-    const pts = scoreFromSimilarity(agencySimilarity, AGENCY_MAX);
+  const rfpAgencyLower = (rfp.agency ?? "").toLowerCase();
+  const rfpAgencyToks = toTokenSet([rfp.agency ?? ""]);
+  // Expand both RFP and profile agencies with known aliases
+  const rfpAgencyAliases = expandAgencyAliases(rfpAgencyLower);
+  let bestAgencyScore = 0;
+  let matchedAgency = "";
+  for (const agency of (profile.agencyExperience ?? [])) {
+    const agencyLower = agency.toLowerCase();
+    const profileAliases = expandAgencyAliases(agencyLower);
+    // Check all alias combinations for substring containment
+    const allRfpForms = [rfpAgencyLower, ...rfpAgencyAliases];
+    const allProfileForms = [agencyLower, ...profileAliases];
+    let matched = false;
+    for (const r of allRfpForms) {
+      for (const p of allProfileForms) {
+        if (p.includes(r) || r.includes(p)) {
+          matched = true;
+          break;
+        }
+      }
+      if (matched) break;
+    }
+    if (matched) {
+      bestAgencyScore = 1.0;
+      matchedAgency = agency;
+      break;
+    }
+    // Token overlap — per-agency Jaccard (not diluted by other agencies)
+    const agencyToks = toTokenSet([agency]);
+    const sim = synonymAwareJaccard(rfpAgencyToks, agencyToks);
+    if (sim > bestAgencyScore) {
+      bestAgencyScore = sim;
+      matchedAgency = agency;
+    }
+  }
+  if (bestAgencyScore > 0) {
+    const pts = scoreFromSimilarity(bestAgencyScore, AGENCY_MAX);
     earnedPoints += pts;
     positiveReasons.push("You have experience with this agency.");
-    breakdown.push({ category: "Agency Experience", points: Math.round(pts), maxPoints: AGENCY_MAX, status: "strong", detail: `Prior experience with ${rfp.agency}.`, rfpTokens: [rfp.agency], profileTokens: profile.agencyExperience ?? [] });
+    breakdown.push({ category: "Agency Experience", points: Math.round(pts), maxPoints: AGENCY_MAX, status: bestAgencyScore >= 0.5 ? "strong" : "partial", detail: `Prior experience with ${matchedAgency}.`, rfpTokens: [rfp.agency], profileTokens: profile.agencyExperience ?? [] });
   } else {
     breakdown.push({ category: "Agency Experience", points: 0, maxPoints: AGENCY_MAX, status: "neutral", detail: "No prior experience with this agency.", rfpTokens: [rfp.agency], profileTokens: profile.agencyExperience ?? [] });
   }
