@@ -742,32 +742,18 @@ export default function DashboardPage() {
 
   const handleToggleApplied = useCallback(async (rfpId: string) => {
     const currentlyApplied = appliedRfpIds.has(rfpId);
-    const currentlyInProgress = inProgressRfpIds.has(rfpId);
     setAppliedRfpIds((prev) => {
       const next = new Set(prev);
       if (currentlyApplied) next.delete(rfpId);
       else next.add(rfpId);
       return next;
     });
-    if (!currentlyApplied && currentlyInProgress) {
-      setInProgressRfpIds((prev) => {
-        const next = new Set(prev);
-        next.delete(rfpId);
-        return next;
-      });
-    }
-    if (currentlyApplied) {
-      setInProgressRfpIds((prev) => new Set([...prev, rfpId]));
-    }
     try {
       if (currentlyApplied) {
-        await updateUserRfpStatus({ remove_applied: rfpId, mark_in_progress: rfpId });
+        await updateUserRfpStatus({ remove_applied: rfpId });
         showToast("Removed from applied");
       } else {
-        await updateUserRfpStatus({
-          mark_applied: rfpId,
-          ...(currentlyInProgress ? { remove_in_progress: rfpId } : {}),
-        });
+        await updateUserRfpStatus({ mark_applied: rfpId });
         showToast("Marked as applied");
       }
     } catch (e) {
@@ -777,20 +763,10 @@ export default function DashboardPage() {
         else next.delete(rfpId);
         return next;
       });
-      if (!currentlyApplied && currentlyInProgress) {
-        setInProgressRfpIds((prev) => new Set([...prev, rfpId]));
-      }
-      if (currentlyApplied) {
-        setInProgressRfpIds((prev) => {
-          const next = new Set(prev);
-          next.delete(rfpId);
-          return next;
-        });
-      }
       console.error("Failed to update applied status:", e);
       showToast(e instanceof Error ? e.message : "Failed to update — try again");
     }
-  }, [appliedRfpIds, inProgressRfpIds]);
+  }, [appliedRfpIds]);
 
   const handleMarkInProgress = useCallback(async (rfpId: string) => {
     try {
@@ -1854,7 +1830,7 @@ function RFPDetailPanel({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSave(); }}
-              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border transition-all shadow-sm hover:shadow ${isSaved ? "text-blue-700 bg-blue-100 border-blue-300 hover:bg-blue-150" : "text-blue-600 bg-white border-blue-200 hover:bg-blue-50"}`}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border transition-all shadow-sm hover:shadow-md ${isSaved ? "text-white bg-gradient-to-b from-blue-500 to-blue-600 border-blue-600 hover:from-blue-600 hover:to-blue-700" : "text-blue-700 bg-gradient-to-b from-blue-50 to-blue-100 border-blue-200 hover:from-blue-100 hover:to-blue-200 hover:border-blue-300"}`}
             >
               <svg className={`w-4 h-4 ${isSaved ? "fill-current" : ""}`} fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
               {isSaved ? "Saved" : "Save"}
@@ -1862,7 +1838,7 @@ function RFPDetailPanel({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onToggleApplied(); }}
-              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border transition-all shadow-sm hover:shadow ${isApplied ? "text-green-700 bg-green-100 border-green-300 hover:bg-green-150" : "text-green-600 bg-white border-green-200 hover:bg-green-50"}`}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border transition-all shadow-sm hover:shadow-md ${isApplied ? "text-white bg-gradient-to-b from-green-500 to-green-600 border-green-600 hover:from-green-600 hover:to-green-700" : "text-green-700 bg-gradient-to-b from-green-50 to-green-100 border-green-200 hover:from-green-100 hover:to-green-200 hover:border-green-300"}`}
             >
               {isApplied ? (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> Applied</>) : (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> I&apos;ve applied</>)}
             </button>
@@ -1874,7 +1850,7 @@ function RFPDetailPanel({
                 setProposalDropdownOpen((open) => !open);
                 if (!proposal && !proposalLoading) handleGenerateProposal();
               }}
-              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border transition-all shadow-sm hover:shadow ${proposal ? "text-violet-700 bg-violet-100 border-violet-300 hover:bg-violet-150" : "text-violet-600 bg-white border-violet-200 hover:bg-violet-50"}`}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border transition-all shadow-sm hover:shadow-md ${proposal ? "text-white bg-gradient-to-b from-violet-500 to-violet-600 border-violet-600 hover:from-violet-600 hover:to-violet-700" : "text-violet-700 bg-gradient-to-b from-violet-50 to-violet-100 border-violet-200 hover:from-violet-100 hover:to-violet-200 hover:border-violet-300"}`}
             >
               {proposalLoading ? (
                 <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
@@ -1889,7 +1865,7 @@ function RFPDetailPanel({
                 setPoeDropdownOpen((open) => !open);
                 if (!planOfExecution && !planLoading) handleGeneratePlanOfExecution();
               }}
-              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border transition-all shadow-sm hover:shadow ${planOfExecution ? "text-purple-700 bg-purple-100 border-purple-300 hover:bg-purple-150" : "text-purple-600 bg-white border-purple-200 hover:bg-purple-50"}`}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border transition-all shadow-sm hover:shadow-md ${planOfExecution ? "text-white bg-gradient-to-b from-purple-500 to-purple-600 border-purple-600 hover:from-purple-600 hover:to-purple-700" : "text-purple-700 bg-gradient-to-b from-purple-50 to-purple-100 border-purple-200 hover:from-purple-100 hover:to-purple-200 hover:border-purple-300"}`}
             >
               {planLoading ? (
                 <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
@@ -1898,7 +1874,7 @@ function RFPDetailPanel({
               )}
             </button>
             {(rfp.eventUrl || rfp.id) && (
-              <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="text-sm font-medium flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border transition-all shadow-sm hover:shadow text-amber-600 bg-white border-amber-200 hover:bg-amber-50">
+              <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="text-sm font-medium flex items-center justify-center gap-1.5 h-10 px-4 rounded-lg border transition-all shadow-sm hover:shadow-md text-amber-700 bg-gradient-to-b from-amber-50 to-amber-100 border-amber-200 hover:from-amber-100 hover:to-amber-200 hover:border-amber-300">
                 View on Cal eProcure <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
               </a>
             )}
