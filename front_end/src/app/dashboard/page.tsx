@@ -1033,6 +1033,22 @@ export default function DashboardPage() {
     }
   }, [displayedRfps, selectedRfpId]);
 
+  // When arriving from home page (saved/applied/in progress/due soon), open dashboard with that RFP selected
+  useEffect(() => {
+    if (typeof window === "undefined" || displayedRfps.length === 0) return;
+    const raw = sessionStorage.getItem("civitas_preload_rfp");
+    if (!raw) return;
+    try {
+      const preload = JSON.parse(raw) as { id?: string };
+      if (preload?.id && displayedRfps.some((r) => r.id === preload.id)) {
+        setSelectedRfpId(preload.id);
+      }
+    } catch {
+      // ignore invalid JSON
+    }
+    sessionStorage.removeItem("civitas_preload_rfp");
+  }, [displayedRfps]);
+
   // Show list as soon as events are ready; profile loads in background (matches update when it arrives).
   if (loading) {
     return (
