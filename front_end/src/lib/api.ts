@@ -431,6 +431,24 @@ export async function saveProfileToBackend(payload: ProfilePatchPayload): Promis
 }
 
 /**
+ * List all contracts for the current user. Returns contract objects with S3 document URLs.
+ */
+export async function listContracts(): Promise<Array<{ id: string; title: string; document: string }>> {
+  const headers: Record<string, string> = { ...authHeaders() };
+  if (!getAuthToken()) {
+    headers["X-CSRFToken"] = await getCsrfToken();
+  }
+  const res = await fetch(`${API_BASE}/contracts/`, {
+    method: "GET",
+    headers,
+    credentials: "include",
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+/**
  * Upload a single document as a contract. File is stored in S3 (uploads/{user_id}/{contract_id}/)
  * and the user's profile JSON is updated with uploaded_documents. Requires auth.
  */
