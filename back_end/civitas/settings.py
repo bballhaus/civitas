@@ -68,6 +68,7 @@ CSRF_TRUSTED_ORIGINS = [
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
     'https://civitas-ai.onrender.com',
+    'https://civitas-aipr.onrender.com',
 ]
 _extra_csrf = os.getenv('CSRF_TRUSTED_ORIGINS_EXTRA', '')
 if _extra_csrf:
@@ -231,6 +232,7 @@ CORS_ALLOWED_ORIGINS = [
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
     'https://civitas-ai.onrender.com',
+    'https://civitas-aipr.onrender.com',
 ]
 
 # Contract extraction (LLM)
