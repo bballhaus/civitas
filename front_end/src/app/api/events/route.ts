@@ -90,9 +90,12 @@ async function loadS3Data(): Promise<{
   return { events: data.events ?? [], extractions };
 }
 
-// Infer location from description (look for explicit City/County fields first, then pattern match)
-function extractLocation(description: string, department: string): string {
-  // First: look for explicit "City: X" or "County: X" fields (common in lease & structured RFPs)
+// Infer location from title, description, and department
+function extractLocation(title: string, description: string, department: string): string {
+  // Combine title + description for searching (title often has the best location info)
+  const text = `${title}\n${description}`;
+
+  // 1. Explicit "City: X" or "County: X" fields (common in lease & structured RFPs)
   const cityField = description.match(/\bCity:\s*([A-Za-z\s]+?)(?:\n|$)/);
   const countyField = description.match(/\bCounty:\s*([A-Za-z\s]+?)(?:\n|$)/);
   if (cityField) {
@@ -109,18 +112,62 @@ function extractLocation(description: string, department: string): string {
     }
   }
 
-  // Fallback: look for "X County" pattern in description text
-  const counties = [
-    "Sacramento", "Los Angeles", "San Francisco", "San Diego", "Orange",
-    "Alameda", "Santa Clara", "San Mateo", "Contra Costa", "Riverside",
-    "San Bernardino", "Ventura", "Fresno", "Nevada", "Marin",
-    "Napa", "Sonoma", "Solano", "Kern", "Tulare", "Monterey", "Santa Cruz"
-  ];
-  for (const county of counties) {
-    if (description.includes(`${county} County`)) {
-      return `${county}, CA`;
+  // 2. "City, CA" or "City, California" patterns (e.g. "San Francisco, California 94599")
+  const cityStateMatch = text.match(
+    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*(?:CA|California)(?:\s+\d{5})?/
+  );
+  if (cityStateMatch) {
+    const city = cityStateMatch[1].trim();
+    // Exclude false positives (generic words that aren't cities)
+    const skipWords = new Set(["State", "University", "Department", "Office", "Service", "Services", "Business", "Agency"]);
+    if (!skipWords.has(city) && city.length > 1 && city.length < 40) {
+      return `${city}, CA`;
     }
   }
+
+  // 3. All 58 California counties — check "X County" in title + description
+  const CA_COUNTIES = [
+    "Alameda", "Alpine", "Amador", "Butte", "Calaveras", "Colusa",
+    "Contra Costa", "Del Norte", "El Dorado", "Fresno", "Glenn", "Humboldt",
+    "Imperial", "Inyo", "Kern", "Kings", "Lake", "Lassen", "Los Angeles",
+    "Madera", "Marin", "Mariposa", "Mendocino", "Merced", "Modoc", "Mono",
+    "Monterey", "Napa", "Nevada", "Orange", "Placer", "Plumas", "Riverside",
+    "Sacramento", "San Benito", "San Bernardino", "San Diego", "San Francisco",
+    "San Joaquin", "San Luis Obispo", "San Mateo", "Santa Barbara", "Santa Clara",
+    "Santa Cruz", "Shasta", "Sierra", "Siskiyou", "Solano", "Sonoma",
+    "Stanislaus", "Sutter", "Tehama", "Trinity", "Tulare", "Tuolumne",
+    "Ventura", "Yolo", "Yuba"
+  ];
+  for (const county of CA_COUNTIES) {
+    if (text.includes(`${county} County`)) {
+      return `${county} County, CA`;
+    }
+  }
+
+  // 4. Well-known California city names in title or description (no "County" suffix needed)
+  const CA_CITIES = [
+    "Sacramento", "Los Angeles", "San Francisco", "San Diego", "San Jose",
+    "Oakland", "Fresno", "Long Beach", "Bakersfield", "Anaheim",
+    "Santa Ana", "Riverside", "Stockton", "Irvine", "Chula Vista",
+    "Santa Rosa", "Modesto", "Visalia", "Elk Grove", "Roseville",
+    "Folsom", "Redding", "Yountville", "Benicia", "Porterville",
+    "Hollister", "Eureka", "Patton", "Coalinga", "Vacaville",
+    "Rancho Cordova", "West Sacramento"
+  ];
+  for (const city of CA_CITIES) {
+    // Must appear as a word boundary — not inside another word
+    const re = new RegExp(`\\b${city.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    if (re.test(text)) {
+      return `${city}, CA`;
+    }
+  }
+
+  // 5. "X and Y County" pattern (e.g. "Tulare and Fresno County")
+  const multiCounty = text.match(/\b([A-Z][a-z]+)\s+and\s+([A-Z][a-z]+)\s+Count(?:y|ies)/);
+  if (multiCounty) {
+    return `${multiCounty[1]} and ${multiCounty[2]} County, CA`;
+  }
+
   return "California";
 }
 
@@ -373,7 +420,7 @@ export async function GET() {
         || "TBD";
 
       const location = extraction?.location_details?.[0]
-        || extractLocation(e.description || "", e.department || "");
+        || extractLocation(e.title || "", e.description || "", e.department || "");
 
       // Build attachment rollup for summaries
       const attachmentRollup = extraction

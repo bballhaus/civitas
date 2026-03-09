@@ -204,6 +204,7 @@ function scoreFromSimilarity(sim: number, maxPoints: number) {
 // ---------------------------------------------------------------------------
 
 const CERTIFICATION_CANONICAL: Record<string, string> = {
+  // --- Federal / industry standards ---
   "iso 9001": "iso_9001", "iso-9001": "iso_9001", "iso9001": "iso_9001", "iso 9001:2015": "iso_9001",
   "iso 27001": "iso_27001", "iso-27001": "iso_27001", "iso27001": "iso_27001",
   "soc 2": "soc_2", "soc-2": "soc_2", "soc2": "soc_2", "soc 2 type ii": "soc_2",
@@ -215,23 +216,86 @@ const CERTIFICATION_CANONICAL: Record<string, string> = {
   "itar": "itar",
   "gsa schedule": "gsa_schedule", "gsa": "gsa_schedule",
   "naics codes": "naics",
-  // California-specific — abbreviations AND full names both canonicalize
-  "sb": "sb", "small business": "sb", "small business (sb)": "sb", "certified sb": "sb",
-  "certified small business": "sb", "small business sb": "sb",
+
+  // --- Small Business (SB) — all variants ---
+  "sb": "sb", "small business": "sb", "small business (sb)": "sb",
+  "certified sb": "sb", "certified small business": "sb", "small business sb": "sb",
+  "california small business": "sb", "california-certified small business (sb)": "sb",
+  "california certified small business": "sb", "california certified small business certification": "sb",
+  "dgs certified small business (sb)": "sb", "small business preference": "sb",
+  "small business preferences": "sb",
+
+  // --- DVBE — all variants ---
   "dvbe": "dvbe", "disabled veteran business enterprise": "dvbe",
   "disabled veteran business enterprise (dvbe)": "dvbe", "disabled veteran business enterprise dvbe": "dvbe",
+  "disabled veteran enterprise (dvbe)": "dvbe", "disabled veterans business (dvbe)": "dvbe",
+  "disabled veteran business enterprises (dvbe)": "dvbe",
+  "disabled veteran business enterprise (dvbe) program participation": "dvbe",
+  "disabled veteran business enterprise (dvbe) participation program": "dvbe",
+  "disabled veteran business enterprise (dvbe) participation": "dvbe",
+  "california certified disabled veteran business": "dvbe",
+  "dgs certified disabled veteran business enterprise (dvbe)": "dvbe",
+  "dvbe checklist  dpr 479": "dvbe",
+
+  // --- DBE / MBE ---
   "dbe": "dbe", "disadvantaged business enterprise": "dbe", "disadvantaged business enterprise (dbe)": "dbe",
   "mbe": "mbe", "minority business enterprise": "mbe", "minority business enterprise (mbe)": "mbe",
+
+  // --- Micro Business (MB) — all variants ---
   "mb": "mb", "micro business": "mb", "micro business (mb)": "mb", "micro business mb": "mb",
+  "microbusiness (mb)": "mb", "micro-business (mb)": "mb", "microbusiness": "mb",
+  "dgs certified micro business (mb)": "mb", "micro business (sb/mb)": "mb",
+
+  // --- SB-PW (Small Business for Public Works) — all variants ---
   "sb-pw": "sb_pw", "sbpw": "sb_pw", "california sb-pw": "sb_pw",
   "small business for the purpose of public works (sb-pw)": "sb_pw",
   "small business for the purpose of public works sb-pw": "sb_pw",
   "small business for the purpose of public works sbpw": "sb_pw",
   "small business for the purpose of public works": "sb_pw",
+  "sb for the purpose of public works (sb-pw)": "sb_pw",
+  "sb for the purpose of public works sbpw": "sb_pw",
+  "small business for public works (sb-pw)": "sb_pw",
+  "small business for public works": "sb_pw",
+  "small business enterprise (sb) for public works (sb-pw)": "sb_pw",
+  "dgs certified small business for the purpose of public works (sb-pw)": "sb_pw",
+  "dgs-certified small business public works business enterprises": "sb_pw",
+
+  // --- NVSA ---
+  "nvsa": "nvsa", "nonprofit veteran service agency (nvsa)": "nvsa",
+  "nonprofit veteran service agency": "nvsa",
+
+  // --- DIR (Dept of Industrial Relations) Registration ---
   "dir registration": "dir", "dir": "dir",
+  "department of industrial relations registration number": "dir",
+  "department of industrial relations registration": "dir",
+  "department of industrial relations (dir) registration": "dir",
+  "registration with the department of industrial relations (dir)": "dir",
+  "dir public works contractor registration": "dir",
+  "public works contractor registration": "dir",
+  "public works contractor with the department of industrial relations (dir)": "dir",
+
+  // --- Contractor licenses ---
   "contractors license class b": "contractor_b", "contractor's license class b": "contractor_b",
+  "california class b - general building contractor's license": "contractor_b",
+  "general building contractor": "contractor_b",
   "contractors license class a": "contractor_a",
+  "general engineering contractors license (class a)": "contractor_a",
+  "general engineering contractor": "contractor_a",
+  "a (general engineering) or b (general building)": "contractor_ab",
+  "contractor's license class c-39": "contractor_c39",
+  "contractor's license class c36": "contractor_c36",
+  "c-36 plumbing contractor license": "contractor_c36",
+
+  // --- Compliance certifications ---
+  "darfur contracting act certification": "darfur", "darfur contracting act certification  dpr 74": "darfur",
+  "sweatfree code of conduct": "sweatfree",
+  "california civil rights laws certification": "ca_civil_rights",
   "california business license": "ca_business_license",
+  "iran contracting act certification": "iran_contracting", "iran contracting certification": "iran_contracting",
+
+  // --- Combined / composite entries (match the most specific component) ---
+  "dgs certified small business (sb)/micro business (mb)/sb for the purpose of public works (sb-pw) or disabled veteran business enterprise (dvbe)": "sb",
+  "sb/dvbe certification number": "sb",
 };
 
 const SET_ASIDE_CANONICAL: Record<string, string> = {
@@ -277,9 +341,14 @@ function canonicalSetMatch(
   if (rfpValues.length === 0) return { ratio: 1, matched: [] };
   if (profileValues.length === 0) return { ratio: 0, matched: [] };
   const profileCanonical = new Set(profileValues.map((v) => canonicalize(v, canonicalMap)));
+  // Deduplicate RFP certs by canonical value to avoid inflating ratio
+  // (e.g. "SB" and "Small Business (SB)" are the same requirement)
+  const rfpCanonicalSet = new Set(rfpValues.map((v) => canonicalize(v, canonicalMap)));
+  const matchedCanonical = [...rfpCanonicalSet].filter((c) => profileCanonical.has(c));
+  // Return original labels for display, but ratio based on unique canonical certs
   const matched = rfpValues.filter((v) => profileCanonical.has(canonicalize(v, canonicalMap)));
   return {
-    ratio: matched.length / Math.max(1, rfpValues.length),
+    ratio: matchedCanonical.length / Math.max(1, rfpCanonicalSet.size),
     matched,
   };
 }
@@ -879,7 +948,7 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
     }
   } else {
     // Neutral — don't penalize, don't count toward denominator
-    breakdown.push({ category: "NAICS Codes", points: 0, maxPoints: NAICS_MAX, status: "neutral", detail: "RFP does not list NAICS codes.", rfpTokens: [], profileTokens: profileNaics });
+    breakdown.push({ category: "NAICS Codes", points: 0, maxPoints: 0, status: "neutral", detail: "RFP does not list NAICS codes.", rfpTokens: [], profileTokens: profileNaics });
   }
 
   // --- Description / Title text match (max 20 pts) ---
@@ -1015,7 +1084,7 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
       breakdown.push({ category: "Certifications", points: 0, maxPoints: CERT_MAX, status: "missing", detail: "None of the listed certifications found in your profile.", rfpTokens: rfp.certifications, profileTokens: profile.certifications ?? [] });
     }
   } else {
-    breakdown.push({ category: "Certifications", points: 0, maxPoints: CERT_MAX, status: "neutral", detail: "RFP does not list required certifications.", rfpTokens: [], profileTokens: profile.certifications ?? [] });
+    breakdown.push({ category: "Certifications", points: 0, maxPoints: 0, status: "neutral", detail: "RFP does not list required certifications.", rfpTokens: [], profileTokens: profile.certifications ?? [] });
   }
 
   // --- Agency Experience (max 5 pts) ---

@@ -1705,11 +1705,12 @@ function RFPDetailPanel({
         </div>
 
         {/* Score Breakdown */}
-        {match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").length > 0 && !match.disqualified && (
+        {match.breakdown.length > 0 && !match.disqualified && (
           <div className="p-5 md:p-6 border-b border-slate-100">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Score Breakdown</h3>
             <div className="space-y-3">
-              {match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
+              {match.breakdown.map((b, i) => {
+                const isNeutral = b.status === "neutral";
                 const pct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
                 const barColor =
                   b.status === "strong" ? "bg-emerald-500" :
@@ -1739,11 +1740,17 @@ function RFPDetailPanel({
                             <svg className={`w-3 h-3 text-slate-400 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                           )}
                         </span>
-                        {b.maxPoints > 0 && (
+                        {isNeutral ? (
+                          <span className="text-xs font-medium text-slate-400 italic">Not Applicable</span>
+                        ) : b.maxPoints > 0 ? (
                           <span className={`text-xs font-bold ${textColor}`}>{b.points}/{b.maxPoints}</span>
-                        )}
+                        ) : null}
                       </div>
-                      {b.maxPoints > 0 ? (
+                      {isNeutral ? (
+                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-slate-200" style={{ width: "100%" }} />
+                        </div>
+                      ) : b.maxPoints > 0 ? (
                         <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                           <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
                         </div>
