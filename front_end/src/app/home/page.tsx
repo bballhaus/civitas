@@ -269,14 +269,14 @@ export default function HomePage() {
           />
           <StatCard
             label="Applied"
-            value={appliedRfpIds.size}
+            value={appliedRfps.length}
             subtext="Marked as applied"
             accent="emerald"
             icon={iconApplied}
           />
           <StatCard
             label="In progress"
-            value={inProgressRfpIds.size}
+            value={inProgressRfps.length}
             subtext="POA / plan generated"
             accent="violet"
             icon={iconInProgress}
@@ -320,24 +320,26 @@ export default function HomePage() {
                   </Link>
                 </p>
               ) : (
-                <ul className="space-y-2">
-                  {savedRfps.slice(0, 5).map((rfp) => (
-                    <li key={rfp.id}>
-                      <button
-                        type="button"
-                        onClick={() => preloadRfpAndNavigate(rfp, router)}
-                        className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/50 transition-all hover:shadow-sm border-l-2 border-l-blue-400"
-                      >
-                        <p className="font-semibold text-slate-900 text-sm line-clamp-2">
-                          {rfp.title}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-1">
-                          {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
-                        </p>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <div className={savedRfps.length >= 2 ? "min-h-0 max-h-[11rem] overflow-y-scroll overflow-x-hidden" : ""}>
+                  <ul className="space-y-2">
+                    {savedRfps.slice(0, 5).map((rfp) => (
+                      <li key={rfp.id}>
+                        <button
+                          type="button"
+                          onClick={() => preloadRfpAndNavigate(rfp, router)}
+                          className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/50 transition-all hover:shadow-sm border-l-2 border-l-blue-400"
+                        >
+                          <p className="font-semibold text-slate-900 text-sm line-clamp-2">
+                            {rfp.title}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
+                          </p>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
               {savedRfps.length > 5 && (
                 <Link
@@ -359,9 +361,9 @@ export default function HomePage() {
                 </svg>
               </span>
               Applied
-              {appliedRfpIds.size > 0 && (
+              {appliedRfps.length > 0 && (
                 <span className="text-sm font-semibold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full">
-                  {appliedRfpIds.size}
+                  {appliedRfps.length}
                 </span>
               )}
             </div>
@@ -373,24 +375,26 @@ export default function HomePage() {
                   You haven&apos;t marked any RFPs as applied yet. Use &quot;I&apos;ve applied&quot; on the dashboard when you&apos;ve submitted an application.
                 </p>
               ) : (
-                <ul className="space-y-2">
-                  {appliedRfps.slice(0, 5).map((rfp) => (
-                    <li key={rfp.id}>
-                      <button
-                        type="button"
-                        onClick={() => preloadRfpAndNavigate(rfp, router)}
-                        className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/50 transition-all hover:shadow-sm border-l-2 border-l-emerald-400"
-                      >
-                        <p className="font-semibold text-slate-900 text-sm line-clamp-2">
-                          {rfp.title}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-1">
-                          {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
-                        </p>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <div className={appliedRfps.length >= 2 ? "min-h-0 max-h-[11rem] overflow-y-scroll overflow-x-hidden" : ""}>
+                  <ul className="space-y-2">
+                    {appliedRfps.slice(0, 5).map((rfp) => (
+                      <li key={rfp.id}>
+                        <button
+                          type="button"
+                          onClick={() => preloadRfpAndNavigate(rfp, router)}
+                          className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/50 transition-all hover:shadow-sm border-l-2 border-l-emerald-400"
+                        >
+                          <p className="font-semibold text-slate-900 text-sm line-clamp-2">
+                            {rfp.title}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
+                          </p>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
               {appliedRfps.length > 5 && (
                 <Link
@@ -412,9 +416,9 @@ export default function HomePage() {
                 </svg>
               </span>
               In progress
-              {inProgressRfpIds.size > 0 && (
+              {inProgressRfps.length > 0 && (
                 <span className="text-sm font-semibold text-violet-600 bg-violet-100 px-2 py-0.5 rounded-full">
-                  {inProgressRfpIds.size}
+                  {inProgressRfps.length}
                 </span>
               )}
             </div>
@@ -426,24 +430,26 @@ export default function HomePage() {
                   No RFPs in progress yet. Generate a Plan of Execution on the dashboard to track them here.
                 </p>
               ) : (
-                <ul className="space-y-2">
-                  {inProgressRfps.slice(0, 5).map((rfp) => (
-                    <li key={rfp.id}>
-                      <button
-                        type="button"
-                        onClick={() => preloadRfpAndNavigate(rfp, router)}
-                        className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-violet-200 hover:bg-violet-50/50 transition-all hover:shadow-sm border-l-2 border-l-violet-400"
-                      >
-                        <p className="font-semibold text-slate-900 text-sm line-clamp-2">
-                          {rfp.title}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-1">
-                          {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
-                        </p>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <div className={inProgressRfps.length >= 2 ? "min-h-0 max-h-[11rem] overflow-y-scroll overflow-x-hidden" : ""}>
+                  <ul className="space-y-2">
+                    {inProgressRfps.slice(0, 5).map((rfp) => (
+                      <li key={rfp.id}>
+                        <button
+                          type="button"
+                          onClick={() => preloadRfpAndNavigate(rfp, router)}
+                          className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-violet-200 hover:bg-violet-50/50 transition-all hover:shadow-sm border-l-2 border-l-violet-400"
+                        >
+                          <p className="font-semibold text-slate-900 text-sm line-clamp-2">
+                            {rfp.title}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
+                          </p>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
               {inProgressRfps.length > 5 && (
                 <Link
@@ -481,29 +487,31 @@ export default function HomePage() {
                 applied RFPs.
               </p>
             ) : (
-              <ul className="space-y-2">
-                {upcomingDeadlines.map((rfp) => (
-                  <li key={rfp.id}>
-                    <button
-                      type="button"
-                      onClick={() => preloadRfpAndNavigate(rfp, router)}
-                      className="w-full text-left flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-100 hover:border-amber-200 hover:bg-amber-50/50 transition-all hover:shadow-sm border-l-2 border-l-amber-400"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-semibold text-slate-900 text-sm line-clamp-1">
-                          {rfp.title}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          {rfp.agency}
-                        </p>
-                      </div>
-                      <span className="shrink-0 text-sm font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-lg">
-                        {formatDeadlineShort(rfp.deadline)}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <div className={upcomingDeadlines.length >= 2 ? "min-h-0 max-h-[11rem] overflow-y-scroll overflow-x-hidden" : ""}>
+                <ul className="space-y-2">
+                  {upcomingDeadlines.map((rfp) => (
+                    <li key={rfp.id}>
+                      <button
+                        type="button"
+                        onClick={() => preloadRfpAndNavigate(rfp, router)}
+                        className="w-full text-left flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-100 hover:border-amber-200 hover:bg-amber-50/50 transition-all hover:shadow-sm border-l-2 border-l-amber-400"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-900 text-sm line-clamp-1">
+                            {rfp.title}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {rfp.agency}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-sm font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-lg">
+                          {formatDeadlineShort(rfp.deadline)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
             <div className="mt-4 pt-4 border-t border-slate-100">
               <Link
