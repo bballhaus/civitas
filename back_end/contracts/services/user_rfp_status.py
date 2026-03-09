@@ -135,3 +135,36 @@ def save_generated_poe(user_id: int, rfp_id: str, content: str) -> None:
     data["generated_poe_by_rfp"] = by_rfp
     save_user_data(username, data)
     logger.info("User %s saved generated POE for RFP %s", user_id, rfp_id_str)
+
+
+def get_generated_proposal(user_id: int, rfp_id: str) -> str | None:
+    """Return saved Proposal for this user and RFP from S3, or None."""
+    username = _username_for_user_id(user_id)
+    if not username:
+        return None
+    data = get_user_data(username)
+    if not data:
+        return None
+    by_rfp = data.get("generated_proposal_by_rfp")
+    if not isinstance(by_rfp, dict):
+        return None
+    content = by_rfp.get(str(rfp_id).strip())
+    return content if isinstance(content, str) else None
+
+
+def save_generated_proposal(user_id: int, rfp_id: str, content: str) -> None:
+    """Save Proposal for this user and RFP in S3."""
+    username = _username_for_user_id(user_id)
+    if not username:
+        return
+    rfp_id_str = str(rfp_id).strip()
+    if not rfp_id_str:
+        return
+    data = get_user_data(username) or {}
+    by_rfp = data.get("generated_proposal_by_rfp")
+    if not isinstance(by_rfp, dict):
+        by_rfp = {}
+    by_rfp[rfp_id_str] = content
+    data["generated_proposal_by_rfp"] = by_rfp
+    save_user_data(username, data)
+    logger.info("User %s saved generated proposal for RFP %s", user_id, rfp_id_str)

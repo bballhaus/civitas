@@ -26,6 +26,8 @@ import {
   getEmptyCompanyProfile,
   updateUserRfpStatus,
   getGeneratedPoe,
+  getGeneratedProposal,
+  listContracts,
 } from "@/lib/api";
 import { getCachedEvents, setCachedEvents, clearCachedEvents } from "@/lib/events-cache";
 import {
@@ -1397,11 +1399,19 @@ function RFPDetailPanel({
   const [planError, setPlanError] = useState<string | null>(null);
   const [planFeedback, setPlanFeedback] = useState("");
   const [poeDropdownOpen, setPoeDropdownOpen] = useState(false);
+  const [proposal, setProposal] = useState<string | null>(null);
+  const [proposalLoading, setProposalLoading] = useState(false);
+  const [proposalError, setProposalError] = useState<string | null>(null);
+  const [proposalFeedback, setProposalFeedback] = useState("");
+  const [proposalDropdownOpen, setProposalDropdownOpen] = useState(false);
 
   useEffect(() => {
     if (!rfp.id) return;
     getGeneratedPoe(rfp.id).then((saved) => {
       if (saved) setPlanOfExecution(saved);
+    });
+    getGeneratedProposal(rfp.id).then((saved) => {
+      if (saved) setProposal(saved);
     });
   }, [rfp.id]);
 
@@ -1461,8 +1471,12 @@ function RFPDetailPanel({
         throw new Error(errData.error || res.statusText);
       }
       const data = await res.json();
-      setPlanOfExecution(data.plan ?? "");
+      const planContent = data.plan ?? "";
+      setPlanOfExecution(planContent);
       setPlanFeedback("");
+      if (planContent) {
+        updateUserRfpStatus({ save_generated_poe: { rfp_id: rfp.id, content: planContent } }).catch(() => {});
+      }
     } catch (err) {
       setPlanError(err instanceof Error ? err.message : "Failed to generate plan");
     } finally {
@@ -1497,6 +1511,80 @@ function RFPDetailPanel({
     const blob = await Packer.toBlob(doc);
     saveAs(blob, `Plan-of-Execution-${rfp.title.slice(0, 50).replace(/[^a-zA-Z0-9]/g, "-")}.docx`);
   }, [planOfExecution, rfp.title, rfp.agency]);
+
+  const handleGenerateProposal = useCallback(async (feedbackText?: string) => {
+    if (proposalLoading) return;
+    const trimmed = String(feedbackText ?? "").trim();
+    setProposalLoading(true);
+    setProposalError(null);
+    if (!trimmed) setProposal(null);
+    updateUserRfpStatus({ mark_in_progress: rfp.id }).catch(() => {});
+    try {
+      // Fetch past contract document URLs for style reference
+      let pastDocumentUrls: string[] = [];
+      try {
+        const contracts = await listContracts();
+        pastDocumentUrls = contracts
+          .map((c) => c.document)
+          .filter((url): url is string => !!url && url.length > 0);
+      } catch {
+        // Non-critical: proceed without style reference
+      }
+
+      const res = await fetch("/api/generate-proposal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...planPayload(),
+          pastDocumentUrls,
+          ...(trimmed && { currentProposal: proposal, feedback: trimmed }),
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || res.statusText);
+      }
+      const data = await res.json();
+      const proposalContent = data.proposal ?? "";
+      setProposal(proposalContent);
+      setProposalFeedback("");
+      if (proposalContent) {
+        updateUserRfpStatus({ save_generated_proposal: { rfp_id: rfp.id, content: proposalContent } }).catch(() => {});
+      }
+    } catch (err) {
+      setProposalError(err instanceof Error ? err.message : "Failed to generate proposal");
+    } finally {
+      setProposalLoading(false);
+    }
+  }, [rfp, profile, proposal, proposalLoading]);
+
+  const handleDownloadProposal = useCallback(async () => {
+    if (!proposal || !rfp.title) return;
+    const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import("docx");
+    const { saveAs } = await import("file-saver");
+    const lines = proposal.split(/\n/);
+    const children = lines.map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return new Paragraph({ text: "", spacing: { after: 120 } });
+      const isHeading = /^\d+\.\s*\*\*/.test(trimmed) || (/^\*\*.*\*\*$/.test(trimmed) && trimmed.length < 80);
+      const text = trimmed.replace(/\*\*/g, "");
+      return isHeading
+        ? new Paragraph({ text, heading: HeadingLevel.HEADING_2, spacing: { before: 240, after: 120 } })
+        : new Paragraph({ children: [new TextRun({ text: trimmed })], spacing: { after: 120 } });
+    });
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: [
+          new Paragraph({ text: rfp.title, heading: HeadingLevel.TITLE, spacing: { after: 240 } }),
+          new Paragraph({ text: rfp.agency, spacing: { after: 360 } }),
+          ...children,
+        ],
+      }],
+    });
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, `Proposal-${rfp.title.slice(0, 50).replace(/[^a-zA-Z0-9]/g, "-")}.docx`);
+  }, [proposal, rfp.title, rfp.agency]);
 
   useEffect(() => {
     if (cachedSummary) {
@@ -1697,12 +1785,12 @@ function RFPDetailPanel({
               <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} size="lg" />
             </div>
           </div>
-          {/* Save + I've applied — right under the title */}
-          <div className="flex flex-wrap items-center gap-2 mb-2">
+          {/* Action buttons — translucent bubble */}
+          <div className="flex flex-wrap items-center gap-2 mb-2 bg-white/60 backdrop-blur-sm rounded-xl p-2 border border-slate-200/60 shadow-sm">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSave(); }}
-              className={`text-sm flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-colors ${isSaved ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${isSaved ? "text-blue-700 bg-blue-200/70 hover:bg-blue-200" : "text-blue-600 bg-blue-100/50 hover:bg-blue-100"}`}
             >
               <svg className={`w-4 h-4 ${isSaved ? "fill-current" : ""}`} fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
               {isSaved ? "Saved" : "Save"}
@@ -1710,13 +1798,182 @@ function RFPDetailPanel({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onToggleApplied(); }}
-              className={`text-sm flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-colors ${isApplied ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${isApplied ? "text-green-700 bg-green-200/70 hover:bg-green-200" : "text-green-600 bg-green-100/50 hover:bg-green-100"}`}
             >
               {isApplied ? (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> Applied</>) : (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> I&apos;ve applied</>)}
             </button>
-            
+            <div className="w-px h-5 bg-slate-300/50 mx-0.5" />
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setProposalDropdownOpen((open) => !open);
+                if (!proposal && !proposalLoading) handleGenerateProposal();
+              }}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${proposal ? "text-violet-700 bg-violet-200/70 hover:bg-violet-200" : "text-violet-600 bg-violet-100/50 hover:bg-violet-100"}`}
+            >
+              {proposalLoading ? (
+                <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
+              ) : (
+                <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Generate Proposal</>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPoeDropdownOpen((open) => !open);
+                if (!planOfExecution && !planLoading) handleGeneratePlanOfExecution();
+              }}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${planOfExecution ? "text-purple-700 bg-purple-200/70 hover:bg-purple-200" : "text-purple-600 bg-purple-100/50 hover:bg-purple-100"}`}
+            >
+              {planLoading ? (
+                <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
+              ) : (
+                <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Generate POE</>
+              )}
+            </button>
+            {(rfp.eventUrl || rfp.id) && (
+              <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all text-amber-600 bg-amber-100/50 hover:bg-amber-100">
+                View on Cal eProcure <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+              </a>
+            )}
           </div>
         </div>
+
+        {/* Generated Proposal — persistent header, collapsible body */}
+        {(proposal || proposalLoading || proposalError) && (
+          <div className="border-b border-slate-100 bg-slate-50/50">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setProposalDropdownOpen((o) => !o); }}
+              className="w-full p-4 flex items-center justify-between gap-2 hover:bg-slate-100/50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <svg className={`w-4 h-4 text-slate-400 transition-transform ${proposalDropdownOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                <h3 className="text-sm font-bold text-slate-900">Generated Proposal</h3>
+                {proposalLoading && <span className="text-xs text-slate-400 animate-pulse">Generating…</span>}
+              </div>
+              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                {proposal && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleDownloadProposal(); }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    Download
+                  </button>
+                )}
+              </div>
+            </button>
+            {proposalDropdownOpen && (
+              <div className="px-4 pb-4 max-h-[60vh] overflow-y-auto">
+                {proposalLoading && !proposal ? (
+                  <p className="text-sm text-slate-500 animate-pulse">Generating proposal…</p>
+                ) : proposalError ? (
+                  <p className="text-sm text-red-600">{proposalError}</p>
+                ) : proposal ? (
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
+                        {proposal}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 items-start">
+                      <div className="flex-1 min-w-[180px]">
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Improve with feedback (optional)</label>
+                        <textarea
+                          value={proposalFeedback}
+                          onChange={(e) => setProposalFeedback(e.target.value)}
+                          placeholder="e.g. Emphasize our cybersecurity experience..."
+                          rows={2}
+                          className="w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2563eb] focus:border-transparent resize-none"
+                          style={{ color: '#000000' }}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleGenerateProposal(proposalFeedback); }}
+                        disabled={proposalLoading}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 mt-5"
+                      >
+                        {proposalLoading ? "Regenerating…" : "Regenerate with feedback"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Generated Plan of Execution — persistent header, collapsible body */}
+        {(planOfExecution || planLoading || planError) && (
+          <div className="border-b border-slate-100 bg-slate-50/50">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setPoeDropdownOpen((o) => !o); }}
+              className="w-full p-4 flex items-center justify-between gap-2 hover:bg-slate-100/50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <svg className={`w-4 h-4 text-slate-400 transition-transform ${poeDropdownOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                <h3 className="text-sm font-bold text-slate-900">Generated Plan of Execution</h3>
+                {planLoading && <span className="text-xs text-slate-400 animate-pulse">Generating…</span>}
+              </div>
+              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                {planOfExecution && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleDownloadPlanOfExecution(); }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    Download
+                  </button>
+                )}
+              </div>
+            </button>
+            {poeDropdownOpen && (
+              <div className="px-4 pb-4 max-h-[60vh] overflow-y-auto">
+                {planLoading && !planOfExecution ? (
+                  <p className="text-sm text-slate-500 animate-pulse">Generating plan…</p>
+                ) : planError ? (
+                  <p className="text-sm text-red-600">{planError}</p>
+                ) : planOfExecution ? (
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
+                        {planOfExecution}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 items-start">
+                      <div className="flex-1 min-w-[180px]">
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Improve with feedback (optional)</label>
+                        <textarea
+                          value={planFeedback}
+                          onChange={(e) => setPlanFeedback(e.target.value)}
+                          placeholder="e.g. Add more detail on timelines..."
+                          rows={2}
+                          className="w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2563eb] focus:border-transparent resize-none"
+                          style={{ color: '#000000' }}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleGeneratePlanOfExecution(planFeedback); }}
+                        disabled={planLoading}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 mt-5"
+                      >
+                        {planLoading ? "Regenerating…" : "Regenerate with feedback"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Important information (left) + Match Summary (right) */}
         <div className="p-5 md:p-6 border-b border-slate-100">
@@ -2019,111 +2276,7 @@ function RFPDetailPanel({
           </div>
         )}
 
-        {/* Generated Plan of Execution dropdown — when open, appears above the bottom buttons */}
-        {poeDropdownOpen && (
-          <div className="border-t border-slate-100 bg-slate-50/50">
-            <div className="p-4 flex items-center justify-between gap-2">
-              <h3 className="text-sm font-bold text-slate-900">Generated Plan of Execution</h3>
-              <div className="flex items-center gap-2">
-                {planOfExecution && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); handleDownloadPlanOfExecution(); }}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                    Download
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (planOfExecution) {
-                      updateUserRfpStatus({ save_generated_poe: { rfp_id: rfp.id, content: planOfExecution } }).catch(() => {});
-                    }
-                    setPoeDropdownOpen(false);
-                  }}
-                  className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-200 hover:text-slate-700"
-                  aria-label="Close"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                </button>
-              </div>
-            </div>
-            <div className="px-4 pb-4 max-h-[60vh] overflow-y-auto">
-              {planLoading && !planOfExecution ? (
-                <p className="text-sm text-slate-500 animate-pulse">Generating plan…</p>
-              ) : planError ? (
-                <p className="text-sm text-red-600">{planError}</p>
-              ) : planOfExecution ? (
-                <div className="space-y-3">
-                  <div className="rounded-lg border border-slate-200 bg-white p-4">
-                    <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                      {planOfExecution}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2 items-start">
-                    <div className="flex-1 min-w-[180px]">
-                      <label className="block text-xs font-medium text-slate-600 mb-1">Improve with feedback (optional)</label>
-                      <textarea
-                        value={planFeedback}
-                        onChange={(e) => setPlanFeedback(e.target.value)}
-                        placeholder="e.g. Add more detail on timelines..."
-                        rows={2}
-                        className="w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2563eb] focus:border-transparent resize-none"
-                        style={{ color: '#000000' }}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); handleGeneratePlanOfExecution(planFeedback); }}
-                      disabled={planLoading}
-                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 mt-5"
-                    >
-                      {planLoading ? "Regenerating…" : "Regenerate with feedback"}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-slate-500">Click &quot;Generate Plan of Execution&quot; below to create a plan. It will appear here.</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Bottom: Generate Plan of Execution + View on Cal eProcure */}
-        <div className="p-5 md:p-6 border-t border-slate-100 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setPoeDropdownOpen((open) => !open);
-              if (!planOfExecution && !planLoading) handleGeneratePlanOfExecution();
-            }}
-            className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors"
-          >
-            {planLoading ? (
-              <>
-                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
-                  <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Generating…
-              </>
-            ) : (
-              <>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                Generate Plan of Execution
-              </>
-            )}
-          </button>
-          {(rfp.eventUrl || rfp.id) && (
-            <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">
-              View on Cal eProcure <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-            </a>
-          )}
-        </div>
+        {/* spacer at bottom */}
       </div>
     </article>
   );

@@ -47,6 +47,7 @@ export default function RFPDetailPage() {
   const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
   const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
   const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
+  const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(new Set());
   const [userRfpStatusLoaded, setUserRfpStatusLoaded] = useState(false);
   const [viewMode, setViewMode] = useState<"match" | "generated">("match");
 
@@ -71,6 +72,14 @@ export default function RFPDetailPage() {
       }
     }
     setProfileLoaded(true);
+
+    // Load saved RFP IDs from localStorage
+    try {
+      const savedRaw = localStorage.getItem("civitas_saved_rfps");
+      if (savedRaw) setSavedRfpIds(new Set(JSON.parse(savedRaw)));
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
@@ -552,6 +561,17 @@ export default function RFPDetailPage() {
       : null,
   });
 
+  const handleToggleSave = useCallback(() => {
+    if (!id) return;
+    setSavedRfpIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      localStorage.setItem("civitas_saved_rfps", JSON.stringify([...next]));
+      return next;
+    });
+  }, [id]);
+
   const handleToggleApplied = useCallback(async () => {
     if (!id) return;
     const currentlyApplied = appliedRfpIds.has(id);
@@ -701,41 +721,127 @@ export default function RFPDetailPage() {
         <article className="rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-200">
           {/* Header */}
           <div className="p-6 md:p-8 border-b border-slate-100">
-            <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+            <div className="flex flex-wrap items-start justify-between gap-4 mb-3">
               <h1 className="text-2xl font-bold text-slate-900">{rfp.title}</h1>
+              {rfp.match && !rfp.match.disqualified && (
+                <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-bold shrink-0 ${
+                  rfp.match.tier === "excellent" ? "bg-emerald-500 text-white" :
+                  rfp.match.tier === "strong" ? "bg-blue-500 text-white" :
+                  rfp.match.tier === "moderate" ? "bg-amber-400 text-amber-900" :
+                  "bg-slate-200 text-slate-600"
+                }`}>
+                  {rfp.match.tier === "excellent" && <span className="mr-1">★</span>}
+                  {rfp.match.score}% · {rfp.match.tier.charAt(0).toUpperCase() + rfp.match.tier.slice(1)}
+                </span>
+              )}
+            </div>
+            {/* Action buttons row */}
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <button
+                type="button"
+                onClick={handleToggleSave}
+                className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
+                  savedRfpIds.has(id)
+                    ? "text-blue-600 bg-blue-50 hover:bg-blue-100"
+                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                <svg className="w-4 h-4 shrink-0" fill={savedRfpIds.has(id) ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+                {savedRfpIds.has(id) ? "Saved" : "Save"}
+              </button>
               {userRfpStatusLoaded && (
-                <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={handleToggleApplied}
-                    className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
-                      appliedRfpIds.has(id)
-                        ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100"
-                        : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                    }`}
-                  >
-                    {appliedRfpIds.has(id) ? (
-                      <>
-                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        Applied
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        I&apos;ve applied
-                      </>
-                    )}
-                  </button>
-                  {inProgressRfpIds.has(id) && (
-                    <span className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-50 text-violet-700 border border-violet-100">
-                      In progress
-                    </span>
+                <button
+                  type="button"
+                  onClick={handleToggleApplied}
+                  className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
+                    appliedRfpIds.has(id)
+                      ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100"
+                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  {appliedRfpIds.has(id) ? (
+                    <>
+                      <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Applied
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      I&apos;ve applied
+                    </>
                   )}
-                </div>
+                </button>
+              )}
+              <span className="w-px h-5 bg-slate-200 mx-1" />
+              <button
+                type="button"
+                onClick={() => handleGenerateProposal()}
+                disabled={proposalLoading}
+                className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors text-[#2563eb] hover:bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {proposalLoading ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+                      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Generating…
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Generate Proposal
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleGeneratePlanOfExecution()}
+                disabled={planLoading}
+                className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors text-emerald-600 hover:bg-emerald-50 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {planLoading ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+                      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Generating…
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    </svg>
+                    Generate Plan of Execution
+                  </>
+                )}
+              </button>
+              {(rfp.eventUrl || rfp.id) && (
+                <a
+                  href={rfp.eventUrl || "#"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                >
+                  View on Cal eProcure
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </a>
+              )}
+              {inProgressRfpIds.has(id) && (
+                <span className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-50 text-violet-700 border border-violet-100">
+                  In progress
+                </span>
               )}
             </div>
             <div className="flex flex-wrap gap-2 mb-4">
@@ -748,21 +854,6 @@ export default function RFPDetailPage() {
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-amber-50 text-amber-600">
                 {rfp.capabilities[0] || rfp.contractType || "Contract"}
               </span>
-              {rfp.match.disqualified ? (
-                <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-bold bg-red-100 text-red-700">
-                  <span className="mr-1">✗</span> Not Eligible
-                </span>
-              ) : (
-                <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-bold ${
-                  rfp.match.tier === "excellent" ? "bg-emerald-500 text-white" :
-                  rfp.match.tier === "strong" ? "bg-blue-500 text-white" :
-                  rfp.match.tier === "moderate" ? "bg-amber-400 text-amber-900" :
-                  "bg-slate-200 text-slate-600"
-                }`}>
-                  {rfp.match.tier === "excellent" && <span className="mr-1">★</span>}
-                  {rfp.match.score}% · {rfp.match.tier.charAt(0).toUpperCase() + rfp.match.tier.slice(1)}
-                </span>
-              )}
             </div>
             <ul className="text-sm text-slate-600 space-y-1">
               <li><span className="text-slate-400 font-medium">Requested by:</span> <span className="text-slate-900 font-medium">{rfp.agency}</span>{rfp.industry ? ` · ${rfp.industry}` : ""}</li>
@@ -928,62 +1019,14 @@ export default function RFPDetailPage() {
             </div>
           )}
 
-          {/* Action buttons */}
+          {/* Generated content */}
+          {(proposalError || planError || proposal || planOfExecution) && (
           <div className="p-6 md:p-8 border-b border-slate-100 space-y-3">
-            <h2 className="text-sm font-bold text-slate-900 mb-4">Generate Proposal &amp; Plan</h2>
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => handleGenerateProposal()}
-                disabled={proposalLoading}
-                className="inline-flex items-center justify-center gap-2 min-w-[240px] px-6 py-3 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {proposalLoading ? (
-                  <>
-                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
-                      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    Generating…
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Generate Proposal
-                  </>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleGeneratePlanOfExecution()}
-                disabled={planLoading}
-                className="inline-flex items-center justify-center gap-2 min-w-[260px] px-6 py-3 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {planLoading ? (
-                  <>
-                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
-                      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    Generating…
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                    </svg>
-                    Generate Plan of Execution
-                  </>
-                )}
-              </button>
-            </div>
             {proposalError && (
-              <p className="mt-3 text-sm text-red-600">{proposalError}</p>
+              <p className="text-sm text-red-600">{proposalError}</p>
             )}
             {planError && (
-              <p className="mt-3 text-sm text-red-600">{planError}</p>
+              <p className="text-sm text-red-600">{planError}</p>
             )}
             {proposal && (
               <div className="mt-6 rounded-xl border-2 border-slate-200 bg-slate-50 overflow-hidden">
@@ -1132,6 +1175,7 @@ export default function RFPDetailPage() {
               </div>
             )}
           </div>
+          )}
 
           {/* Match view: generate button, summary, capabilities, about RFP, details. Generated view: POE content. */}
           {viewMode === "match" && (
@@ -1151,19 +1195,6 @@ export default function RFPDetailPage() {
                 </span>
               ))}
             </div>
-            {(rfp.eventUrl || rfp.id) && (
-              <a
-                href={rfp.eventUrl || "#"}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center gap-2 min-w-[200px] px-5 py-3 rounded-lg text-sm font-semibold bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors shadow-sm"
-              >
-                View on Cal eProcure
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </a>
-            )}
           </div>
             </>
           )}
