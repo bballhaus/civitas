@@ -361,8 +361,18 @@ export async function getGeneratedPoe(rfpId: string): Promise<string | null> {
   return data.plan_of_execution ?? null;
 }
 
+export async function getGeneratedProposal(rfpId: string): Promise<string | null> {
+  const res = await fetch(
+    `${getApiBase()}/user/generated-proposal/?rfp_id=${encodeURIComponent(rfpId)}`,
+    { credentials: "include", headers: { ...authHeaders() } }
+  );
+  if (!res.ok) return null;
+  const data = (await res.json()) as { proposal?: string | null };
+  return data.proposal ?? null;
+}
+
 /**
- * Mark an RFP as applied, remove from applied, mark in progress, and/or save generated POE. Stored in user data in S3.
+ * Mark an RFP as applied, remove from applied, mark in progress, and/or save generated POE/proposal. Stored in user data in S3.
  * Requires auth (Bearer token or session + CSRF).
  */
 export async function updateUserRfpStatus(payload: {
@@ -371,6 +381,7 @@ export async function updateUserRfpStatus(payload: {
   mark_in_progress?: string;
   remove_in_progress?: string;
   save_generated_poe?: { rfp_id: string; content: string };
+  save_generated_proposal?: { rfp_id: string; content: string };
 }): Promise<UserRfpStatusResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
   if (!getAuthToken()) headers["X-CSRFToken"] = await getCsrfToken();

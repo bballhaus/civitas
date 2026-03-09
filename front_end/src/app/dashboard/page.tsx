@@ -26,6 +26,7 @@ import {
   getEmptyCompanyProfile,
   updateUserRfpStatus,
   getGeneratedPoe,
+  getGeneratedProposal,
   listContracts,
 } from "@/lib/api";
 import { getCachedEvents, setCachedEvents, clearCachedEvents } from "@/lib/events-cache";
@@ -1371,6 +1372,9 @@ function RFPDetailPanel({
     getGeneratedPoe(rfp.id).then((saved) => {
       if (saved) setPlanOfExecution(saved);
     });
+    getGeneratedProposal(rfp.id).then((saved) => {
+      if (saved) setProposal(saved);
+    });
   }, [rfp.id]);
 
   const planPayload = () => ({
@@ -1429,8 +1433,12 @@ function RFPDetailPanel({
         throw new Error(errData.error || res.statusText);
       }
       const data = await res.json();
-      setPlanOfExecution(data.plan ?? "");
+      const planContent = data.plan ?? "";
+      setPlanOfExecution(planContent);
       setPlanFeedback("");
+      if (planContent) {
+        updateUserRfpStatus({ save_generated_poe: { rfp_id: rfp.id, content: planContent } }).catch(() => {});
+      }
     } catch (err) {
       setPlanError(err instanceof Error ? err.message : "Failed to generate plan");
     } finally {
@@ -1499,8 +1507,12 @@ function RFPDetailPanel({
         throw new Error(errData.error || res.statusText);
       }
       const data = await res.json();
-      setProposal(data.proposal ?? "");
+      const proposalContent = data.proposal ?? "";
+      setProposal(proposalContent);
       setProposalFeedback("");
+      if (proposalContent) {
+        updateUserRfpStatus({ save_generated_proposal: { rfp_id: rfp.id, content: proposalContent } }).catch(() => {});
+      }
     } catch (err) {
       setProposalError(err instanceof Error ? err.message : "Failed to generate proposal");
     } finally {
@@ -1735,12 +1747,12 @@ function RFPDetailPanel({
               <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} size="lg" />
             </div>
           </div>
-          {/* Action buttons — all in one row */}
-          <div className="flex flex-wrap items-center gap-2 mb-2">
+          {/* Action buttons — translucent bubble */}
+          <div className="flex flex-wrap items-center gap-2 mb-2 bg-white/60 backdrop-blur-sm rounded-xl p-2 border border-slate-200/60 shadow-sm">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSave(); }}
-              className={`text-sm flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-colors ${isSaved ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${isSaved ? "text-blue-700 bg-blue-200/70 hover:bg-blue-200" : "text-blue-600 bg-blue-100/50 hover:bg-blue-100"}`}
             >
               <svg className={`w-4 h-4 ${isSaved ? "fill-current" : ""}`} fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
               {isSaved ? "Saved" : "Save"}
@@ -1748,11 +1760,11 @@ function RFPDetailPanel({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onToggleApplied(); }}
-              className={`text-sm flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-colors ${isApplied ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${isApplied ? "text-green-700 bg-green-200/70 hover:bg-green-200" : "text-green-600 bg-green-100/50 hover:bg-green-100"}`}
             >
               {isApplied ? (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> Applied</>) : (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> I&apos;ve applied</>)}
             </button>
-            <div className="w-px h-5 bg-slate-200 mx-1" />
+            <div className="w-px h-5 bg-slate-300/50 mx-0.5" />
             <button
               type="button"
               onClick={(e) => {
@@ -1760,7 +1772,7 @@ function RFPDetailPanel({
                 setProposalDropdownOpen((open) => !open);
                 if (!proposal && !proposalLoading) handleGenerateProposal();
               }}
-              className={`text-sm flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-colors ${proposalDropdownOpen ? "text-blue-600 bg-blue-50 hover:bg-blue-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${proposal ? "text-violet-700 bg-violet-200/70 hover:bg-violet-200" : "text-violet-600 bg-violet-100/50 hover:bg-violet-100"}`}
             >
               {proposalLoading ? (
                 <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
@@ -1775,7 +1787,7 @@ function RFPDetailPanel({
                 setPoeDropdownOpen((open) => !open);
                 if (!planOfExecution && !planLoading) handleGeneratePlanOfExecution();
               }}
-              className={`text-sm flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-colors ${poeDropdownOpen ? "text-blue-600 bg-blue-50 hover:bg-blue-100" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`}
+              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${planOfExecution ? "text-purple-700 bg-purple-200/70 hover:bg-purple-200" : "text-purple-600 bg-purple-100/50 hover:bg-purple-100"}`}
             >
               {planLoading ? (
                 <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
@@ -1784,7 +1796,7 @@ function RFPDetailPanel({
               )}
             </button>
             {(rfp.eventUrl || rfp.id) && (
-              <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="text-sm flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-colors text-slate-500 hover:text-slate-700 hover:bg-slate-100">
+              <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all text-amber-600 bg-amber-100/50 hover:bg-amber-100">
                 View on Cal eProcure <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
               </a>
             )}
