@@ -3,7 +3,8 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getApiBase, setCachedUser, setAuthToken } from "@/lib/api";
+import { getApiBase, setCachedUser, setAuthToken, clearCachedUser } from "@/lib/api";
+import { clearCachedEvents } from "@/lib/events-cache";
 import { MeshBackground } from "@/components/MeshBackground";
 
 const API_BASE = getApiBase();
@@ -70,6 +71,8 @@ export default function SignupPage() {
       }
 
       if (data?.token) setAuthToken(data.token);
+      clearCachedUser();
+      clearCachedEvents();
       if (data?.user_id != null && data?.username) {
         setCachedUser({ user_id: data.user_id, username: data.username, email: data.email });
       }

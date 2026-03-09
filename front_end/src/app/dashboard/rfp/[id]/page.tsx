@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, startTransition } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -223,12 +223,12 @@ export default function RFPDetailPage() {
         }
         const data = await res.json();
         if (cancelled) return;
-        setSummary(data.summary ?? initialSummary);
+        startTransition(() => setSummary(data.summary ?? initialSummary));
       } catch (err) {
         console.error("[match-summary] Fetch failed:", err);
         if (!cancelled) {
           setSummaryError(true);
-          setSummary(generateMatchSummary(rfp, match));
+          startTransition(() => setSummary(generateMatchSummary(rfp, match)));
         }
       } finally {
         if (!cancelled) setSummaryLoading(false);
@@ -274,12 +274,12 @@ export default function RFPDetailPage() {
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         if (cancelled) return;
-        setRequirementsSummary(data.summary ?? rfp.description);
+        startTransition(() => setRequirementsSummary(data.summary ?? rfp.description));
       } catch (err) {
         console.error("[rfp-requirements-summary] Fetch failed:", err);
         if (!cancelled) {
           setRequirementsSummaryError(true);
-          setRequirementsSummary(null);
+          startTransition(() => setRequirementsSummary(null));
         }
       } finally {
         if (!cancelled) setRequirementsSummaryLoading(false);
@@ -344,12 +344,12 @@ export default function RFPDetailPage() {
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         if (cancelled) return;
-        setCapabilitiesAnalysis(data.analysis ?? null);
+        startTransition(() => setCapabilitiesAnalysis(data.analysis ?? null));
       } catch (err) {
         console.error("[capabilities-analysis] Fetch failed:", err);
         if (!cancelled) {
           setCapabilitiesAnalysisError(true);
-          setCapabilitiesAnalysis(null);
+          startTransition(() => setCapabilitiesAnalysis(null));
         }
       } finally {
         if (!cancelled) setCapabilitiesAnalysisLoading(false);
@@ -756,6 +756,37 @@ export default function RFPDetailPage() {
               <li><span className="text-slate-400 font-medium">Requested by:</span> <span className="text-slate-900 font-medium">{rfp.agency}</span>{rfp.industry ? ` · ${rfp.industry}` : ""}</li>
               <li>Due {rfp.deadline} · {rfp.estimatedValue}</li>
             </ul>
+            {/* Tab switcher — always visible so you can switch while summary loads */}
+            <div className="mt-4 pt-4 border-t border-slate-200 flex items-center justify-between gap-4">
+              <button
+                type="button"
+                onClick={goToMatchView}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  viewMode === "match"
+                    ? "bg-slate-200 text-slate-700 cursor-default"
+                    : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-sm"
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                RFP Match
+              </button>
+              <button
+                type="button"
+                onClick={goToGeneratedView}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  viewMode === "generated"
+                    ? "bg-emerald-100 text-emerald-800 cursor-default"
+                    : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-sm"
+                }`}
+              >
+                Generated POE
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           {/* Disqualifier banner */}
@@ -1210,41 +1241,6 @@ export default function RFPDetailPage() {
               {planError && <p className="mt-3 text-sm text-red-600">{planError}</p>}
             </div>
           )}
-
-          {/* Card navigation: switch between RFP Match and Generated POE */}
-          <div className="p-6 md:p-8 flex items-center justify-between gap-4 border-t border-slate-100 bg-slate-50/50">
-            <button
-              type="button"
-              onClick={goToMatchView}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                viewMode === "match"
-                  ? "bg-slate-200 text-slate-700 cursor-default"
-                  : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-sm"
-              }`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-              RFP Match
-            </button>
-            <span className="text-xs text-slate-400">
-              {viewMode === "match" ? "View generated plan" : "Back to match & analysis"}
-            </span>
-            <button
-              type="button"
-              onClick={goToGeneratedView}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                viewMode === "generated"
-                  ? "bg-emerald-100 text-emerald-800 cursor-default"
-                  : "bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-sm"
-              }`}
-            >
-              Generated POE
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
 
         </article>
       </main>

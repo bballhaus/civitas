@@ -221,7 +221,6 @@ export async function GET() {
       );
     }
     const extractionsMap = extractions ?? {};
-
     const events: ScrapedEvent[] = eventsData.events ?? [];
     const rfps = events.map((e, i) => {
       const extraction = extractionsMap[e.event_id] || null;
@@ -282,7 +281,14 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json({ events: rfps, total: rfps.length });
+    return NextResponse.json(
+      { events: rfps, total: rfps.length },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600",
+        },
+      }
+    );
   } catch (err) {
     console.error("Error loading events:", err);
     return NextResponse.json(
