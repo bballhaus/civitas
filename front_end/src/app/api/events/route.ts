@@ -210,20 +210,20 @@ function inferCapabilities(title: string, description: string): string[] {
 
 export async function GET() {
   try {
-    // Fetch both S3 files in parallel for faster response
-    const [data, extractions] = await Promise.all([
+    const [eventsData, extractions] = await Promise.all([
       fetchS3Json<{ events: ScrapedEvent[] }>("scrapes/caleprocure/all_events.json"),
-      loadAttachmentExtractions(),
+      fetchS3Json<Record<string, AttachmentExtraction>>("scrapes/caleprocure/attachment_extractions.json"),
     ]);
-    if (!data) {
+    if (!eventsData) {
       return NextResponse.json(
         { error: "Could not load events from S3" },
         { status: 500 }
       );
     }
-    const events: ScrapedEvent[] = data.events ?? [];
+    const extractionsMap = extractions ?? {};
+    const events: ScrapedEvent[] = eventsData.events ?? [];
     const rfps = events.map((e, i) => {
-      const extraction = extractions[e.event_id] || null;
+      const extraction = extractionsMap[e.event_id] || null;
 
       // Use attachment-derived data when available, fall back to inferred
       const naicsCodes = extraction?.naics_codes?.length

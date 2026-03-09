@@ -151,7 +151,7 @@ export default function UploadPage() {
       if (isLoggedIn) {
         for (let i = 0; i < files.length; i++) {
           await uploadContractDocument(files[i], files[i].name);
-          setProgress(10 + Math.round((70 * (i + 1)) / files.length));
+          setProgress(50 + Math.round((35 * (i + 1)) / files.length));
         }
 
         setProgress(85);
