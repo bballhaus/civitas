@@ -388,13 +388,14 @@ export async function GET() {
     }
 
     const { events, extractions } = loaded;
+    const extractionsMap = extractions;
     const extractionCount = Object.keys(extractions).length;
     if (extractionCount > 0) {
       console.log(`Loaded ${extractionCount} attachment extractions`);
     }
 
     const rfps = events.map((e, i) => {
-      const extraction = extractions[e.event_id] || null;
+      const extraction = extractionsMap[e.event_id] || null;
 
       // Use attachment-derived data when available, fall back to inferred
       const naicsCodes = extraction?.naics_codes?.length
@@ -458,7 +459,14 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json({ events: rfps, total: rfps.length });
+    return NextResponse.json(
+      { events: rfps, total: rfps.length },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600",
+        },
+      }
+    );
   } catch (err) {
     console.error("Error loading events:", err);
     return NextResponse.json(

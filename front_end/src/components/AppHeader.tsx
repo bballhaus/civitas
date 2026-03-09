@@ -38,27 +38,37 @@ export function AppHeader() {
   const router = useRouter();
   const pathname = usePathname();
 
+  const handleNavClick = (e: React.MouseEvent, href: string) => {
+    e.preventDefault();
+    router.push(href);
+  };
+
   return (
     <nav className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-slate-200 z-10 shadow-sm">
       <div className="max-w-full mx-auto px-8 py-3 flex items-center justify-between">
         {/* Logo */}
-        <Link href="/home" className="flex items-center gap-2.5 shrink-0 group">
+        <a
+          href="/home"
+          onClick={(e) => handleNavClick(e, "/home")}
+          className="flex items-center gap-2.5 shrink-0 group"
+        >
           <img src="/logo.png" alt="Civitas logo" className="h-10 w-10 transition-transform group-hover:scale-105" />
           <span className="text-xl font-extrabold tracking-tight text-slate-900">
             Civitas
           </span>
-        </Link>
+        </a>
 
-        {/* Navigation tabs */}
+        {/* Navigation tabs — use router.push to avoid Link navigation freeze */}
         <div className="flex items-center gap-1">
           {NAV_LINKS.map(({ label, href, icon }) => {
             const isActive =
               pathname === href || pathname.startsWith(href + "/");
             return (
-              <Link
+              <a
                 key={href}
                 href={href}
-                className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition-all duration-150 ${
+                onClick={(e) => handleNavClick(e, href)}
+                className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition-all duration-150 cursor-pointer ${
                   isActive
                     ? "font-bold bg-[#3C89C6]/10 text-[#3C89C6] shadow-sm ring-1 ring-[#3C89C6]/20"
                     : "font-semibold text-slate-500 hover:text-slate-900 hover:bg-slate-50"
@@ -68,7 +78,7 @@ export function AppHeader() {
                   {icon}
                 </span>
                 {label}
-              </Link>
+              </a>
             );
           })}
 

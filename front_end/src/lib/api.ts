@@ -1,4 +1,4 @@
-const PRODUCTION_API = "https://civitas-server.onrender.com/api";
+const PRODUCTION_API = "https://civitas-srv.onrender.com/api";
 const DEV_API = "http://localhost:8000/api";
 
 export function getApiBase(): string {
@@ -251,13 +251,39 @@ export function setCachedUser(user: { user_id: number; username: string; email?:
   }
 }
 
-/** Clear cached user so only backend/AWS is trusted. */
+/** Keys used for RFP saved/expressed/not-interested (per-browser; must clear on login/logout so new account doesn't see previous account's data). */
+export const RFP_STORAGE_KEYS = [
+  "civitas_saved_rfps",
+  "civitas_not_interested_rfps",
+  "civitas_expressed_interest_rfps",
+  "civitas_preload_rfp",
+] as const;
+
+/** Clear localStorage used for saved/expressed/not-interested RFPs and preload. Call on login/signup and from clearCachedUser. */
+export function clearUserSpecificStorage(): void {
+  if (typeof window === "undefined") return;
+  try {
+    for (const key of RFP_STORAGE_KEYS) {
+      localStorage.removeItem(key);
+    }
+    // Clear profile/upload draft data so new account doesn't see previous account's company info
+    localStorage.removeItem("companyProfile");
+    localStorage.removeItem("extractedProfileData");
+    localStorage.removeItem("uploadedFiles");
+    console.log(`${LOG_PREFIX} User-specific storage cleared (saved/expressed RFPs, profile drafts)`);
+  } catch {
+    // ignore
+  }
+}
+
+/** Clear cached user so only backend/AWS is trusted. Also clears RFP and profile-draft storage. */
 export function clearCachedUser(): void {
   if (typeof window === "undefined") return;
   try {
     const had = localStorage.getItem(CACHED_USER_KEY);
     localStorage.removeItem(CACHED_USER_KEY);
     clearProfileCache();
+    clearUserSpecificStorage();
     console.log(`${LOG_PREFIX} Cache cleared: cached user removed${had ? " (had previous user)" : ""} — only backend/AWS trusted`);
   } catch {
     // ignore
@@ -393,7 +419,11 @@ export async function saveProfileToBackend(payload: ProfilePatchPayload): Promis
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || err.error || "Failed to save profile");
+    const msg = err.detail || err.error || "Failed to save profile";
+    if (res.status === 401 && (String(msg).toLowerCase().includes("credential") || String(msg).toLowerCase().includes("authentic"))) {
+      throw new Error("Your session may have expired. Please log out and log back in, then try saving again.");
+    }
+    throw new Error(msg);
   }
   const data = await res.json();
   console.log(`${LOG_PREFIX} Profile saved to backend; user JSON updated in S3`);

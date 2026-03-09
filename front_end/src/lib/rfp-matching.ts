@@ -525,22 +525,33 @@ try {
   // Package not available — domain map only
 }
 
-function getSynonyms(token: string): Set<string> {
-  const domain = SYNONYM_MAP[token];
-  if (domain && domain.size > 0) return domain;
+// Memoize synonym lookups — same token appears across many RFPs, avoids redundant work
+const _synonymCache = new Map<string, Set<string>>();
+const SYNONYM_CACHE_MAX = 500;
 
-  // Fallback to general English synonyms (nouns only, skip generic words)
-  if (_synonymsLib) {
-    const SKIP = new Set(["system", "group", "unit", "part", "point", "line", "set", "body", "field", "plan", "area", "order", "form"]);
-    if (SKIP.has(token)) return new Set();
-    const result = _synonymsLib(token);
-    if (result?.n) {
-      const nouns = result.n.filter((s: string) => s !== token && s.length > 2 && !SKIP.has(s));
-      if (nouns.length > 0) return new Set(nouns.slice(0, 6));
-    }
+function getSynonyms(token: string): Set<string> {
+  const cached = _synonymCache.get(token);
+  if (cached !== undefined) return cached;
+
+  const domain = SYNONYM_MAP[token];
+  if (domain && domain.size > 0) {
+    if (_synonymCache.size < SYNONYM_CACHE_MAX) _synonymCache.set(token, domain);
+    return domain;
   }
 
-  return new Set();
+  let result: Set<string> = new Set();
+  if (_synonymsLib) {
+    const SKIP = new Set(["system", "group", "unit", "part", "point", "line", "set", "body", "field", "plan", "area", "order", "form"]);
+    if (!SKIP.has(token)) {
+      const libResult = _synonymsLib(token);
+      if (libResult?.n) {
+        const nouns = libResult.n.filter((s: string) => s !== token && s.length > 2 && !SKIP.has(s));
+        if (nouns.length > 0) result = new Set(nouns.slice(0, 6));
+      }
+    }
+  }
+  if (_synonymCache.size < SYNONYM_CACHE_MAX) _synonymCache.set(token, result);
+  return result;
 }
 
 // Generic terms that should NOT be expanded via synonyms (too broad, cause false positives)
@@ -550,7 +561,15 @@ const STOP_EXPANSION = new Set([
   "analysis", "planning", "implementation", "service", "project",
 ]);
 
+// Cache expanded token sets — profile tokens are identical across all RFPs
+const _expandCache = new Map<string, Set<string>>();
+const EXPAND_CACHE_MAX = 200;
+
 function expandWithSynonyms(tokens: Set<string>): Set<string> {
+  const key = [...tokens].sort().join("|");
+  const cached = _expandCache.get(key);
+  if (cached !== undefined) return cached;
+
   const expanded = new Set(tokens);
   for (const token of tokens) {
     if (STOP_EXPANSION.has(token)) continue;
@@ -559,6 +578,7 @@ function expandWithSynonyms(tokens: Set<string>): Set<string> {
       expanded.add(syn);
     }
   }
+  if (_expandCache.size < EXPAND_CACHE_MAX) _expandCache.set(key, expanded);
   return expanded;
 }
 

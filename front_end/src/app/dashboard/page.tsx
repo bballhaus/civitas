@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef, useDeferredValue } from "react";
+import React, { useState, useEffect, useCallback, useRef, useDeferredValue, useLayoutEffect } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   CALIFORNIA_CITIES,
   CALIFORNIA_COUNTIES,
@@ -624,6 +625,7 @@ function SortByDropdown({
 }
 
 export default function DashboardPage() {
+  const pathname = usePathname();
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [currentUser, setCurrentUser] = useState<{ user_id: number; username: string } | null>(null);
   const [selectedRfpId, setSelectedRfpId] = useState<string | null>(null);
@@ -798,6 +800,7 @@ export default function DashboardPage() {
   const [expandedFilterSections, setExpandedFilterSections] = useState<Set<keyof RFPFilters>>(new Set());
   const [minScore, setMinScore] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [sortBy, setSortBy] = useState<"score" | "deadline" | "value">("score");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const filtersContainerRef = useRef<HTMLDivElement>(null);
@@ -813,7 +816,24 @@ export default function DashboardPage() {
     });
   };
 
+  const resetBodyScrollLock = useCallback(() => {
+    document.body.style.position = "";
+    document.body.style.top = "";
+    document.body.style.left = "";
+    document.body.style.right = "";
+    document.body.style.width = "";
+    document.body.style.paddingRight = "";
+  }, []);
+
+  // When pathname changes away from dashboard (e.g. user navigated), close filter and reset body
   useEffect(() => {
+    if (pathname && !pathname.startsWith("/dashboard")) {
+      setFilterPanelOpen(false);
+      resetBodyScrollLock();
+    }
+  }, [pathname, resetBodyScrollLock]);
+
+  useLayoutEffect(() => {
     if (filterPanelOpen) {
       scrollLockYRef.current = window.scrollY;
       const scrollBarWidth = window.innerWidth - document.documentElement.clientWidth;
@@ -826,16 +846,16 @@ export default function DashboardPage() {
         document.body.style.paddingRight = `${scrollBarWidth}px`;
       }
       return () => {
-        document.body.style.position = "";
-        document.body.style.top = "";
-        document.body.style.left = "";
-        document.body.style.right = "";
-        document.body.style.width = "";
-        document.body.style.paddingRight = "";
+        resetBodyScrollLock();
         window.scrollTo(0, scrollLockYRef.current);
       };
     }
-  }, [filterPanelOpen]);
+  }, [filterPanelOpen, resetBodyScrollLock]);
+
+  // Ensure body scroll lock is always cleared on unmount
+  useLayoutEffect(() => {
+    return resetBodyScrollLock;
+  }, [resetBodyScrollLock]);
 
   // Instant load when we have full cache (no network); otherwise load user + profile, then events.
   useEffect(() => {
@@ -868,39 +888,22 @@ export default function DashboardPage() {
       });
       return () => { cancelled = true; };
     }
-    getCurrentUser(false)
-      .then((data) => {
+    // Single API call: getCurrentUser(true) returns user + profile + applied ids
+    getCurrentUser(true)
+      .then((full) => {
         if (cancelled) return;
-        if (data) {
-          setCurrentUser({ user_id: data.user_id, username: data.username });
-          setCachedUser(data);
-          const cached = getCachedProfile(data.user_id);
-          if (cached) {
-            setProfile(cached);
-            setProfileLoadDone(true);
-            getCurrentUser(true).then((full) => {
-              if (cancelled || !full) return;
-              setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
-              setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
-            });
-            return;
-          }
-          getCurrentUser(true)
-            .then((full) => {
-              if (cancelled || !full) return;
-              const apiProfile = mapBackendProfileToCompanyProfile(full.profile ?? null);
-              const mapped = apiProfile ?? getEmptyCompanyProfile();
-              setProfile(mapped);
-              setCachedProfile(full.user_id, mapped);
-              setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
-              setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
-              setProfileLoadDone(true);
-            })
-            .catch(() => {
-              if (!cancelled) setProfileLoadDone(true);
-            });
-          return;
-        }
+        if (full) {
+          setCurrentUser({ user_id: full.user_id, username: full.username });
+          setCachedUser(full);
+          const cached = getCachedProfile(full.user_id);
+          const apiProfile = mapBackendProfileToCompanyProfile(full.profile ?? null);
+          const mapped = cached ?? apiProfile ?? getEmptyCompanyProfile();
+          setProfile(mapped);
+          if (apiProfile) setCachedProfile(full.user_id, apiProfile);
+          setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+          setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+          setProfileLoadDone(true);
+        } else {
         setCurrentUser(null);
         const saved = localStorage.getItem("companyProfile");
         const extracted = localStorage.getItem("extractedProfileData");
@@ -919,6 +922,7 @@ export default function DashboardPage() {
           }
         }
         setProfileLoadDone(true);
+        }
       })
       .catch(() => {
         if (cancelled) return;
@@ -938,6 +942,7 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
     async function fetchEvents() {
       const cached = getCachedEvents();
       if (cached && cached.length > 0) {
@@ -948,26 +953,29 @@ export default function DashboardPage() {
       }
       setError(null);
       try {
-        const res = await fetch("/api/events");
+        const res = await fetch("/api/events", { signal: controller.signal });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         const events = data.events ?? [];
         setRfps(events);
         if (events.length > 0) setCachedEvents(events);
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         setError(err instanceof Error ? err.message : "Failed to load events");
-        setRfps(FALLBACK_RFPS);
+        if (!cached?.length) setRfps(FALLBACK_RFPS);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
     fetchEvents();
+    return () => { controller.abort(); };
   }, []);
 
   const allRfpsWithMatch = React.useMemo(() => {
+    const effectiveProfile = profile ?? getEmptyCompanyProfile();
     const list: RFPWithMatch[] = (rfps.length > 0 ? rfps : FALLBACK_RFPS).map((rfp) => ({
       ...rfp,
-      match: computeMatch(rfp, profile),
+      match: computeMatch(rfp, effectiveProfile),
     }));
     return [...list].sort((a, b) => b.match.score - a.match.score);
   }, [rfps, profile]);
@@ -1002,7 +1010,7 @@ export default function DashboardPage() {
       return sortDirection === "desc" ? -cmp : cmp;
     });
     return { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps: displayed };
-  }, [allRfpsWithMatch, notInterestedRfpIds, listFilter, savedRfpIds, filters, searchQuery, minScore, sortBy, sortDirection]);
+  }, [allRfpsWithMatch, notInterestedRfpIds, listFilter, savedRfpIds, filters, deferredSearchQuery, minScore, sortBy, sortDirection]);
 
   const dynamicFilterOptions = React.useMemo(
     () => deriveFilterOptionsFromRfps(rfpsWithMatch),
@@ -1025,8 +1033,8 @@ export default function DashboardPage() {
     }
   }, [displayedRfps, selectedRfpId]);
 
-  // Full-page loading until both profile and events are loaded — keeps match scores stable (no re-sort after load).
-  if (loading || !profileLoadDone) {
+  // Show list as soon as events are ready; profile loads in background (matches update when it arrives).
+  if (loading) {
     return (
       <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
         <MeshBackground />
@@ -1445,13 +1453,14 @@ function RFPDetailPanel({
 
     setLlmSummary(null);
     setSummaryError(false);
-    let cancelled = false;
+    const controller = new AbortController();
 
     async function fetchSummary() {
       try {
         const res = await fetch("/api/match-summary", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             rfp: {
               title: rfp.title,
@@ -1488,31 +1497,30 @@ function RFPDetailPanel({
             tier: match.tier,
           }),
         });
-        if (cancelled) return;
         if (!res.ok) {
           const errText = await res.text();
           console.error("[match-summary] API error:", res.status, errText);
           throw new Error(errText);
         }
         const data = await res.json();
-        if (cancelled) return;
         const summary = data.summary ?? initialSummary;
         setLlmSummary(summary);
         onSummaryReady(rfp.id, summary);
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("[match-summary] Fetch failed:", err);
-        if (!cancelled) setSummaryError(true);
+        if (!controller.signal.aborted) setSummaryError(true);
       }
     }
 
     fetchSummary();
-    return () => { cancelled = true; };
+    return () => { controller.abort(); };
   }, [rfp.id, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.capabilities, rfp.certifications, rfp.contractType, rfp.description, profile, initialSummary, cachedSummary, onSummaryReady]);
 
   useEffect(() => {
     if (!rfp.description?.trim()) return;
 
-    let cancelled = false;
+    const controller = new AbortController();
     setRequirementsSummaryLoading(true);
     setRequirementsSummaryError(false);
 
@@ -1521,6 +1529,7 @@ function RFPDetailPanel({
         const res = await fetch("/api/rfp-requirements-summary", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             rfp: {
               title: rfp.title,
@@ -1537,29 +1546,28 @@ function RFPDetailPanel({
             },
           }),
         });
-        if (cancelled) return;
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        if (cancelled) return;
         setRequirementsSummary(data.summary ?? rfp.description);
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("[rfp-requirements-summary] Fetch failed:", err);
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setRequirementsSummaryError(true);
           setRequirementsSummary(null);
         }
       } finally {
-        if (!cancelled) setRequirementsSummaryLoading(false);
+        if (!controller.signal.aborted) setRequirementsSummaryLoading(false);
       }
     }
 
     fetchRequirementsSummary();
-    return () => { cancelled = true; };
+    return () => { controller.abort(); };
   }, [rfp.id, rfp.description, rfp.title, rfp.agency, rfp.industry, rfp.location, rfp.deadline, rfp.contractType, rfp.capabilities, rfp.certifications, rfp.estimatedValue]);
 
   // Fetch capabilities analysis (compares RFP requirements against company profile)
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setCapabilitiesAnalysisLoading(true);
     setCapabilitiesAnalysisError(false);
 
@@ -1568,6 +1576,7 @@ function RFPDetailPanel({
         const res = await fetch("/api/capabilities-analysis", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             rfp: {
               title: rfp.title,
@@ -1601,24 +1610,23 @@ function RFPDetailPanel({
             breakdown: match.breakdown,
           }),
         });
-        if (cancelled) return;
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        if (cancelled) return;
         setCapabilitiesAnalysis(data.analysis ?? null);
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("[capabilities-analysis] Fetch failed:", err);
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setCapabilitiesAnalysisError(true);
           setCapabilitiesAnalysis(null);
         }
       } finally {
-        if (!cancelled) setCapabilitiesAnalysisLoading(false);
+        if (!controller.signal.aborted) setCapabilitiesAnalysisLoading(false);
       }
     }
 
     fetchCapabilitiesAnalysis();
-    return () => { cancelled = true; };
+    return () => { controller.abort(); };
   }, [rfp.id, profile]);
 
   const summary = llmSummary ?? initialSummary;

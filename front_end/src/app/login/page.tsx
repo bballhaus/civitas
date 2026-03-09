@@ -3,7 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getApiBase, setCachedUser, setAuthToken } from "@/lib/api";
+import { getApiBase, setCachedUser, setAuthToken, clearCachedUser } from "@/lib/api";
+import { clearCachedEvents } from "@/lib/events-cache";
 import { MeshBackground } from "@/components/MeshBackground";
 
 const API_BASE = getApiBase();
@@ -64,6 +65,8 @@ export default function LoginPage() {
       }
 
       if (data?.token) setAuthToken(data.token);
+      clearCachedUser();
+      clearCachedEvents();
       setCachedUser({
         user_id: typeof data?.user_id === "number" ? data.user_id : 0,
         username: typeof data?.username === "string" ? data.username : username,

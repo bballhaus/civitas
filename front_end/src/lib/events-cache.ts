@@ -1,70 +1,45 @@
 /**
- * Events cache with in-memory hot cache + sessionStorage persistence.
- * TTL: 5 minutes. Prevents redundant /api/events calls across page navigations.
+ * In-memory + localStorage cache for /api/events so dashboard loads instantly on refresh.
+ * Persists across page reloads with 30-min TTL.
  */
 
 import type { RFP } from "@/lib/rfp-matching";
 
-const CACHE_KEY = "civitas_events_cache";
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const STORAGE_KEY = "civitas_events_cache";
+const TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-interface CacheEntry {
-  events: RFP[];
-  timestamp: number;
-}
-
-// In-memory hot cache (fastest, lost on page reload)
-let memCache: CacheEntry | null = null;
-
-function isValid(entry: CacheEntry | null): entry is CacheEntry {
-  if (!entry) return false;
-  return Date.now() - entry.timestamp < CACHE_TTL;
-}
+let cached: RFP[] | null = null;
 
 export function getCachedEvents(): RFP[] | null {
-  // Try in-memory first
-  if (isValid(memCache)) return memCache!.events;
-
-  // Try sessionStorage
-  if (typeof window !== "undefined") {
-    try {
-      const raw = sessionStorage.getItem(CACHE_KEY);
-      if (raw) {
-        const entry: CacheEntry = JSON.parse(raw);
-        if (isValid(entry)) {
-          memCache = entry; // promote to hot cache
-          return entry.events;
-        }
-        sessionStorage.removeItem(CACHE_KEY);
-      }
-    } catch {
-      // Ignore parse errors
+  if (cached && cached.length > 0) return cached;
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const { data, timestamp } = JSON.parse(raw) as { data: RFP[]; timestamp: number };
+    if (!Array.isArray(data) || data.length === 0) return null;
+    if (Date.now() - timestamp > TTL_MS) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
     }
+    cached = data;
+    return data;
+  } catch {
+    return null;
   }
-
-  return null;
 }
 
 export function setCachedEvents(events: RFP[]): void {
-  const entry: CacheEntry = { events, timestamp: Date.now() };
-  memCache = entry;
-
-  if (typeof window !== "undefined") {
-    try {
-      sessionStorage.setItem(CACHE_KEY, JSON.stringify(entry));
-    } catch {
-      // sessionStorage full or unavailable — in-memory still works
-    }
+  cached = events;
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ data: events, timestamp: Date.now() }));
+  } catch {
+    // localStorage full or disabled
   }
 }
 
 export function clearCachedEvents(): void {
-  memCache = null;
-  if (typeof window !== "undefined") {
-    try {
-      sessionStorage.removeItem(CACHE_KEY);
-    } catch {
-      // Ignore
-    }
-  }
+  cached = null;
+  if (typeof window !== "undefined") localStorage.removeItem(STORAGE_KEY);
 }
