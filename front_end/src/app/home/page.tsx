@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
 import { getCurrentUser, getCachedUser, getCachedProfile } from "@/lib/api";
-import { setCachedEvents } from "@/lib/events-cache";
+import { getCachedEvents, setCachedEvents } from "@/lib/events-cache";
 import type { RFP } from "@/lib/rfp-matching";
 
 const STORAGE_KEYS = {
@@ -130,6 +130,7 @@ export default function HomePage() {
   const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
+  const [userStatusReady, setUserStatusReady] = useState(false);
 
   useEffect(() => {
     setSavedIds(loadSet(STORAGE_KEYS.SAVED));
@@ -138,6 +139,58 @@ export default function HomePage() {
 
   useEffect(() => {
     let cancelled = false;
+    const cachedUser = getCachedUser();
+    const cachedEvents = getCachedEvents();
+    const hasEvents = cachedEvents && cachedEvents.length > 0;
+    if (cachedUser && hasEvents) {
+      const cachedProfile = getCachedProfile(cachedUser.user_id);
+      const companyName = cachedProfile?.companyName?.trim();
+      setDisplayName(companyName || cachedUser.username || "there");
+      setRfps(cachedEvents);
+      setAuthChecked(true);
+      setLoading(false);
+      getCurrentUser(true)
+        .then((data) => {
+          if (cancelled) return;
+          if (!data) {
+            router.replace("/login");
+            return;
+          }
+          setAppliedRfpIds(new Set(data.applied_rfp_ids ?? []));
+          setInProgressRfpIds(new Set(data.in_progress_rfp_ids ?? []));
+        })
+        .finally(() => {
+          if (!cancelled) setUserStatusReady(true);
+        });
+      fetch("/api/events")
+        .then((res) => (res.ok ? res.json() : { events: [] }))
+        .then((data) => {
+          const events = data.events ?? [];
+          if (!cancelled && events.length > 0) {
+            setRfps(events);
+            setCachedEvents(events);
+          }
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }
+    fetch("/api/events")
+      .then((res) => (res.ok ? res.json() : { events: [] }))
+      .then((data) => {
+        const events = data.events ?? [];
+        if (!cancelled) {
+          setRfps(events);
+          if (events.length > 0) setCachedEvents(events);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setRfps([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     getCurrentUser(true)
       .then((data) => {
         if (cancelled) return;
@@ -149,29 +202,18 @@ export default function HomePage() {
           setInProgressRfpIds(new Set(data.in_progress_rfp_ids ?? []));
         } else {
           router.replace("/login");
-          return;
         }
       })
       .finally(() => {
-        if (!cancelled) setAuthChecked(true);
+        if (!cancelled) {
+          setAuthChecked(true);
+          setUserStatusReady(true);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [router]);
-
-  useEffect(() => {
-    if (!authChecked) return;
-    fetch("/api/events")
-      .then((res) => (res.ok ? res.json() : { events: [] }))
-      .then((data) => {
-        const events = data.events ?? [];
-        setRfps(events);
-        if (events.length > 0) setCachedEvents(events);
-      })
-      .catch(() => setRfps([]))
-      .finally(() => setLoading(false));
-  }, [authChecked]);
 
   const savedRfps = rfps.filter((r) => savedIds.has(r.id));
   const appliedRfps = rfps.filter((r) => appliedRfpIds.has(r.id));
@@ -195,14 +237,14 @@ export default function HomePage() {
     return d && d >= now && d <= in30Days;
   }).length;
 
-  if (!authChecked) {
+  if (!authChecked || loading || !userStatusReady) {
     return (
       <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
         <MeshBackground />
         <AppHeader />
         <div className="relative flex flex-col items-center justify-center min-h-[calc(100vh-65px)] gap-4">
-          <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#3C89C6]" />
-          <p className="text-slate-600 font-medium">Loading home page&hellip;</p>
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#2563eb]" />
+          <p className="text-slate-600 font-medium">Loading…</p>
         </div>
       </div>
     );
