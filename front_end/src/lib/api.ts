@@ -1,4 +1,4 @@
-const PRODUCTION_API = "https://civitas-server.onrender.com/api";
+const PRODUCTION_API = "https://civitas-srv.onrender.com/api";
 const DEV_API = "http://localhost:8000/api";
 
 export function getApiBase(): string {

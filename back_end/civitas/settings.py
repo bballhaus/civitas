@@ -58,7 +58,7 @@ SECRET_KEY = 'django-insecure-139+z+r8*4bphs#o(%k%gvw7eki@(nq^y@)1k4)n7r3u#ni@iw
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'civitas-server.onrender.com', 'civitas-srv.onrender.com']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'civitas-srv.onrender.com']
 
 # Required when frontend calls Django from another origin; otherwise POST gets 403 (CSRF).
 # Must include every origin that hosts the frontend (local + production).
