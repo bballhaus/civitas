@@ -1031,10 +1031,13 @@ export default function DashboardPage() {
   const rightRfpNotOnScreen =
     selectedRfpId != null && deferredSelectedRfp?.id !== selectedRfpId;
 
-  // Only clear selection when the list is non-empty and the selected RFP isn't in it.
-  // When the list is empty (e.g. 0 applied), keep selection so loading can show until data arrives.
+  // When the list is empty (e.g. filter by Saved but 0 saved), clear selection so we show empty state instead of loading forever.
+  // When the list is non-empty but selected RFP isn't in it, select the first displayed RFP.
   useEffect(() => {
-    if (displayedRfps.length === 0) return;
+    if (displayedRfps.length === 0) {
+      setSelectedRfpId(null);
+      return;
+    }
     if (selectedRfpId && !displayedRfps.some((r) => r.id === selectedRfpId)) {
       setSelectedRfpId(displayedRfps[0]?.id ?? null);
     }
