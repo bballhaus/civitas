@@ -1268,7 +1268,7 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
   // This ensures RFPs missing NAICS/certs/caps don't get penalized.
 
   const normalizedScore = maxAchievablePoints > 0
-    ? clamp(Math.round((earnedPoints / maxAchievablePoints) * 100), 0, 100)
+    ? clamp(Math.round(((earnedPoints / maxAchievablePoints) * 100) * 100) / 100, 0, 100)
     : 50; // No data at all → neutral 50
 
   const tier: RFPMatch["tier"] =

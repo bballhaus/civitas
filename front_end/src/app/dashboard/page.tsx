@@ -379,7 +379,7 @@ function MatchBadge({ score, tier, disqualified, size = "sm" }: { score: number;
   return (
     <span className={`inline-flex items-center ${pillClass} ${styles[t]}`}>
       {t === "excellent" && <span className="mr-1">★</span>}
-      {score}% · {labels[t]}
+      {Math.round(score)}% · {labels[t]}
     </span>
   );
 }
@@ -970,7 +970,14 @@ export default function DashboardPage() {
       ...rfp,
       match: computeMatch(rfp, effectiveProfile),
     }));
-    return [...list].sort((a, b) => b.match.score - a.match.score);
+    return [...list].sort((a, b) => {
+      const scoreDiff = b.match.score - a.match.score;
+      if (scoreDiff !== 0) return scoreDiff;
+      // Tie-break: soonest deadline first (more actionable)
+      const dueA = parseDeadline(a.deadline)?.getTime() ?? Infinity;
+      const dueB = parseDeadline(b.deadline)?.getTime() ?? Infinity;
+      return dueA - dueB;
+    });
   }, [rfps, profile]);
 
   const { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps, savedCount, appliedCount, inProgressCount } = React.useMemo(() => {
@@ -1008,7 +1015,12 @@ export default function DashboardPage() {
         const valB = getContractValueNumeric(b.estimatedValue);
         cmp = valA - valB;
       }
-      return sortDirection === "desc" ? -cmp : cmp;
+      const primary = sortDirection === "desc" ? -cmp : cmp;
+      if (primary !== 0) return primary;
+      // Tie-break: soonest deadline first
+      const dueA = parseDeadline(a.deadline)?.getTime() ?? Infinity;
+      const dueB = parseDeadline(b.deadline)?.getTime() ?? Infinity;
+      return dueA - dueB;
     });
     if (preloadRfpId) {
       const idx = displayed.findIndex((r) => r.id === preloadRfpId);
