@@ -872,6 +872,12 @@ export default function DashboardPage() {
         if (cancelled || !full) return;
         setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
         setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+        // Refresh profile from API so sizeStatus and other fields stay current
+        const apiProfile = mapBackendProfileToCompanyProfile(full.profile ?? null);
+        if (apiProfile) {
+          setProfile(apiProfile);
+          setCachedProfile(full.user_id, apiProfile);
+        }
       });
       return () => { cancelled = true; };
     }
@@ -882,9 +888,9 @@ export default function DashboardPage() {
         if (full) {
           setCurrentUser({ user_id: full.user_id, username: full.username });
           setCachedUser(full);
-          const cached = getCachedProfile(full.user_id);
           const apiProfile = mapBackendProfileToCompanyProfile(full.profile ?? null);
-          const mapped = cached ?? apiProfile ?? getEmptyCompanyProfile();
+          const cached = getCachedProfile(full.user_id);
+          const mapped = apiProfile ?? cached ?? getEmptyCompanyProfile();
           setProfile(mapped);
           if (apiProfile) setCachedProfile(full.user_id, apiProfile);
           setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));

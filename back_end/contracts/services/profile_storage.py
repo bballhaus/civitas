@@ -58,6 +58,7 @@ def _default_profile_dict(user_id):
         "work_counties": [],
         "capabilities": [],
         "agency_experience": [],
+        "size_status": [],
         "created_at": now,
         "updated_at": now,
         "uploaded_documents": [],
@@ -84,6 +85,7 @@ def _json_to_profile(raw, user_id):
         "work_counties": list(raw.get("work_counties") or []),
         "capabilities": list(raw.get("capabilities") or []),
         "agency_experience": list(raw.get("agency_experience") or []),
+        "size_status": list(raw.get("size_status") or []),
         "created_at": raw.get("created_at") or "",
         "updated_at": raw.get("updated_at") or "",
         "uploaded_documents": list(raw.get("uploaded_documents") or []),
@@ -207,6 +209,7 @@ def refresh_profile_from_contracts(user):
     agencies = set()
     technology_stack = set()
     contract_types = set()
+    size_statuses = set()
     contractor_names = set()
     total_val = Decimal("0")
 
@@ -215,6 +218,14 @@ def refresh_profile_from_contracts(user):
         if isinstance(obj, dict):
             return obj.get(key, default)
         return getattr(obj, key, default)
+
+    # Keywords that indicate size/status designations (not certifications)
+    _SIZE_STATUS_KEYWORDS = (
+        'small business', 'large business', 'sdb', 'wosb', 'edwosb',
+        'hubzone', '8(a)', '8a', 'sdvosb', 'vosb', 'dbe', 'mbe', 'wbe',
+        'minority-owned', 'woman-owned', 'women-owned', 'veteran-owned',
+        'service-disabled', 'disadvantaged business', 'sba ', 'small disadvantaged',
+    )
 
     for c in contract_list:
         rc = _get(c, "required_certifications") or []
@@ -234,7 +245,14 @@ def refresh_profile_from_contracts(user):
 
         if cn and str(cn).strip():
             contractor_names.add(str(cn).strip())
-        certs.update(rc or [])
+        # Reclassify size/status designations that may appear in certifications
+        for cert_item in (rc or []):
+            if cert_item and str(cert_item).strip():
+                cert_lower = str(cert_item).lower().strip()
+                if any(kw in cert_lower for kw in _SIZE_STATUS_KEYWORDS):
+                    size_statuses.add(str(cert_item).strip())
+                else:
+                    certs.add(str(cert_item).strip())
         clearances_set.update(rcl or [])
         naics.update(naics_list or [])
         tags.update(it or [])
@@ -258,6 +276,14 @@ def refresh_profile_from_contracts(user):
         # Aggregate contract types
         if ct and str(ct).strip():
             contract_types.add(str(ct).strip())
+        # Aggregate size/status designations
+        ss = _get(c, "size_status") or []
+        if isinstance(ss, list):
+            for s in ss:
+                if s and str(s).strip():
+                    size_statuses.add(str(s).strip())
+        elif ss and str(ss).strip():
+            size_statuses.add(str(ss).strip())
         try:
             total_val += Decimal(str(val or "0").replace(",", "").replace("$", ""))
         except Exception:
@@ -290,6 +316,7 @@ def refresh_profile_from_contracts(user):
             "work_counties": list(counties),
             "capabilities": list(capabilities_set),
             "agency_experience": list(agencies),
+            "size_status": list(size_statuses),
             "contract_count": len(contract_list),
             "total_contract_value": str(total_val),
             "updated_at": now,
