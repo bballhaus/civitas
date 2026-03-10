@@ -6,6 +6,12 @@ The matching algorithm is the core intelligence of Civitas. It scores every RFP 
 **Execution:** Runs entirely client-side in the browser
 **Output:** Score (0-100), tier classification, per-category breakdown, and human-readable explanations
 
+> **Note on LLM usage:** The matching algorithm itself does **not** use LLMs. All scoring is done with deterministic methods (regex, Jaccard similarity, synonym lookup, canonicalization). LLMs are used in two *separate* parts of the system:
+> - **Profile capabilities** are extracted from uploaded contracts via Groq LLM at upload time, before matching ever runs.
+> - **RFP capabilities** are inferred using ~90 regex patterns against the RFP title and description (`inferCapabilities()` in `/api/events/route.ts`). LLM-extracted capabilities from attachments are explicitly **not** used as the primary source because extraction quality was too inconsistent (e.g., tagging towing RFPs as "Cloud Services").
+>
+> There is also a separate `/api/capabilities-analysis` endpoint that uses Groq to generate a natural-language summary of how a user's capabilities compare to an RFP — but this is for display on the RFP detail page, not part of the scoring pipeline.
+
 ---
 
 ## Pipeline Overview
