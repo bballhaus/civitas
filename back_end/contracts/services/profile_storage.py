@@ -165,6 +165,8 @@ def get_or_create_profile(user_id):
     """
     Load profile from S3; if missing, create default and save, then return it.
     Returns profile dict.
+    Ensures applied_rfp_ids and in_progress_rfp_ids are initialised as empty
+    lists so new signups never inherit stale data.
     """
     try:
         logger.info("get_or_create_profile: loading from S3 (user_id=%s)", user_id)
@@ -173,7 +175,18 @@ def get_or_create_profile(user_id):
             return profile
         logger.info("Creating new profile in S3 for user_id=%s", user_id)
         default = _default_profile_dict(user_id)
-        save_profile(default)
+        # Save profile and explicitly initialise RFP status fields so new
+        # users never see stale in-progress or applied RFPs.
+        username = _username_for_user_id(user_id)
+        if username:
+            data = get_user_data(username) or {}
+            data["profile"] = _profile_to_json(default)
+            data.setdefault("applied_rfp_ids", [])
+            data.setdefault("in_progress_rfp_ids", [])
+            save_user_data(username, data)
+            logger.info("Profile + empty RFP status saved to S3 for user_id=%s", user_id)
+        else:
+            save_profile(default)
         return _json_to_profile(_profile_to_json(default), user_id)
     except Exception as e:
         logger.warning("get_or_create_profile failed for user_id=%s: %s", user_id, e)
