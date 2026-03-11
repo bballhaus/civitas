@@ -49,10 +49,7 @@ RFP + Profile
 
 Before scoring, the algorithm checks for deal-breakers. If any check fails, the RFP is immediately marked as **Disqualified** with a score of 0.
 
-### Required Certifications
-If the RFP lists required certifications, the profile must hold **all** of them. Both sides are canonicalized first (see Canonicalization section below), so "ISO 9001", "ISO-9001", and "iso9001:2015" are all treated as equivalent.
-
-If the RFP has no certification requirements, this check is skipped.
+> **Note:** Certifications are **not** a hard disqualifier. They are scored as a weighted category in Stage 3 (0-10 points with partial credit). Only clearances and set-aside types can disqualify an RFP.
 
 ### Required Clearances
 Security clearances follow a hierarchy:
@@ -153,6 +150,8 @@ Compares certifications the RFP requires against those the profile holds.
 **Method:** Canonical matching (see Canonicalization section)
 - Points = (matched certifications / total required) * 10
 - All variants of a certification are treated as equivalent
+- If the LLM extraction didn't capture certifications, a text-based fallback detects contractor licenses (Class A/B/C/C-XX), DIR registration, and professional engineer licenses from the RFP description and attachment text
+- If no certifications are found, this category is marked "neutral" and excluded from the score denominator
 
 #### 5. Clearances Match (10 points)
 
@@ -241,7 +240,7 @@ A major challenge in matching is that the same concept can be expressed many dif
 
 ### Certification Canonicalization
 
-~80 variants mapped to canonical forms:
+~120 variants mapped to canonical forms, including all common California contractor license classes (A, B, C, C-4 through C-61):
 
 | Variants | Canonical |
 |---|---|
@@ -250,6 +249,9 @@ A major challenge in matching is that the same concept can be expressed many dif
 | "dvbe", "disabled veteran business enterprise", "DVBE" | `dvbe` |
 | "fedramp", "fed-ramp", "fed ramp", "FedRAMP" | `fedramp` |
 | "cmmi", "cmmi level 3", "CMMI-DEV" | `cmmi` |
+| "contractor's license class a", "class a license", "general engineering contractor" | `contractor_a` |
+| "contractor's license class b", "class b license", "general building contractor" | `contractor_b` |
+| "contractor's license class c-12", "contractor's license class c-36", etc. | `contractor_c12`, `contractor_c36`, etc. |
 
 ### Set-Aside Canonicalization
 
@@ -309,7 +311,7 @@ Each scoring category includes `matchedTokens`, `rfpTokens`, and `profileTokens`
 
 ## Performance Characteristics
 
-- **Scoring ~1,000 RFPs**: Runs in under 1 second on modern hardware
+- **Scoring ~500 RFPs**: Runs in under 1 second on modern hardware
 - **Synonym cache**: 500-entry LRU cache for expanded token lookups
 - **Token expansion cache**: 200-entry cache for repeated term expansion
 - **No network calls**: All scoring is client-side; no API latency

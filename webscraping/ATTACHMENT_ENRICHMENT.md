@@ -1,93 +1,103 @@
-## Attachment enrichment for RFP matching
+## Attachment Enrichment for RFP Matching
 
-This document explains how to enrich existing scraped events with attachment-based summaries and constraints, without re-running the webscraper.
+This document explains how to enrich scraped RFP events with structured metadata extracted from PDF attachments stored in S3.
 
-The goal is to populate the `attachmentRollup` field for each event in `all_events_detailed.json`. The frontend and APIs are already wired to use this field to:
+The extraction script reads PDFs from S3, extracts text with pdfplumber, sends it to Groq LLM for structured extraction, and uploads results back to S3. The frontend `/api/events` route automatically merges extraction data with base events.
 
-- Improve match scores using attachment-derived requirements (certifications, clearances, set-asides, geography, etc.).
-- Improve explainability in:
-  - "Why this is a good match"
-  - "About this RFP"
+### What gets extracted
+
+For each event's PDF attachments, the script produces:
+- NAICS codes
+- Certifications required (e.g., contractor licenses, DIR registration)
+- Clearances required (e.g., Live Scan, background check)
+- Set-aside types (e.g., Small Business, DVBE)
+- Capabilities required
+- Contract value estimate and duration
+- Location details
+- Deliverables and evaluation criteria
+- Key requirements summary
+- Raw text rollup (for downstream LLM features like Capabilities Analysis)
 
 ---
 
-## One-time (or occasional) enrichment run
+## Running the extraction
 
 ### Prerequisites
 
-- You have already run the webscraper and have:
-  - `webscraping/all_events_detailed.json`
-  - Attachments downloaded under `webscraping/downloads/` (one subfolder per event, based on a cleaned `event_id`).
-- You have a Groq API key available as `GROQ_API_KEY`.
+- AWS credentials with access to the `civitas-uploads` S3 bucket
+- A Groq API key (paid tier recommended to avoid rate limits)
+- Python 3.10+ with dependencies: `boto3`, `pdfplumber`, `groq`, `python-dotenv`, `tqdm`
 
-### Steps
-
-From the repo root:
-
-```bash
-cd win26-Team9/win26-Team9/front_end
-
-# Run the enrichment script
-GROQ_API_KEY=your_key_here node scripts/enrich-events-with-attachments.cjs
+These should be set in `back_end/.env`:
+```
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_STORAGE_BUCKET_NAME=civitas-uploads
+GROQ_API_KEY=...
 ```
 
-What this does:
-
-- Reads `../webscraping/all_events_detailed.json`.
-- For each event:
-  - Looks for attachments under `../webscraping/downloads/<safeEventId>/`.
-  - Reads any `.txt` / `.md` files as text (you can extend this to PDFs/DOCX inside the script).
-  - Calls Groq once per event to produce an `attachmentRollup` JSON object with:
-    - `aboutRfpSummary`
-    - `keyRequirementsBullets`
-    - `combinedConstraints` (required certifications, clearances, NAICS, small-business / set-aside, geography, etc.)
-    - `keywordHints`
-  - Writes that rollup back on the event as `attachmentRollup`.
-- Writes the result to:
-  - `../webscraping/all_events_detailed_enriched.json`
-
-### Making the app use the enriched data
-
-Once you're satisfied with the enriched output:
+### Commands
 
 ```bash
-cd win26-Team9/win26-Team9/webscraping
-mv all_events_detailed.json all_events_detailed.original.json
-mv all_events_detailed_enriched.json all_events_detailed.json
+# Process all events (skips already-extracted ones)
+python webscraping/extract_attachments.py
+
+# Process a single event
+python webscraping/extract_attachments.py --event 3600/0000037663
+
+# Dry run — list events and their PDFs without processing
+python webscraping/extract_attachments.py --dry-run
+
+# Force re-process everything (ignores existing extractions)
+python webscraping/extract_attachments.py --force
 ```
 
-The `GET /api/events` route already reads `all_events_detailed.json` and passes through `attachmentRollup`, so no further code changes are required.
+### How it works
+
+1. **Resume support**: Downloads existing extractions from S3 first (authoritative source), merges with any local file, and skips already-processed events
+2. **PDF priority filtering**: Classifies attachments by filename into high priority (Specification, Bid, SOW, RFP), medium (Addendum, Agreement, Attachment), and skip (Drawing, Job Walk, Photo). High-priority PDFs are processed first.
+3. **Text extraction**: Uses pdfplumber to extract text from each qualifying PDF (truncated to 15,000 chars)
+4. **LLM extraction**: Sends text to Groq (llama-3.1-8b-instant) with a structured prompt requesting JSON output
+5. **Multi-PDF merge**: If an event has multiple qualifying PDFs, extractions are merged (lists are unioned, scalars take first non-null value)
+6. **Rate limit handling**: Automatically retries on 429 errors with exponential backoff, parsing wait times from Groq error messages
+7. **Incremental save**: Saves to local file after each event and uploads final results to S3
+
+### S3 data layout
+
+```
+civitas-uploads/
+├── scrapes/caleprocure/
+│   ├── all_events.json                  # Base event metadata (509 events)
+│   ├── attachment_extractions.json      # Structured extractions (415 events)
+│   └── attachments/
+│       ├── 0890_0000038160/             # PDFs organized by event ID
+│       │   ├── Bid_Specification.pdf
+│       │   └── Addendum_1.pdf
+│       └── 3790_0000037817/
+│           └── SOW_Document.pdf
+```
 
 ---
 
-## Optional: better attachment text extraction
+## Frontend integration
 
-The enrichment script currently reads `.txt` / `.md` attachments as-is. To get better summaries from PDFs or DOCX files:
+The frontend `/api/events` route (`front_end/src/app/api/events/route.ts`) automatically merges extraction data with base events:
 
-1. Open `front_end/scripts/enrich-events-with-attachments.cjs`.
-2. Update the `extractTextFromFile(filePath)` function to:
-   - Detect extensions like `.pdf`, `.docx`, etc.
-   - Use your preferred extraction tool or library to return plain text.
-3. Re-run the enrichment script to regenerate `all_events_detailed_enriched.json`.
+- **NAICS codes**: Directly from `extraction.naics_codes`
+- **Certifications**: From `extraction.certifications_required`, with a text-based regex fallback that detects contractor licenses (Class A/B/C/C-XX), DIR registration, and PE licenses from description and attachment text when the structured extraction missed them
+- **Capabilities**: Inferred via regex from title/description (LLM-extracted capabilities are not used as primary source due to quality issues)
+- **Other fields**: Clearances, set-asides, deliverables, evaluation criteria, contract duration, and location details are passed through directly
+
+No frontend code changes are needed when new extractions are uploaded to S3.
 
 ---
 
-## Automating after each webscrape (optional)
+## After a new scrape
 
-You do **not** need to modify the webscraping code itself to automate this. Instead, you can:
-
-- Add a small wrapper script or CI step that runs **after** the scraper finishes:
+After running the webscraper (`cal_eprocure_store.py`), run the extraction to process any new events:
 
 ```bash
-# Example wrapper (pseudo-code)
-python webscraping/cal_eprocure.py             # existing scraper
-cd win26-Team9/win26-Team9/front_end
-GROQ_API_KEY=your_key_here node scripts/enrich-events-with-attachments.cjs
-cd ../webscraping
-mv all_events_detailed_enriched.json all_events_detailed.json
+python webscraping/extract_attachments.py
 ```
 
-- Or in a GitHub Action / CI pipeline, have one job step that runs the scraper and a following step that runs the enrichment script and swaps the JSON.
-
-This keeps the enrichment logic decoupled from the scraper while ensuring that every fresh scrape is immediately augmented with attachment-based summaries.
-
+The script will automatically detect which events already have extractions and only process new ones. Results are uploaded to S3 and picked up by the frontend's cached S3 reads (5-minute TTL).

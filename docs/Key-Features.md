@@ -7,7 +7,7 @@ This page describes Civitas's major features and how they work end-to-end, from 
 ## 1. RFP Discovery & Search
 
 ### What It Does
-Users browse a catalog of 1,000+ California government RFPs scraped from the Cal eProcurement portal. Each RFP is automatically scored against the user's company profile and ranked by relevance.
+Users browse a catalog of 500+ California government RFPs scraped from the Cal eProcurement portal. Each RFP is automatically scored against the user's company profile and ranked by relevance.
 
 ### How It Works
 
@@ -205,16 +205,19 @@ Automatically collects California government RFPs from the Cal eProcurement port
 - Uploads everything to S3
 
 **Stage 2: Attachment Enrichment** (`webscraping/extract_attachments.py`)
-- Reads downloaded PDF attachments
+- Downloads PDF attachments from S3
 - Extracts text via pdfplumber
 - Sends to Groq LLM to extract structured requirements:
   - NAICS codes, certifications, clearances
   - Contract value, duration, location details
   - Deliverables, evaluation criteria, key requirements
-- Saves extraction results to `attachment_extractions.json`
+- Includes rate limit retry with exponential backoff for Groq API
+- Supports resume via S3 download-first logic (downloads existing extractions from S3, merges with local, skips already-processed events)
+- Saves extraction results to S3 as `attachment_extractions.json`
 
 **Stage 3: Serving**
 - The frontend `/api/events` route merges base events with attachment extractions
+- Text-based certification detection provides a fallback when the structured extraction misses contractor licenses (Class A/B/C/C-XX), DIR registration, and other professional certifications
 - No frontend code changes needed when new data is scraped
 
 The pipeline can be run independently of the main application, and new data is automatically picked up by the frontend's cached S3 reads.
