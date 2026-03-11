@@ -439,11 +439,23 @@ class ProfileExtractView(APIView):
                 elif 'education' in tag_lower:
                     industries.add('Education')
             
-            # Certifications
+            # Certifications (reclassify size/status designations that the LLM misfiles here)
+            _SIZE_STATUS_KEYWORDS = (
+                'small business', 'large business', 'sdb', 'wosb', 'edwosb',
+                'hubzone', '8(a)', '8a', 'sdvosb', 'vosb', 'dbe', 'mbe', 'wbe',
+                'minority-owned', 'woman-owned', 'women-owned', 'veteran-owned',
+                'service-disabled', 'disadvantaged business', 'sba ', 'small disadvantaged',
+            )
             certs = features.get('required_certifications', [])
             for cert in certs:
+                if not cert or not isinstance(cert, str):
+                    continue
+                cert_lower = cert.lower().strip()
+                # Check if this is actually a size/status designation
+                if any(kw in cert_lower for kw in _SIZE_STATUS_KEYWORDS):
+                    size_statuses.add(cert.strip())
+                    continue
                 # Map to our certification list
-                cert_lower = cert.lower()
                 if 'iso 9001' in cert_lower:
                     certifications.add('ISO 9001')
                 elif 'iso 27001' in cert_lower:
@@ -562,6 +574,15 @@ class ProfileExtractView(APIView):
                 capabilities.add('Fire & Safety Services')
             if 'printing' in all_text or 'publishing' in all_text:
                 capabilities.add('Printing & Publishing')
+
+            # Size / socioeconomic status designations
+            ss = features.get('size_status', [])
+            if isinstance(ss, list):
+                for s in ss:
+                    if s and isinstance(s, str) and s.strip():
+                        size_statuses.add(s.strip())
+            elif ss and isinstance(ss, str) and ss.strip():
+                size_statuses.add(ss.strip())
 
             # Contract types - use extracted contract_type first, then infer (may be str or list from LLM)
             ct = features.get('contract_type', '')
@@ -706,6 +727,7 @@ class ContractListCreateView(generics.ListCreateAPIView):
             'team_size': feats.get('team_size', ''),
             'scope_keywords': feats.get('scope_keywords', []),
             'contract_type': feats.get('contract_type', ''),
+            'size_status': feats.get('size_status', []),
             'award_date': dts.get('award_date', ''),
             'start_date': dts.get('start_date', ''),
             'end_date': dts.get('end_date', ''),

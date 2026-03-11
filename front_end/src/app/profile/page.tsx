@@ -523,6 +523,7 @@ export default function ProfilePage() {
     work_counties: p.workCounties ?? [],
     capabilities: p.capabilities ?? [],
     agency_experience: p.agencyExperience ?? [],
+    size_status: p.sizeStatus ?? [],
   });
 
   const saveSection = async () => {

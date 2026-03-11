@@ -731,7 +731,7 @@ export default function RFPDetailPage() {
                   "bg-slate-200 text-slate-600"
                 }`}>
                   {rfp.match.tier === "excellent" && <span className="mr-1">★</span>}
-                  {rfp.match.score}% · {rfp.match.tier.charAt(0).toUpperCase() + rfp.match.tier.slice(1)}
+                  {Math.round(rfp.match.score)}% · {rfp.match.tier.charAt(0).toUpperCase() + rfp.match.tier.slice(1)}
                 </span>
               )}
             </div>
