@@ -43,6 +43,7 @@ export interface AuthMeProfile {
   work_counties: string[];
   capabilities: string[];
   agency_experience: string[];
+  size_status?: string[];
   created_at?: string;
   updated_at?: string;
   uploaded_documents?: Array<{ id: string; title: string; document: string; created_at: string }>;
@@ -135,7 +136,7 @@ export function mapBackendProfileToCompanyProfile(
   return {
     companyName: titleCase((p.name ?? "").trim()),
     industry: cleanStringArray(p.industry_tags, { titleCase: true }),
-    sizeStatus: [],
+    sizeStatus: cleanStringArray(p.size_status),
     certifications: cleanStringArray(p.certifications),
     clearances: cleanStringArray(p.clearances),
     naicsCodes: cleanStringArray(p.naics_codes),

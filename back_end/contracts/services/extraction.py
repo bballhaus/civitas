@@ -53,6 +53,7 @@ EXTRACTION_SCHEMA = {
         "team_size": "string|null",
         "scope_keywords": ["string"],
         "contract_type": "string|null",
+        "size_status": ["string"],
     },
 }
 
@@ -82,6 +83,7 @@ Rules:
 - team_size: number of people involved if mentioned (e.g. "5 FTEs", "team of 12", "3 technicians")
 - scope_keywords: 3-5 keyword tags describing the type of work (e.g. ["janitorial services", "HVAC maintenance", "web development", "hazardous waste disposal"])
 - contract_type: type of contract if mentioned (e.g. "Fixed Price", "Time & Materials", "Cost Plus Fixed Fee", "IDIQ", "BPA")
+- size_status: business size or socioeconomic status designations mentioned in the document (e.g. "Small Business", "Small Disadvantaged Business (SDB)", "Woman-Owned Small Business (WOSB)", "8(a)", "HUBZone", "Service-Disabled Veteran-Owned Small Business (SDVOSB)", "Minority-Owned Business", "Disadvantaged Business Enterprise (DBE)", "Veteran-Owned Small Business (VOSB)", "Large Business"). Look for set-aside designations, self-certifications, or size standards mentioned in the proposal or contract.
 
 Document text:
 ---
@@ -251,6 +253,7 @@ def _normalize_result(data: dict[str, Any]) -> dict[str, Any]:
             "team_size": features.get("team_size"),
             "scope_keywords": features.get("scope_keywords") or [],
             "contract_type": features.get("contract_type"),
+            "size_status": features.get("size_status") or [],
         },
     }
 
