@@ -1263,15 +1263,15 @@ export default function DashboardPage() {
                 >
                   <div className="flex items-start justify-between gap-3 mb-2">
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold text-slate-800 mb-0.5">{rfp.agency}</p>
-                      <p className="text-xs text-slate-500 mb-1">{rfp.industry}</p>
-                      <h2 className="text-sm font-bold text-[#2563eb] line-clamp-2">{rfp.title}</h2>
+                      <p className="text-sm font-bold text-slate-800 mb-0.5 truncate min-w-0" title={rfp.agency || undefined}>{rfp.agency}</p>
+                      <p className="text-xs text-slate-500 mb-1 truncate min-w-0" title={rfp.industry || undefined}>{rfp.industry}</p>
+                      <h2 className="text-sm font-bold text-[#2563eb] line-clamp-2 min-w-0 break-words" title={rfp.title || undefined}>{rfp.title}</h2>
                     </div>
                     <div className="shrink-0">
                       <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
                     </div>
                   </div>
-                  <p className="text-xs text-slate-500 mb-3">{rfp.contractType} · {rfp.location}</p>
+                  <p className="text-xs text-slate-500 mb-3 truncate min-w-0" title={[rfp.contractType, rfp.location].filter(Boolean).join(" · ") || undefined}>{rfp.contractType} · {rfp.location}</p>
                   <div className="flex flex-wrap gap-2 mb-3">
                     <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-600">
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
