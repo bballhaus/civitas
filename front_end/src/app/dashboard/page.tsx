@@ -1085,10 +1085,10 @@ export default function DashboardPage() {
       <MeshBackground />
       <AppHeader />
 
-      {/* Split view */}
+      {/* Split view: on mobile show list OR detail; on lg show both */}
       <div className="relative z-[1] flex flex-col lg:flex-row h-[calc(100vh-65px)]">
-        {/* Left: RFP list */}
-        <aside className="w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-visible">
+        {/* Left: RFP list — hidden on mobile when an RFP is selected */}
+        <aside className={`w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-visible ${selectedRfp ? "hidden lg:flex" : ""}`}>
           <div ref={filtersContainerRef} className="p-4 border-b border-slate-200 bg-white space-y-3">
             <h1 className="text-base font-bold text-slate-800">
               Hi{displayName !== "there" ? ` ${displayName}` : " there"}!{" "}
@@ -1325,39 +1325,57 @@ export default function DashboardPage() {
           </div>
         </aside>
 
-        {/* Right: RFP detail */}
+        {/* Right: RFP detail — hidden on mobile until an RFP is selected */}
         <main
-          className={`flex-1 min-w-0 bg-transparent relative ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
+          className={`flex-1 min-w-0 bg-transparent relative ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"} ${!selectedRfp ? "hidden lg:flex lg:flex-col" : "flex flex-col"}`}
         >
+          {/* Mobile: back to list when viewing detail */}
+          {selectedRfp && (
+            <div className="lg:hidden sticky top-0 z-10 flex items-center gap-2 px-3 py-2 bg-white/95 backdrop-blur-sm border-b border-slate-200 shrink-0">
+              <button
+                type="button"
+                onClick={() => setSelectedRfpId(null)}
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
+                aria-label="Back to list"
+              >
+                <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                Back to list
+              </button>
+            </div>
+          )}
           {toast && (
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-lg">
               {toast}
             </div>
           )}
-          {selectedRfp && selectedRfp.id !== deferredSelectedRfp?.id ? (
-            <div className="p-6 flex flex-col items-center justify-center min-h-[200px] text-slate-500">
-              <p className="font-semibold text-slate-700 truncate max-w-full text-center">{selectedRfp.title}</p>
-              <p className="mt-2 text-sm">Loading…</p>
-            </div>
-          ) : deferredSelectedRfp ? (
-            <RFPDetailPanel
-              rfp={deferredSelectedRfp}
-              profile={profile}
-              generateSummary={generateMatchSummary}
-              MatchBadge={MatchBadge}
-              isSaved={savedRfpIds.has(deferredSelectedRfp.id)}
-              onSave={() => handleSaveRfp(deferredSelectedRfp.id)}
-              isApplied={appliedRfpIds.has(deferredSelectedRfp.id)}
-              onToggleApplied={() => handleToggleApplied(deferredSelectedRfp.id)}
-              isInProgress={inProgressRfpIds.has(deferredSelectedRfp.id)}
-              cachedSummary={summaryCache[deferredSelectedRfp.id]}
-              onSummaryReady={handleSummaryReady}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full text-slate-500">
-              <p>Select an RFP to view details</p>
-            </div>
-          )}
+          <div className={`flex-1 min-h-0 ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}>
+            {selectedRfp && selectedRfp.id !== deferredSelectedRfp?.id ? (
+              <div className="p-6 flex flex-col items-center justify-center min-h-[200px] text-slate-500">
+                <p className="font-semibold text-slate-700 truncate max-w-full text-center">{selectedRfp.title}</p>
+                <p className="mt-2 text-sm">Loading…</p>
+              </div>
+            ) : deferredSelectedRfp ? (
+              <RFPDetailPanel
+                rfp={deferredSelectedRfp}
+                profile={profile}
+                generateSummary={generateMatchSummary}
+                MatchBadge={MatchBadge}
+                isSaved={savedRfpIds.has(deferredSelectedRfp.id)}
+                onSave={() => handleSaveRfp(deferredSelectedRfp.id)}
+                isApplied={appliedRfpIds.has(deferredSelectedRfp.id)}
+                onToggleApplied={() => handleToggleApplied(deferredSelectedRfp.id)}
+                isInProgress={inProgressRfpIds.has(deferredSelectedRfp.id)}
+                cachedSummary={summaryCache[deferredSelectedRfp.id]}
+                onSummaryReady={handleSummaryReady}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-slate-500">
+                <p>Select an RFP to view details</p>
+              </div>
+            )}
+          </div>
         </main>
       </div>
     </div>
