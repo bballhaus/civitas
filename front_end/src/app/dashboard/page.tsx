@@ -1087,8 +1087,8 @@ export default function DashboardPage() {
 
       {/* Split view: on mobile show list OR detail; on lg show both */}
       <div className="relative z-[1] flex flex-col lg:flex-row h-[calc(100vh-65px)]">
-        {/* Left: RFP list — hidden on mobile when user has explicitly selected an RFP */}
-        <aside className={`w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-visible ${selectedRfpId ? "hidden lg:flex" : ""}`}>
+        {/* Left: RFP list — hidden on mobile when user has explicitly selected an RFP; flex-1 min-h-0 so list scrolls on mobile */}
+        <aside className={`w-full lg:w-[440px] flex-1 min-h-0 lg:flex-none lg:shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-hidden ${selectedRfpId ? "hidden lg:flex" : ""}`}>
           <div ref={filtersContainerRef} className="p-4 border-b border-slate-200 bg-white space-y-3">
             <h1 className="text-base font-bold text-slate-800">
               Hi{displayName !== "there" ? ` ${displayName}` : " there"}!{" "}
@@ -1325,9 +1325,9 @@ export default function DashboardPage() {
           </div>
         </aside>
 
-        {/* Right: RFP detail — hidden on mobile until user explicitly selects an RFP */}
+        {/* Right: RFP detail — hidden on mobile until user explicitly selects an RFP; min-h-0 so detail content scrolls */}
         <main
-          className={`flex-1 min-w-0 bg-transparent relative ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"} ${!selectedRfpId ? "hidden lg:flex lg:flex-col" : "flex flex-col"}`}
+          className={`flex-1 min-w-0 min-h-0 bg-transparent relative ${filterPanelOpen ? "overflow-hidden" : "overflow-hidden"} ${!selectedRfpId ? "hidden lg:flex lg:flex-col" : "flex flex-col"}`}
         >
           {/* Mobile: back to list when viewing detail */}
           {selectedRfpId && (
