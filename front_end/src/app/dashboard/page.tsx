@@ -1265,7 +1265,7 @@ export default function DashboardPage() {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-bold text-slate-800 mb-0.5 truncate min-w-0" title={rfp.agency || undefined}>{rfp.agency}</p>
                       <p className="text-xs text-slate-500 mb-1 truncate min-w-0" title={rfp.industry || undefined}>{rfp.industry}</p>
-                      <h2 className="text-sm font-bold text-[#2563eb] line-clamp-2 min-w-0 break-words" title={rfp.title || undefined}>{rfp.title}</h2>
+                      <h2 className="text-sm font-bold text-[#2563eb] truncate min-w-0" title={rfp.title || undefined}>{rfp.title}</h2>
                     </div>
                     <div className="shrink-0">
                       <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
@@ -1805,7 +1805,9 @@ function RFPDetailPanel({
         {/* Hero: title + match score; Save / I've applied */}
         <div className="p-5 md:p-6 border-b border-slate-100">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
-            <h2 className="text-xl md:text-2xl font-bold text-slate-900 leading-tight min-w-0">{rfp.title}</h2>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-xl md:text-2xl font-bold text-slate-900 leading-tight break-words">{rfp.title}</h2>
+            </div>
             <div className="shrink-0">
               <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} size="lg" />
             </div>
