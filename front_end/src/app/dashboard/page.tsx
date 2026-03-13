@@ -1111,10 +1111,10 @@ export default function DashboardPage() {
       <MeshBackground />
       <AppHeader />
 
-      {/* Split view */}
-      <div className="relative z-[1] flex flex-col lg:flex-row lg:h-[calc(100vh-65px)] lg:overflow-hidden">
-        {/* Left: RFP list */}
-          <aside className={`w-full lg:w-[440px] shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] h-[calc(100vh-65px)] lg:h-auto lg:overflow-visible ${mobileView === "detail" ? "hidden lg:flex" : "flex"}`}>
+      {/* Split view: on mobile show list OR detail; on lg show both */}
+      <div className="relative z-[1] flex flex-col lg:flex-row h-[calc(100vh-65px)]">
+        {/* Left: RFP list — hidden on mobile when user has explicitly selected an RFP; flex-1 min-h-0 so list scrolls on mobile */}
+        <aside className={`w-full lg:w-[440px] flex-1 min-h-0 lg:flex-none lg:shrink-0 flex flex-col border-r border-slate-200 bg-[#fafafa] overflow-hidden ${selectedRfpId ? "hidden lg:flex" : ""}`}>
           <div ref={filtersContainerRef} className="p-4 border-b border-slate-200 bg-white space-y-3">
             <h1 className="text-base font-bold text-slate-800">
               Hi{displayName !== "there" ? ` ${displayName}` : " there"}!{" "}
@@ -1296,15 +1296,15 @@ export default function DashboardPage() {
                 >
                   <div className="flex items-start justify-between gap-3 mb-2">
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold text-slate-800 mb-0.5">{rfp.agency}</p>
-                      <p className="text-xs text-slate-500 mb-1">{rfp.industry}</p>
-                      <h2 className="text-sm font-bold text-[#2563eb] line-clamp-2">{rfp.title}</h2>
+                      <p className="text-sm font-bold text-slate-800 mb-0.5 truncate min-w-0" title={rfp.agency || undefined}>{rfp.agency}</p>
+                      <p className="text-xs text-slate-500 mb-1 truncate min-w-0" title={rfp.industry || undefined}>{rfp.industry}</p>
+                      <h2 className="text-sm font-bold text-[#2563eb] truncate min-w-0" title={rfp.title || undefined}>{rfp.title}</h2>
                     </div>
                     <div className="shrink-0">
                       <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} />
                     </div>
                   </div>
-                  <p className="text-xs text-slate-500 mb-3">{rfp.contractType} · {rfp.location}</p>
+                  <p className="text-xs text-slate-500 mb-3 truncate min-w-0" title={[rfp.contractType, rfp.location].filter(Boolean).join(" · ") || undefined}>{rfp.contractType} · {rfp.location}</p>
                   <div className="flex flex-wrap gap-2 mb-3">
                     <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-600">
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1358,60 +1358,57 @@ export default function DashboardPage() {
           </div>
         </aside>
 
-        {/* Right: RFP detail */}
+        {/* Right: RFP detail — hidden on mobile until user explicitly selects an RFP; min-h-0 so detail content scrolls */}
         <main
-          className={`w-full lg:flex-1 min-w-0 bg-transparent relative h-[calc(100vh-65px)] lg:h-auto ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"} ${mobileView === "list" ? "hidden lg:block" : "block"}`}
+          className={`flex-1 min-w-0 min-h-0 bg-transparent relative ${filterPanelOpen ? "overflow-hidden" : "overflow-hidden"} ${!selectedRfpId ? "hidden lg:flex lg:flex-col" : "flex flex-col"}`}
         >
+          {/* Mobile: back to list when viewing detail */}
+          {selectedRfpId && (
+            <div className="lg:hidden sticky top-0 z-10 flex items-center gap-2 px-3 py-2 bg-white/95 backdrop-blur-sm border-b border-slate-200 shrink-0">
+              <button
+                type="button"
+                onClick={() => setSelectedRfpId(null)}
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
+                aria-label="Back to list"
+              >
+                <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                Back to list
+              </button>
+            </div>
+          )}
           {toast && (
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-lg">
               {toast}
             </div>
           )}
-          {mobileView === "detail" && (
-          <div className="lg:hidden sticky top-0 z-10 bg-white/90 backdrop-blur-sm border-b border-slate-200 px-4 py-2">
-            <button
-              type="button"
-              onClick={() => setMobileView("list")}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-[#2563eb] hover:text-[#1d4ed8]"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-              Back to matches
-            </button>
-          </div>
-        )}
-          {rightRfpNotOnScreen ? (
-            <div className="flex items-center justify-center h-full pr-4">
-              <div className="flex flex-col items-center gap-2 text-slate-500">
-                <div className="animate-spin rounded-full h-8 w-8 border-2 border-slate-300 border-t-[#2563eb]" aria-hidden />
-                <p className="text-sm font-medium">Loading…</p>
+          <div className={`flex-1 min-h-0 ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}>
+            {selectedRfp && selectedRfp.id !== deferredSelectedRfp?.id ? (
+              <div className="p-6 flex flex-col items-center justify-center min-h-[200px] text-slate-500">
+                <p className="font-semibold text-slate-700 truncate max-w-full text-center">{selectedRfp.title}</p>
+                <p className="mt-2 text-sm">Loading…</p>
               </div>
-            </div>
-          ) : selectedRfp && selectedRfp.id !== deferredSelectedRfp?.id ? (
-            <div className="p-6 flex flex-col items-center justify-center min-h-[200px] text-slate-500">
-              <p className="font-semibold text-slate-700 truncate max-w-full text-center">{selectedRfp.title}</p>
-              <p className="mt-2 text-sm">Loading…</p>
-            </div>
-          ) : deferredSelectedRfp ? (
-            <RFPDetailPanel
-              rfp={deferredSelectedRfp}
-              profile={profile}
-              generateSummary={generateMatchSummary}
-              MatchBadge={MatchBadge}
-              isSaved={savedRfpIds.has(deferredSelectedRfp.id)}
-              onSave={() => handleSaveRfp(deferredSelectedRfp.id)}
-              isApplied={appliedRfpIds.has(deferredSelectedRfp.id)}
-              onToggleApplied={() => handleToggleApplied(deferredSelectedRfp.id)}
-              isInProgress={inProgressRfpIds.has(deferredSelectedRfp.id)}
-              cachedSummary={summaryCache[deferredSelectedRfp.id]}
-              onSummaryReady={handleSummaryReady}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full text-slate-500">
-              <p>Select an RFP to view details</p>
-            </div>
-          )}
+            ) : deferredSelectedRfp ? (
+              <RFPDetailPanel
+                rfp={deferredSelectedRfp}
+                profile={profile}
+                generateSummary={generateMatchSummary}
+                MatchBadge={MatchBadge}
+                isSaved={savedRfpIds.has(deferredSelectedRfp.id)}
+                onSave={() => handleSaveRfp(deferredSelectedRfp.id)}
+                isApplied={appliedRfpIds.has(deferredSelectedRfp.id)}
+                onToggleApplied={() => handleToggleApplied(deferredSelectedRfp.id)}
+                isInProgress={inProgressRfpIds.has(deferredSelectedRfp.id)}
+                cachedSummary={summaryCache[deferredSelectedRfp.id]}
+                onSummaryReady={handleSummaryReady}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-slate-500">
+                <p>Select an RFP to view details</p>
+              </div>
+            )}
+          </div>
         </main>
       </div>
     </div>
@@ -1841,7 +1838,9 @@ function RFPDetailPanel({
         {/* Hero: title + match score; Save / I've applied */}
         <div className="p-5 md:p-6 border-b border-slate-100">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
-            <h2 className="text-xl md:text-2xl font-bold text-slate-900 leading-tight min-w-0">{rfp.title}</h2>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-xl md:text-2xl font-bold text-slate-900 leading-tight break-words">{rfp.title}</h2>
+            </div>
             <div className="shrink-0">
               <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} size="lg" />
             </div>

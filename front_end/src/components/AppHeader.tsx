@@ -45,21 +45,22 @@ export function AppHeader() {
 
   return (
     <nav className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-slate-200 z-10 shadow-sm">
-      <div className="max-w-full mx-auto px-8 py-3 flex items-center justify-between">
-        {/* Logo */}
+      <div className="max-w-full mx-auto px-3 sm:px-6 md:px-8 py-2.5 sm:py-3 flex items-center justify-between gap-2 min-w-0">
+        {/* Logo — shrink-0 + min-w-0 on parent so it never overlaps */}
         <a
           href="/home"
           onClick={(e) => handleNavClick(e, "/home")}
-          className="flex items-center gap-2.5 shrink-0 group"
+          className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 min-w-0 group"
+          aria-label="Civitas Home"
         >
-          <img src="/logo.png" alt="Civitas logo" className="h-10 w-10 transition-transform group-hover:scale-105" />
-          <span className="text-xl font-extrabold tracking-tight text-slate-900">
+          <img src="/logo.png" alt="" className="h-8 w-8 sm:h-10 sm:w-10 transition-transform group-hover:scale-105 shrink-0" />
+          <span className="text-lg sm:text-xl font-extrabold tracking-tight text-slate-900 truncate">
             Civitas
           </span>
         </a>
 
-        {/* Navigation tabs — use router.push to avoid Link navigation freeze */}
-        <div className="flex items-center gap-1">
+        {/* Navigation tabs — icon-only on mobile to prevent overflow */}
+        <div className="flex items-center gap-0.5 sm:gap-1 shrink min-w-0">
           {NAV_LINKS.map(({ label, href, icon }) => {
             const isActive =
               pathname === href || pathname.startsWith(href + "/");
@@ -68,31 +69,33 @@ export function AppHeader() {
                 key={href}
                 href={href}
                 onClick={(e) => handleNavClick(e, href)}
-                className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition-all duration-150 cursor-pointer ${
+                title={label}
+                className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 text-sm rounded-lg transition-all duration-150 cursor-pointer shrink-0 ${
                   isActive
                     ? "font-bold bg-[#3C89C6]/10 text-[#3C89C6] shadow-sm ring-1 ring-[#3C89C6]/20"
                     : "font-semibold text-slate-500 hover:text-slate-900 hover:bg-slate-50"
                 }`}
               >
-                <span className={isActive ? "text-[#3C89C6]" : "text-slate-400"}>
+                <span className={isActive ? "text-[#3C89C6]" : "text-slate-400"} aria-hidden="true">
                   {icon}
                 </span>
-                {label}
+                <span className="hidden sm:inline">{label}</span>
               </a>
             );
           })}
 
-          <div className="w-px h-6 bg-slate-200 mx-2" />
+          <div className="w-px h-5 sm:h-6 bg-slate-200 mx-1 sm:mx-2 shrink-0" aria-hidden="true" />
 
           <button
             type="button"
             onClick={() => logout(router)}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-slate-500 hover:text-white rounded-lg border border-slate-200 hover:bg-red-500 hover:border-red-500 hover:shadow-md transition-all duration-150"
+            title="Log out"
+            className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 text-sm font-semibold text-slate-500 hover:text-white rounded-lg border border-slate-200 hover:bg-red-500 hover:border-red-500 hover:shadow-md transition-all duration-150 shrink-0"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
             </svg>
-            Log out
+            <span className="hidden sm:inline">Log out</span>
           </button>
         </div>
       </div>
