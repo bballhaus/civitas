@@ -12,6 +12,9 @@
 - **[Key Features](Key-Features)** — End-to-end explanation of each major feature: RFP discovery, profile building, matching, proposal generation, status tracking, and web scraping pipeline
 - **[Matching Algorithm](Matching-Algorithm)** — Deep dive into the 3-stage scoring pipeline, 10 scoring categories, synonym expansion, canonicalization, and explanation generation
 
+### Testing
+- **[Example Test Profiles](Example-Test-Profiles)** — Ready-made company profiles with test PDFs for verifying extraction and matching
+
 ## Quick Links
 
 | Component | Dev URL | Prod URL |
