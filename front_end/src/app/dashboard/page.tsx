@@ -379,7 +379,7 @@ function MatchBadge({ score, tier, disqualified, size = "sm" }: { score: number;
   return (
     <span className={`inline-flex items-center ${pillClass} ${styles[t]}`}>
       {t === "excellent" && <span className="mr-1">★</span>}
-      {score}% · {labels[t]}
+      {Math.round(score)}% · {labels[t]}
     </span>
   );
 }
@@ -742,32 +742,18 @@ export default function DashboardPage() {
 
   const handleToggleApplied = useCallback(async (rfpId: string) => {
     const currentlyApplied = appliedRfpIds.has(rfpId);
-    const currentlyInProgress = inProgressRfpIds.has(rfpId);
     setAppliedRfpIds((prev) => {
       const next = new Set(prev);
       if (currentlyApplied) next.delete(rfpId);
       else next.add(rfpId);
       return next;
     });
-    if (!currentlyApplied && currentlyInProgress) {
-      setInProgressRfpIds((prev) => {
-        const next = new Set(prev);
-        next.delete(rfpId);
-        return next;
-      });
-    }
-    if (currentlyApplied) {
-      setInProgressRfpIds((prev) => new Set([...prev, rfpId]));
-    }
     try {
       if (currentlyApplied) {
-        await updateUserRfpStatus({ remove_applied: rfpId, mark_in_progress: rfpId });
+        await updateUserRfpStatus({ remove_applied: rfpId });
         showToast("Removed from applied");
       } else {
-        await updateUserRfpStatus({
-          mark_applied: rfpId,
-          ...(currentlyInProgress ? { remove_in_progress: rfpId } : {}),
-        });
+        await updateUserRfpStatus({ mark_applied: rfpId });
         showToast("Marked as applied");
       }
     } catch (e) {
@@ -777,20 +763,10 @@ export default function DashboardPage() {
         else next.delete(rfpId);
         return next;
       });
-      if (!currentlyApplied && currentlyInProgress) {
-        setInProgressRfpIds((prev) => new Set([...prev, rfpId]));
-      }
-      if (currentlyApplied) {
-        setInProgressRfpIds((prev) => {
-          const next = new Set(prev);
-          next.delete(rfpId);
-          return next;
-        });
-      }
       console.error("Failed to update applied status:", e);
       showToast(e instanceof Error ? e.message : "Failed to update — try again");
     }
-  }, [appliedRfpIds, inProgressRfpIds]);
+  }, [appliedRfpIds]);
 
   const handleMarkInProgress = useCallback(async (rfpId: string) => {
     try {
@@ -803,6 +779,7 @@ export default function DashboardPage() {
 
   const [showNotInterestedList, setShowNotInterestedList] = useState(false);
   const [listFilter, setListFilter] = useState<"all" | "saved" | "applied" | "in_progress">("all");
+  const [preloadRfpId, setPreloadRfpId] = useState<string | null>(null);
   const [filters, setFilters] = useState<RFPFilters>(EMPTY_FILTERS);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
@@ -812,6 +789,7 @@ export default function DashboardPage() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [sortBy, setSortBy] = useState<"score" | "deadline" | "value">("score");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const filtersContainerRef = useRef<HTMLDivElement>(null);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
   const scrollLockYRef = useRef(0);
@@ -894,6 +872,12 @@ export default function DashboardPage() {
         if (cancelled || !full) return;
         setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
         setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+        // Refresh profile from API so sizeStatus and other fields stay current
+        const apiProfile = mapBackendProfileToCompanyProfile(full.profile ?? null);
+        if (apiProfile) {
+          setProfile(apiProfile);
+          setCachedProfile(full.user_id, apiProfile);
+        }
       });
       return () => { cancelled = true; };
     }
@@ -904,9 +888,9 @@ export default function DashboardPage() {
         if (full) {
           setCurrentUser({ user_id: full.user_id, username: full.username });
           setCachedUser(full);
-          const cached = getCachedProfile(full.user_id);
           const apiProfile = mapBackendProfileToCompanyProfile(full.profile ?? null);
-          const mapped = cached ?? apiProfile ?? getEmptyCompanyProfile();
+          const cached = getCachedProfile(full.user_id);
+          const mapped = apiProfile ?? cached ?? getEmptyCompanyProfile();
           setProfile(mapped);
           if (apiProfile) setCachedProfile(full.user_id, apiProfile);
           setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
@@ -986,7 +970,14 @@ export default function DashboardPage() {
       ...rfp,
       match: computeMatch(rfp, effectiveProfile),
     }));
-    return [...list].sort((a, b) => b.match.score - a.match.score);
+    return [...list].sort((a, b) => {
+      const scoreDiff = b.match.score - a.match.score;
+      if (scoreDiff !== 0) return scoreDiff;
+      // Tie-break: soonest deadline first (more actionable)
+      const dueA = parseDeadline(a.deadline)?.getTime() ?? Infinity;
+      const dueB = parseDeadline(b.deadline)?.getTime() ?? Infinity;
+      return dueA - dueB;
+    });
   }, [rfps, profile]);
 
   const { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps, savedCount, appliedCount, inProgressCount } = React.useMemo(() => {
@@ -1024,10 +1015,22 @@ export default function DashboardPage() {
         const valB = getContractValueNumeric(b.estimatedValue);
         cmp = valA - valB;
       }
-      return sortDirection === "desc" ? -cmp : cmp;
+      const primary = sortDirection === "desc" ? -cmp : cmp;
+      if (primary !== 0) return primary;
+      // Tie-break: soonest deadline first
+      const dueA = parseDeadline(a.deadline)?.getTime() ?? Infinity;
+      const dueB = parseDeadline(b.deadline)?.getTime() ?? Infinity;
+      return dueA - dueB;
     });
+    if (preloadRfpId) {
+      const idx = displayed.findIndex((r) => r.id === preloadRfpId);
+      if (idx > 0) {
+        const [picked] = displayed.splice(idx, 1);
+        displayed = [picked, ...displayed];
+      }
+    }
     return { rfpsWithMatch, hiddenRfps, hiddenCount, displayedRfps: displayed, savedCount, appliedCount, inProgressCount };
-  }, [allRfpsWithMatch, notInterestedRfpIds, listFilter, savedRfpIds, appliedRfpIds, inProgressRfpIds, filters, deferredSearchQuery, minScore, sortBy, sortDirection]);
+  }, [allRfpsWithMatch, notInterestedRfpIds, listFilter, savedRfpIds, appliedRfpIds, inProgressRfpIds, filters, deferredSearchQuery, minScore, sortBy, sortDirection, preloadRfpId]);
 
   const dynamicFilterOptions = React.useMemo(
     () => deriveFilterOptionsFromRfps(rfpsWithMatch),
@@ -1043,28 +1046,51 @@ export default function DashboardPage() {
   const selectedRfp = displayedRfps.find((r) => r.id === selectedId);
   // Defer heavy panel content so card selection (border) updates immediately
   const deferredSelectedRfp = useDeferredValue(selectedRfp ?? null);
+  const rightRfpNotOnScreen =
+    selectedRfpId != null && deferredSelectedRfp?.id !== selectedRfpId;
 
+  // When the list is empty (e.g. filter by Saved but 0 saved), clear selection so we show empty state instead of loading forever.
+  // When the list is non-empty but selected RFP isn't in it, select the first displayed RFP.
   useEffect(() => {
+    if (displayedRfps.length === 0) {
+      setSelectedRfpId(null);
+      return;
+    }
     if (selectedRfpId && !displayedRfps.some((r) => r.id === selectedRfpId)) {
       setSelectedRfpId(displayedRfps[0]?.id ?? null);
     }
   }, [displayedRfps, selectedRfpId]);
 
-  // When arriving from home page (saved/applied/in progress/due soon), open dashboard with that RFP selected
+  // When arriving from home page (saved/applied/in progress/due soon), open dashboard with that RFP selected and filter applied
   useEffect(() => {
-    if (typeof window === "undefined" || displayedRfps.length === 0) return;
+    if (typeof window === "undefined") return;
     const raw = sessionStorage.getItem("civitas_preload_rfp");
     if (!raw) return;
+    let preloadId: string | null = null;
     try {
-      const preload = JSON.parse(raw) as { id?: string };
-      if (preload?.id && displayedRfps.some((r) => r.id === preload.id)) {
-        setSelectedRfpId(preload.id);
+      const parsed = JSON.parse(raw) as { id?: string; rfp?: { id?: string }; filter?: "saved" | "applied" | "in_progress" };
+      const rfp = parsed.rfp ?? parsed;
+      const id = rfp?.id ?? parsed.id;
+      const filter = parsed.filter ?? null;
+      if (filter === "saved" || filter === "applied" || filter === "in_progress") {
+        setListFilter(filter);
+      }
+      if (id) {
+        preloadId = id;
+        setSelectedRfpId(id);
+        setPreloadRfpId(id);
       }
     } catch {
       // ignore invalid JSON
     }
     sessionStorage.removeItem("civitas_preload_rfp");
-  }, [displayedRfps]);
+    if (preloadId) {
+      const t = setTimeout(() => setPreloadRfpId(null), 0);
+      return () => clearTimeout(t);
+    }
+  // Run once on mount to read preload from home page
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional mount-only
+  }, []);
 
   // Show list as soon as events are ready; profile loads in background (matches update when it arrives).
   if (loading) {
@@ -1094,6 +1120,12 @@ export default function DashboardPage() {
               Hi{displayName !== "there" ? ` ${displayName}` : " there"}!{" "}
               <span className="text-[#2563eb]">{matchCount}</span> {listFilter === "saved" ? "saved" : listFilter === "applied" ? "applied" : listFilter === "in_progress" ? "in progress" : ""} match{matchCount !== 1 ? "es" : ""} to review.
             </h1>
+            {rightRfpNotOnScreen && (
+              <p className="flex items-center gap-2 text-sm text-slate-500" aria-live="polite">
+                <span className="animate-spin rounded-full h-4 w-4 border-2 border-slate-300 border-t-[#2563eb] shrink-0" aria-hidden />
+                Loading…
+              </p>
+            )}
             <input
               type="text"
               value={searchQuery}
@@ -1160,8 +1192,8 @@ export default function DashboardPage() {
                 onClick={() => setListFilter(listFilter === "saved" ? "all" : "saved")}
                 className={`shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
                   listFilter === "saved"
-                    ? "bg-emerald-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    ? "bg-blue-600 text-white"
+                    : "bg-blue-50 text-blue-700 hover:bg-blue-100"
                 }`}
               >
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -1175,7 +1207,7 @@ export default function DashboardPage() {
                 className={`shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
                   listFilter === "applied"
                     ? "bg-emerald-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
                 }`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1188,8 +1220,8 @@ export default function DashboardPage() {
                 onClick={() => setListFilter(listFilter === "in_progress" ? "all" : "in_progress")}
                 className={`shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
                   listFilter === "in_progress"
-                    ? "bg-emerald-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    ? "bg-amber-600 text-white"
+                    : "bg-amber-50 text-amber-700 hover:bg-amber-100"
                 }`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1200,7 +1232,8 @@ export default function DashboardPage() {
             </div>
           </div>
           <div
-            className={`flex-1 min-h-0 p-3 space-y-3 ${filterPanelOpen ? "overflow-hidden" : "overflow-y-auto"}`}
+            className={`flex-1 min-h-0 p-3 space-y-3 overflow-y-auto ${filterPanelOpen ? "!overflow-hidden" : ""}`}
+            style={{ WebkitOverflowScrolling: "touch" } as React.CSSProperties}          
           >
             {error ? (
               <p className="text-sm text-amber-600 py-4 px-4 bg-amber-50 rounded-lg">{error}. Showing sample data.</p>
@@ -1255,8 +1288,8 @@ export default function DashboardPage() {
                   key={rfp.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => setSelectedRfpId(rfp.id)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedRfpId(rfp.id); } }}
+                  onClick={() => { setSelectedRfpId(rfp.id); setMobileView("detail"); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedRfpId(rfp.id); setMobileView("detail"); } }}
                   className={`block w-full text-left p-4 rounded-xl bg-white border-2 transition-all shadow-sm hover:shadow-md cursor-pointer ${
                     match.disqualified ? "opacity-60 " : ""
                   }${isSelected ? "border-[#2563eb] shadow-md" : "border-transparent hover:border-slate-200"}`}
@@ -1297,7 +1330,7 @@ export default function DashboardPage() {
                       </span>
                     )}
                     {isSaved && (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700">
                         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" clipRule="evenodd" />
                         </svg>
@@ -1305,7 +1338,7 @@ export default function DashboardPage() {
                       </span>
                     )}
                     {isApplied && (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700">
                         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
@@ -1812,12 +1845,12 @@ function RFPDetailPanel({
               <MatchBadge score={match.score} tier={match.tier} disqualified={match.disqualified} size="lg" />
             </div>
           </div>
-          {/* Action buttons — translucent bubble */}
-          <div className="flex flex-wrap items-center gap-2 mb-2 bg-white/60 backdrop-blur-sm rounded-xl p-2 border border-slate-200/60 shadow-sm">
+          {/* Action buttons */}
+          <div className="flex flex-wrap items-center gap-2.5 mb-2">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSave(); }}
-              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${isSaved ? "text-blue-700 bg-blue-200/70 hover:bg-blue-200" : "text-blue-600 bg-blue-100/50 hover:bg-blue-100"}`}
+              className={`shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 ${isSaved ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"}`}
             >
               <svg className={`w-4 h-4 ${isSaved ? "fill-current" : ""}`} fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
               {isSaved ? "Saved" : "Save"}
@@ -1825,11 +1858,11 @@ function RFPDetailPanel({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onToggleApplied(); }}
-              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${isApplied ? "text-green-700 bg-green-200/70 hover:bg-green-200" : "text-green-600 bg-green-100/50 hover:bg-green-100"}`}
+              className={`shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 ${isApplied ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}
             >
               {isApplied ? (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> Applied</>) : (<><svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> I&apos;ve applied</>)}
             </button>
-            <div className="w-px h-5 bg-slate-300/50 mx-0.5" />
+            <div className="w-px h-6 bg-slate-200 mx-0.5" />
             <button
               type="button"
               onClick={(e) => {
@@ -1837,7 +1870,7 @@ function RFPDetailPanel({
                 setProposalDropdownOpen((open) => !open);
                 if (!proposal && !proposalLoading) handleGenerateProposal();
               }}
-              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${proposal ? "text-violet-700 bg-violet-200/70 hover:bg-violet-200" : "text-violet-600 bg-violet-100/50 hover:bg-violet-100"}`}
+              className={`shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 ${proposal ? "bg-violet-600 text-white" : "bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
             >
               {proposalLoading ? (
                 <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
@@ -1852,7 +1885,7 @@ function RFPDetailPanel({
                 setPoeDropdownOpen((open) => !open);
                 if (!planOfExecution && !planLoading) handleGeneratePlanOfExecution();
               }}
-              className={`text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all ${planOfExecution ? "text-purple-700 bg-purple-200/70 hover:bg-purple-200" : "text-purple-600 bg-purple-100/50 hover:bg-purple-100"}`}
+              className={`shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 ${planOfExecution ? "bg-purple-600 text-white" : "bg-purple-50 text-purple-700 hover:bg-purple-100"}`}
             >
               {planLoading ? (
                 <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
@@ -1861,7 +1894,7 @@ function RFPDetailPanel({
               )}
             </button>
             {(rfp.eventUrl || rfp.id) && (
-              <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="text-sm font-medium flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg transition-all text-amber-600 bg-amber-100/50 hover:bg-amber-100">
+              <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 bg-amber-50 text-amber-700 hover:bg-amber-100">
                 View on Cal eProcure <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
               </a>
             )}
@@ -1870,7 +1903,7 @@ function RFPDetailPanel({
 
         {/* Generated Proposal — persistent header, collapsible body */}
         {(proposal || proposalLoading || proposalError) && (
-          <div className="border-b border-slate-100 bg-slate-50/50">
+          <div className="mx-4 mt-4 rounded-xl border border-slate-200 bg-slate-50/50 shadow-sm overflow-hidden">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setProposalDropdownOpen((o) => !o); }}
@@ -1895,18 +1928,20 @@ function RFPDetailPanel({
               </div>
             </button>
             {proposalDropdownOpen && (
-              <div className="px-4 pb-4 max-h-[60vh] overflow-y-auto">
-                {proposalLoading && !proposal ? (
-                  <p className="text-sm text-slate-500 animate-pulse">Generating proposal…</p>
-                ) : proposalError ? (
-                  <p className="text-sm text-red-600">{proposalError}</p>
-                ) : proposal ? (
-                  <div className="space-y-3">
+              <>
+                <div className="px-4 pb-2 max-h-[50vh] overflow-y-auto">
+                  {proposalLoading && !proposal ? (
+                    <p className="text-sm text-slate-500 animate-pulse">Generating proposal…</p>
+                  ) : proposalError ? (
+                    <p className="text-sm text-red-600">{proposalError}</p>
+                  ) : proposal ? (
                     <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                        {proposal}
-                      </div>
+                      <MarkdownContent content={proposal} />
                     </div>
+                  ) : null}
+                </div>
+                {proposal && (
+                  <div className="px-4 pb-4 pt-2 border-t border-slate-200 bg-slate-50">
                     <div className="flex flex-wrap gap-2 items-start">
                       <div className="flex-1 min-w-[180px]">
                         <label className="block text-xs font-medium text-slate-600 mb-1">Improve with feedback (optional)</label>
@@ -1929,15 +1964,15 @@ function RFPDetailPanel({
                       </button>
                     </div>
                   </div>
-                ) : null}
-              </div>
+                )}
+              </>
             )}
           </div>
         )}
 
         {/* Generated Plan of Execution — persistent header, collapsible body */}
         {(planOfExecution || planLoading || planError) && (
-          <div className="border-b border-slate-100 bg-slate-50/50">
+          <div className="mx-4 mt-4 rounded-xl border border-slate-200 bg-slate-50/50 shadow-sm overflow-hidden">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setPoeDropdownOpen((o) => !o); }}
@@ -1962,18 +1997,20 @@ function RFPDetailPanel({
               </div>
             </button>
             {poeDropdownOpen && (
-              <div className="px-4 pb-4 max-h-[60vh] overflow-y-auto">
-                {planLoading && !planOfExecution ? (
-                  <p className="text-sm text-slate-500 animate-pulse">Generating plan…</p>
-                ) : planError ? (
-                  <p className="text-sm text-red-600">{planError}</p>
-                ) : planOfExecution ? (
-                  <div className="space-y-3">
+              <>
+                <div className="px-4 pb-2 max-h-[50vh] overflow-y-auto">
+                  {planLoading && !planOfExecution ? (
+                    <p className="text-sm text-slate-500 animate-pulse">Generating plan…</p>
+                  ) : planError ? (
+                    <p className="text-sm text-red-600">{planError}</p>
+                  ) : planOfExecution ? (
                     <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <div className="prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                        {planOfExecution}
-                      </div>
+                      <MarkdownContent content={planOfExecution} />
                     </div>
+                  ) : null}
+                </div>
+                {planOfExecution && (
+                  <div className="px-4 pb-4 pt-2 border-t border-slate-200 bg-slate-50">
                     <div className="flex flex-wrap gap-2 items-start">
                       <div className="flex-1 min-w-[180px]">
                         <label className="block text-xs font-medium text-slate-600 mb-1">Improve with feedback (optional)</label>
@@ -1996,8 +2033,8 @@ function RFPDetailPanel({
                       </button>
                     </div>
                   </div>
-                ) : null}
-              </div>
+                )}
+              </>
             )}
           </div>
         )}

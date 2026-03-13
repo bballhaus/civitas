@@ -275,16 +275,36 @@ const CERTIFICATION_CANONICAL: Record<string, string> = {
   "public works contractor with the department of industrial relations (dir)": "dir",
 
   // --- Contractor licenses ---
-  "contractors license class b": "contractor_b", "contractor's license class b": "contractor_b",
-  "california class b - general building contractor's license": "contractor_b",
-  "general building contractor": "contractor_b",
-  "contractors license class a": "contractor_a",
+  "contractors license class a": "contractor_a", "contractor's license class a": "contractor_a",
+  "class a license": "contractor_a", "class a contractor": "contractor_a",
   "general engineering contractors license (class a)": "contractor_a",
   "general engineering contractor": "contractor_a",
+  "contractors license class b": "contractor_b", "contractor's license class b": "contractor_b",
+  "class b license": "contractor_b", "class b contractor": "contractor_b",
+  "california class b - general building contractor's license": "contractor_b",
+  "general building contractor": "contractor_b",
   "a (general engineering) or b (general building)": "contractor_ab",
-  "contractor's license class c-39": "contractor_c39",
-  "contractor's license class c36": "contractor_c36",
+  "contractors license class c": "contractor_c", "contractor's license class c": "contractor_c",
+  "class c license": "contractor_c", "class c contractor": "contractor_c",
+  "contractor's license class c-4": "contractor_c4",
+  "contractor's license class c-7": "contractor_c7",
+  "contractor's license class c-10": "contractor_c10", "c-10 electrical contractor": "contractor_c10",
+  "contractor's license class c-12": "contractor_c12",
+  "contractor's license class c-20": "contractor_c20", "c-20 hvac contractor": "contractor_c20",
+  "contractor's license class c-33": "contractor_c33",
+  "contractor's license class c-36": "contractor_c36", "contractor's license class c36": "contractor_c36",
   "c-36 plumbing contractor license": "contractor_c36",
+  "contractor's license class c-39": "contractor_c39",
+  "contractor's license class c-43": "contractor_c43",
+  "contractor's license class c-46": "contractor_c46",
+  "contractor's license class c-51": "contractor_c51",
+  "contractor's license class c-53": "contractor_c53",
+  "contractor's license class c-54": "contractor_c54",
+  "contractor's license class c-57": "contractor_c57",
+  "contractor's license class c-61": "contractor_c61",
+  "contractor's license": "contractor_license",
+  "pest control license": "pest_control_license",
+  "professional engineer (pe)": "professional_engineer", "pe license": "professional_engineer",
 
   // --- Compliance certifications ---
   "darfur contracting act certification": "darfur", "darfur contracting act certification  dpr 74": "darfur",
@@ -303,13 +323,31 @@ const SET_ASIDE_CANONICAL: Record<string, string> = {
   "hubzone": "hubzone", "hub zone": "hubzone",
   "sdvosb": "sdvosb", "service-disabled veteran-owned (sdvosb)": "sdvosb", "service-disabled veteran": "sdvosb", "service disabled veteran": "sdvosb",
   "vosb": "vosb", "veteran-owned small business (vosb)": "vosb", "veteran-owned": "vosb", "veteran owned": "vosb",
-  "wosb": "wosb", "women-owned small business (wosb)": "wosb", "women-owned": "wosb", "women owned": "wosb",
-  "small business": "small_business", "sb": "small_business", "certified small business": "small_business",
+  "wosb": "wosb", "women-owned small business (wosb)": "wosb", "woman-owned small business (wosb)": "wosb", "women-owned": "wosb", "women owned": "wosb", "woman-owned": "wosb", "woman owned": "wosb",
+  "small business": "small_business", "sb": "small_business", "certified small business": "small_business", "sba small business": "small_business",
   "sdb": "sdb", "small disadvantaged business (sdb)": "sdb", "small disadvantaged business": "sdb",
+  "edwosb": "wosb", "economically disadvantaged women-owned": "wosb",
   "dvbe": "dvbe", "disabled veterans business enterprise": "dvbe",
-  "mbe": "mbe", "minority-owned": "mbe", "minority owned": "mbe", "minority business": "mbe", "mb": "mbe",
+  "mbe": "mbe", "minority-owned": "mbe", "minority owned": "mbe", "minority business": "mbe", "minority-owned business": "mbe", "mb": "mbe",
+  "dbe": "dbe", "disadvantaged business enterprise": "dbe", "disadvantaged business enterprise (dbe)": "dbe",
+  "wbe": "wbe", "women business enterprise": "wbe",
   "sb-pw": "small_business", // Small Business - Public Works
 };
+
+// Subcategories that also qualify as "Small Business" in government contracting
+const SET_ASIDE_IMPLIES_SB: Set<string> = new Set([
+  "wosb", "sdb", "8a", "hubzone", "sdvosb", "vosb", "mbe",
+]);
+
+function expandSetAsideCanonical(canonicalValues: string[]): string[] {
+  const expanded = new Set(canonicalValues);
+  for (const v of canonicalValues) {
+    if (SET_ASIDE_IMPLIES_SB.has(v)) {
+      expanded.add("small_business");
+    }
+  }
+  return [...expanded];
+}
 
 const CONTRACT_TYPE_CANONICAL: Record<string, string> = {
   "fixed price": "fixed_price", "ffp": "fixed_price", "firm fixed price": "fixed_price",
@@ -717,9 +755,11 @@ const SET_ASIDE_PATTERNS = [
   { label: "SDVOSB", pattern: /\b(sdvosb|service[- ]disabled\s+veteran)/i },
   { label: "VOSB", pattern: /\bvosb|veteran[- ]owned/i },
   { label: "WOSB", pattern: /\b(wosb|women[- ]owned)/i },
-  { label: "Small Business", pattern: /\bsmall\s+business\s+set[- ]aside/i },
+  { label: "Small Business", pattern: /\bsmall\s+business\b/i },
   { label: "SDB", pattern: /\b(sdb|small\s+disadvantaged\s+business)/i },
+  { label: "DVBE", pattern: /\b(dvbe|disabled\s+veterans?\s+business\s+enterprise)/i },
   { label: "MBE", pattern: /\b(mbe|minority[- ]owned|minority\s+business)/i },
+  { label: "DBE", pattern: /\b(dbe|disadvantaged\s+business\s+enterprise)/i },
 ];
 
 function detectSetAsides(text: string): string[] {
@@ -820,10 +860,10 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
   const attachmentSetAsides = rfp.setAsideTypes ?? [];
   const rfpSetAsides = [...new Set([...textSetAsides, ...attachmentSetAsides])];
   if (rfpSetAsides.length > 0) {
-    const profileCanonical = [
+    const profileCanonical = expandSetAsideCanonical([
       ...(profile.sizeStatus ?? []).map((s) => canonicalize(s, SET_ASIDE_CANONICAL)),
       ...(profile.certifications ?? []).map((c) => canonicalize(c, SET_ASIDE_CANONICAL)),
-    ];
+    ]);
     const met = rfpSetAsides.filter((sa) => {
       const saCanonical = canonicalize(sa, SET_ASIDE_CANONICAL);
       return profileCanonical.includes(saCanonical);
@@ -1220,10 +1260,10 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
 
   // --- Set-aside bonus ---
   if (rfpSetAsides.length > 0) {
-    const profileCanonical = [
+    const profileCanonical = expandSetAsideCanonical([
       ...(profile.sizeStatus ?? []).map((s) => canonicalize(s, SET_ASIDE_CANONICAL)),
       ...(profile.certifications ?? []).map((c) => canonicalize(c, SET_ASIDE_CANONICAL)),
-    ];
+    ]);
     const met = rfpSetAsides.filter((sa) => {
       const saCanonical = canonicalize(sa, SET_ASIDE_CANONICAL);
       return profileCanonical.includes(saCanonical);
@@ -1248,7 +1288,7 @@ export function computeMatch(rfp: RFP, profile: CompanyProfile | null): RFPMatch
   // This ensures RFPs missing NAICS/certs/caps don't get penalized.
 
   const normalizedScore = maxAchievablePoints > 0
-    ? clamp(Math.round((earnedPoints / maxAchievablePoints) * 100), 0, 100)
+    ? clamp(Math.round(((earnedPoints / maxAchievablePoints) * 100) * 100) / 100, 0, 100)
     : 50; // No data at all → neutral 50
 
   const tier: RFPMatch["tier"] =

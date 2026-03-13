@@ -148,7 +148,22 @@ def _get_contracts_list(user_id):
         return {}, []
     profile = data.get("profile") or {}
     docs = profile.get("uploaded_documents") or []
-    return profile, docs
+    # Filter out documents whose S3 key belongs to a different user (cross-user contamination guard)
+    user_prefix = f"uploads/{user_id}/"
+    clean_docs = []
+    for d in docs:
+        s3_key = d.get("document_s3_key") if isinstance(d, dict) else None
+        if s3_key and not s3_key.startswith(user_prefix):
+            logger.warning("Filtering out document with foreign S3 key %s from user_id=%s", s3_key, user_id)
+            continue
+        clean_docs.append(d)
+    if len(clean_docs) < len(docs):
+        # Persist the cleanup so contaminated entries are removed permanently
+        profile["uploaded_documents"] = clean_docs
+        data["profile"] = profile
+        save_user_data(username, data)
+        logger.info("Cleaned %d foreign documents from user_id=%s", len(docs) - len(clean_docs), user_id)
+    return profile, clean_docs
 
 
 def _save_contracts_list(user_id, contracts_list):

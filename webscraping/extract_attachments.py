@@ -261,18 +261,35 @@ def extract_text_from_pdf(filepath: str) -> str:
 # Groq LLM extraction
 # ---------------------------------------------------------------------------
 
-def call_groq(text: str) -> dict[str, Any]:
-    """Send text to Groq LLM for structured extraction."""
+def call_groq(text: str, max_retries: int = 5) -> dict[str, Any]:
+    """Send text to Groq LLM for structured extraction with rate-limit retry."""
     client = Groq(api_key=GROQ_API_KEY)
     prompt = EXTRACTION_PROMPT.replace("{text}", text)
 
-    response = client.chat.completions.create(
-        model=GROQ_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
-    )
-    raw = response.choices[0].message.content.strip()
-    return parse_llm_json(raw)
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+            raw = response.choices[0].message.content.strip()
+            return parse_llm_json(raw)
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "rate_limit" in error_str.lower():
+                # Parse wait time from error message if possible
+                import re as _re
+                wait_match = _re.search(r"try again in (\d+)m([\d.]+)s", error_str)
+                if wait_match:
+                    wait_secs = int(wait_match.group(1)) * 60 + float(wait_match.group(2))
+                else:
+                    wait_secs = min(30 * (2 ** attempt), 600)  # exponential backoff, max 10 min
+                tqdm.write(f"    ⏳ Rate limited, waiting {wait_secs:.0f}s (attempt {attempt + 1}/{max_retries})...")
+                time.sleep(wait_secs)
+            else:
+                raise
+    raise RuntimeError(f"Max retries ({max_retries}) exceeded for Groq API call")
 
 
 def parse_llm_json(raw: str) -> dict[str, Any]:
@@ -461,11 +478,35 @@ def main():
     s3 = get_s3_client()
 
     # Load existing extractions (for resume support)
+    # Strategy: download from S3 first (authoritative), merge with local, use largest set
     existing: dict[str, Any] = {}
-    if OUTPUT_FILE.exists() and not args.force:
-        with open(OUTPUT_FILE, "r") as f:
-            existing = json.load(f)
-        print(f"Loaded {len(existing)} existing extractions from {OUTPUT_FILE.name}")
+    if not args.force:
+        # Try S3 first (authoritative source)
+        try:
+            resp = s3.get_object(
+                Bucket=S3_BUCKET,
+                Key="scrapes/caleprocure/attachment_extractions.json",
+            )
+            s3_existing = json.loads(resp["Body"].read())
+            print(f"Loaded {len(s3_existing)} existing extractions from S3")
+            existing.update(s3_existing)
+        except Exception as e:
+            print(f"Could not load S3 extractions (will use local): {e}")
+
+        # Merge with local file (may have newer entries not yet uploaded)
+        if OUTPUT_FILE.exists():
+            with open(OUTPUT_FILE, "r") as f:
+                local_existing = json.load(f)
+            new_from_local = {k: v for k, v in local_existing.items() if k not in existing}
+            if new_from_local:
+                existing.update(new_from_local)
+                print(f"Merged {len(new_from_local)} additional entries from local file")
+            print(f"Total existing extractions: {len(existing)}")
+
+        # Save merged baseline locally
+        if existing:
+            with open(OUTPUT_FILE, "w") as f:
+                json.dump(existing, f, indent=2, ensure_ascii=False)
 
     if args.event:
         # Process single event

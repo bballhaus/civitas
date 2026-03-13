@@ -354,6 +354,71 @@ const INDUSTRY_FALLBACK_CAPS: Record<string, string[]> = {
 };
 
 /**
+ * Extract certifications/licenses from RFP text when the structured extraction
+ * didn't capture them. Catches contractor licenses, DIR registration, and
+ * other professional certifications commonly found in Cal eProcure RFPs.
+ */
+function extractCertificationsFromText(
+  description: string,
+  attachmentText?: string,
+): string[] {
+  const text = `${description}\n${attachmentText || ""}`;
+  const certs: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (cert: string) => {
+    const key = cert.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      certs.push(cert);
+    }
+  };
+
+  // Contractor's License Class A, B, C, or C-XX patterns
+  // Matches: "Class A license", "Class B contractor", "Class C-12", etc.
+  const classMatches = text.matchAll(
+    /\bClass\s+([A-D](?:-\d{1,2})?)\b(?:\s+(?:license|contractor|general\s+(?:engineering|building)))?/gi
+  );
+  for (const m of classMatches) {
+    const cls = m[1].toUpperCase();
+    add(`Contractor's License Class ${cls}`);
+  }
+
+  // "C-XX" specialty license codes (e.g. "C-12", "C-36", "C-39")
+  const cSpecialtyMatches = text.matchAll(
+    /\b(C-\d{1,2})\b/g
+  );
+  for (const m of cSpecialtyMatches) {
+    const code = m[1].toUpperCase();
+    if (!seen.has(`contractor's license class ${code.toLowerCase()}`)) {
+      add(`Contractor's License Class ${code}`);
+    }
+  }
+
+  // DIR Registration
+  if (/\bDIR\s+(?:registered|registration)\b/i.test(text)) {
+    add("DIR Registration");
+  }
+
+  // Professional Engineering license
+  if (/\bProfessional\s+Engineer(?:ing)?\s+(?:license|PE)\b/i.test(text)) {
+    add("Professional Engineer (PE)");
+  }
+
+  // Pest Control / Applicator licenses
+  if (/\b(?:Pest\s+Control|Structural\s+Pest)\s+(?:license|operator|applicator)\b/i.test(text)) {
+    add("Pest Control License");
+  }
+
+  // General "contractor's license" or "contractor license required"
+  if (certs.length === 0 && /\bcontractor(?:'?s)?\s+license\s+(?:required|is\s+required)\b/i.test(text)) {
+    add("Contractor's License");
+  }
+
+  return certs;
+}
+
+/**
  * Resolve capabilities for an RFP.
  * Strategy: regex-first (based on actual title/description text),
  * with industry-based fallback so every RFP gets at least one capability.
@@ -402,9 +467,17 @@ export async function GET() {
         ? extraction.naics_codes
         : ([] as string[]);
 
-      const certifications = extraction?.certifications_required?.length
+      // Use extraction certifications, fall back to text-based detection
+      const extractionCerts = extraction?.certifications_required?.length
         ? extraction.certifications_required
-        : ([] as string[]);
+        : [];
+      const textCerts = extractionCerts.length === 0
+        ? extractCertificationsFromText(
+            e.description || "",
+            extraction?.attachment_text_rollup,
+          )
+        : [];
+      const certifications = extractionCerts.length > 0 ? extractionCerts : textCerts;
 
       const industry = inferIndustry(e.department || "", e.title, e.description);
 
