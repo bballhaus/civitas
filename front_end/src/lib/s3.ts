@@ -10,15 +10,20 @@ import {
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 
-const region = process.env.AWS_REGION || "us-east-1";
-const bucket = process.env.AWS_S3_BUCKET || "";
+function getRegionValue(): string {
+  return process.env.AWS_REGION || "us-east-1";
+}
+
+function getBucketValue(): string {
+  return process.env.AWS_S3_BUCKET || "civitas-ai";
+}
 
 let _client: S3Client | null = null;
 
 function getClient(): S3Client {
   if (!_client) {
     _client = new S3Client({
-      region,
+      region: getRegionValue(),
       credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
@@ -29,17 +34,17 @@ function getClient(): S3Client {
 }
 
 export function getBucket(): string {
-  return bucket;
+  return getBucketValue();
 }
 
 export function getRegion(): string {
-  return region;
+  return getRegionValue();
 }
 
 export async function getObject(key: string): Promise<string | null> {
   try {
     const resp = await getClient().send(
-      new GetObjectCommand({ Bucket: bucket, Key: key })
+      new GetObjectCommand({ Bucket: getBucketValue(), Key: key })
     );
     return (await resp.Body?.transformToString("utf-8")) ?? null;
   } catch (err: unknown) {
@@ -74,7 +79,7 @@ export async function putObject(
 ): Promise<boolean> {
   try {
     await getClient().send(
-      new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType })
+      new PutObjectCommand({ Bucket: getBucketValue(), Key: key, Body: body, ContentType: contentType })
     );
     return true;
   } catch (err) {
@@ -93,7 +98,7 @@ export async function putObjectJSON(
 export async function deleteObject(key: string): Promise<boolean> {
   try {
     await getClient().send(
-      new DeleteObjectCommand({ Bucket: bucket, Key: key })
+      new DeleteObjectCommand({ Bucket: getBucketValue(), Key: key })
     );
     return true;
   } catch (err) {
@@ -115,7 +120,7 @@ export async function listObjects(
 ): Promise<string[]> {
   try {
     const resp = await getClient().send(
-      new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix })
+      new ListObjectsV2Command({ Bucket: getBucketValue(), Prefix: prefix })
     );
     return (resp.Contents ?? []).map((obj) => obj.Key!).filter(Boolean);
   } catch (err) {
@@ -125,6 +130,7 @@ export async function listObjects(
 }
 
 export function getDocumentUrl(s3Key: string): string {
+  const bucket = getBucketValue();
   if (!s3Key || !bucket) return "";
-  return `https://${bucket}.s3.${region}.amazonaws.com/${s3Key}`;
+  return `https://${bucket}.s3.${getRegionValue()}.amazonaws.com/${s3Key}`;
 }
