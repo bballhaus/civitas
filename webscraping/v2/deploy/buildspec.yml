@@ -1,0 +1,32 @@
+version: 0.2
+
+env:
+  variables:
+    ECR_REPO: civitas-scraper
+    LAMBDA_FUNCTION: civitas-rfp-scraper
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - aws ecr describe-repositories --repository-names $ECR_REPO || aws ecr create-repository --repository-name $ECR_REPO
+
+  build:
+    commands:
+      - echo Building Docker image...
+      - docker build -t $ECR_REPO -f webscraping/v2/deploy/Dockerfile .
+      - docker tag $ECR_REPO:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO:latest
+
+  post_build:
+    commands:
+      - echo Pushing to ECR...
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO:latest
+      - echo Updating Lambda function...
+      - |
+        aws lambda get-function --function-name $LAMBDA_FUNCTION 2>/dev/null && \
+        aws lambda update-function-code \
+          --function-name $LAMBDA_FUNCTION \
+          --image-uri $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO:latest || \
+        echo "Lambda function does not exist yet — will be created by setup script"
+      - echo Done!
