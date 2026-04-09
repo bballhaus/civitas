@@ -1,0 +1,52 @@
+name: Scrape RFPs
+
+on:
+  schedule:
+    # Run every 4 hours
+    - cron: '17 */4 * * *'
+  workflow_dispatch:
+    inputs:
+      site_id:
+        description: 'Site to scrape (leave empty for all)'
+        required: false
+        default: 'caleprocure'
+      skip_enrich:
+        description: 'Skip PDF enrichment'
+        required: false
+        default: 'true'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r webscraping/v2/requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Run scraper
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_STORAGE_BUCKET_NAME: ${{ secrets.AWS_STORAGE_BUCKET_NAME }}
+          AWS_S3_REGION_NAME: us-east-1
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          SITE="${{ github.event.inputs.site_id || 'caleprocure' }}"
+          SKIP="${{ github.event.inputs.skip_enrich || 'true' }}"
+
+          if [ "$SKIP" = "true" ]; then
+            python -m webscraping.v2.orchestrator.runner --site "$SITE" --skip-enrich
+          else
+            python -m webscraping.v2.orchestrator.runner --site "$SITE"
+          fi
