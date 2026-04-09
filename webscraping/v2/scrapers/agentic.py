@@ -139,7 +139,10 @@ class AgenticScraper(BaseScraper):
     async def scrape(self) -> AsyncIterator[RawScrapedEvent]:
         """Main scrape loop: discover, recipe, extract, paginate."""
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+            )
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent=(
@@ -147,6 +150,11 @@ class AgenticScraper(BaseScraper):
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/120.0.0.0 Safari/537.36"
                 ),
+                locale="en-US",
+                timezone_id="America/Los_Angeles",
+            )
+            await context.add_init_script(
+                'Object.defineProperty(navigator, "webdriver", {get: () => undefined});'
             )
             page = await context.new_page()
 
@@ -226,11 +234,34 @@ class AgenticScraper(BaseScraper):
                         # Try as text content
                         elem = await page.query_selector(f"text={selector}")
                     if elem:
-                        await elem.click()
-                        await page.wait_for_load_state("networkidle", timeout=15000)
-                        await page.wait_for_timeout(2000)
+                        # Prefer navigating via href over clicking (handles hidden nav elements)
+                        href = await elem.get_attribute("href")
+                        if href:
+                            if not href.startswith("http"):
+                                base = f"{page.url.split('/')[0]}//{page.url.split('/')[2]}"
+                                href = f"{base}{href}"
+                            await page.goto(href, wait_until="networkidle", timeout=30000)
+                            await page.wait_for_timeout(2000)
+                        else:
+                            try:
+                                await elem.click(timeout=5000)
+                            except Exception:
+                                await elem.evaluate("el => el.click()")
+                            await page.wait_for_load_state("networkidle", timeout=15000)
+                            await page.wait_for_timeout(2000)
                     else:
-                        logger.warning(f"Could not find element: {selector}")
+                        # Find by text content via JS and get href
+                        escaped = selector.replace("'", "\\'")
+                        href = await page.evaluate(f"""() => {{
+                            const els = Array.from(document.querySelectorAll('a'));
+                            const m = els.find(el => el.textContent.trim().includes('{escaped}'));
+                            return m ? m.href : null;
+                        }}""")
+                        if href:
+                            await page.goto(href, wait_until="networkidle", timeout=30000)
+                            await page.wait_for_timeout(2000)
+                        else:
+                            logger.warning(f"Could not find element: {selector}")
                 except Exception as e:
                     logger.warning(f"Click failed: {e}")
 

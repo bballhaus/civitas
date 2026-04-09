@@ -11,14 +11,14 @@ from dotenv import load_dotenv
 # Load .env from back_end (has AWS + GROQ keys)
 _BACKEND_ENV = Path(__file__).resolve().parent.parent.parent / "back_end" / ".env"
 if _BACKEND_ENV.exists():
-    load_dotenv(_BACKEND_ENV)
-load_dotenv()  # also try CWD .env
+    load_dotenv(_BACKEND_ENV, override=True)
+load_dotenv(override=True)  # also try CWD .env
 
 # AWS
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 AWS_REGION = os.environ.get("AWS_S3_REGION_NAME", os.environ.get("AWS_REGION", "us-east-1"))
-S3_BUCKET = os.environ.get("AWS_STORAGE_BUCKET_NAME", "civitas-uploads")
+S3_BUCKET = os.environ.get("AWS_STORAGE_BUCKET_NAME", "civitas-ai")
 
 # S3 prefixes
 S3_V2_PREFIX = "scrapes/v2/"

@@ -98,6 +98,10 @@ interface V2EnrichedEvent {
   source_id: string;
   source_event_id: string;
   source_url: string;
+  status: "open" | "closed";
+  first_seen_at: string;
+  last_seen_at: string;
+  closed_at: string | null;
   title: string;
   description: string;
   agency: string;
@@ -637,6 +641,7 @@ export async function GET() {
     const v2Rfps = v2Manifests.flatMap(m =>
       m.events
         .filter(e => !!e.title?.trim())
+        .filter(e => e.status !== "closed")  // Exclude closed RFPs
         // Skip caleprocure v2 events — they're already in legacy
         .filter(e => e.source_id !== "caleprocure")
         .map(v2EventToRfp)

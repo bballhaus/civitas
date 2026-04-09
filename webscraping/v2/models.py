@@ -90,6 +90,11 @@ class AttachmentExtraction(BaseModel):
 # Enriched event — fully processed, ready for frontend/matching
 # ---------------------------------------------------------------------------
 
+class EventStatus(str, Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+
+
 class EnrichedEvent(BaseModel):
     """Final output after the full pipeline. Maps to the frontend RFP interface."""
     # Identity
@@ -97,6 +102,12 @@ class EnrichedEvent(BaseModel):
     source_id: str
     source_event_id: str
     source_url: str
+
+    # Status tracking
+    status: EventStatus = EventStatus.OPEN
+    first_seen_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    last_seen_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    closed_at: Optional[str] = None
 
     # Core fields
     title: str

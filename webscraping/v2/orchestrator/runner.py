@@ -29,6 +29,7 @@ from webscraping.v2.config import (
 from webscraping.v2.models import (
     RawScrapedEvent,
     EnrichedEvent,
+    EventStatus,
     SiteConfig,
     SourceManifest,
     ScraperType,
@@ -125,6 +126,63 @@ def get_s3():
     )
 
 
+def load_existing_manifest(s3, source_id: str) -> dict[str, EnrichedEvent]:
+    """Load existing events from S3 manifest, keyed by event ID."""
+    key = f"{S3_V2_PREFIX}manifests/{source_id}/latest.json"
+    try:
+        resp = s3.get_object(Bucket=S3_BUCKET, Key=key)
+        data = json.loads(resp["Body"].read())
+        return {
+            e["id"]: EnrichedEvent(**e)
+            for e in data.get("events", [])
+        }
+    except Exception:
+        return {}
+
+
+def merge_events(
+    existing: dict[str, EnrichedEvent],
+    fresh: list[EnrichedEvent],
+) -> list[EnrichedEvent]:
+    """
+    Merge freshly scraped events with existing persisted events.
+
+    - New events: added with status=open
+    - Still-present events: updated with latest data, last_seen_at refreshed
+    - Missing events (in existing but not in fresh): marked as closed
+    """
+    now = datetime.now().isoformat()
+    fresh_by_id = {e.id: e for e in fresh}
+    merged: dict[str, EnrichedEvent] = {}
+
+    # Update or close existing events
+    for eid, existing_event in existing.items():
+        if eid in fresh_by_id:
+            # Still on the site — update with fresh data, keep first_seen_at
+            updated = fresh_by_id[eid]
+            updated.first_seen_at = existing_event.first_seen_at
+            updated.last_seen_at = now
+            updated.status = EventStatus.OPEN
+            updated.closed_at = None
+            merged[eid] = updated
+        else:
+            # No longer on the site — mark as closed
+            existing_event.status = EventStatus.CLOSED
+            if not existing_event.closed_at:
+                existing_event.closed_at = now
+            merged[eid] = existing_event
+
+    # Add brand new events
+    for eid, fresh_event in fresh_by_id.items():
+        if eid not in merged:
+            fresh_event.first_seen_at = now
+            fresh_event.last_seen_at = now
+            fresh_event.status = EventStatus.OPEN
+            merged[eid] = fresh_event
+
+    return list(merged.values())
+
+
 def upload_manifest(s3, source_id: str, source_name: str, events: list[EnrichedEvent]):
     """Upload source manifest to v2 path."""
     manifest = SourceManifest(
@@ -140,7 +198,9 @@ def upload_manifest(s3, source_id: str, source_name: str, events: list[EnrichedE
         Body=manifest.model_dump_json(indent=2),
         ContentType="application/json",
     )
-    logger.info(f"Uploaded manifest: {key} ({len(events)} events)")
+    open_count = sum(1 for e in events if e.status == EventStatus.OPEN)
+    closed_count = len(events) - open_count
+    logger.info(f"Uploaded manifest: {key} ({open_count} open, {closed_count} closed, {len(events)} total)")
 
 
 def upload_legacy_format(s3, events: list[EnrichedEvent], enrichments: dict):
@@ -231,17 +291,26 @@ async def run_site(site_id: str, skip_enrich: bool = False, skip_upload: bool = 
         enriched = normalize_event(event, extraction)
         enriched_events.append(enriched)
 
-    # 4. Upload
+    # 4. Merge with existing events + Upload
     if not skip_upload:
-        logger.info("=== Uploading to S3 ===")
+        logger.info("=== Merging with existing events and uploading to S3 ===")
         s3 = get_s3()
 
-        # v2 manifest
-        upload_manifest(s3, config.site_id, config.name, enriched_events)
+        # Load existing manifest and merge
+        existing = load_existing_manifest(s3, config.site_id)
+        if existing:
+            logger.info(f"Loaded {len(existing)} existing events from manifest")
+        merged_events = merge_events(existing, enriched_events)
 
-        # Legacy format (for backward compat with current frontend)
+        # v2 manifest
+        upload_manifest(s3, config.site_id, config.name, merged_events)
+
+        # Legacy format (for backward compat — only includes open events)
         if site_id == "caleprocure":
-            upload_legacy_format(s3, enriched_events, enrichments)
+            open_events = [e for e in merged_events if e.status == EventStatus.OPEN]
+            upload_legacy_format(s3, open_events, enrichments)
+
+        enriched_events = merged_events
 
     logger.info(f"=== Done: {len(enriched_events)} events processed ===")
     return enriched_events

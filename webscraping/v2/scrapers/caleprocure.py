@@ -45,7 +45,10 @@ class CalEprocureScraper(BaseScraper):
     async def scrape(self) -> AsyncIterator[RawScrapedEvent]:
         """Scrape all events from Cal eProcure search page."""
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+            )
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent=(
@@ -53,6 +56,11 @@ class CalEprocureScraper(BaseScraper):
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/120.0.0.0 Safari/537.36"
                 ),
+                locale="en-US",
+                timezone_id="America/Los_Angeles",
+            )
+            await context.add_init_script(
+                'Object.defineProperty(navigator, "webdriver", {get: () => undefined});'
             )
             page = await context.new_page()
 
@@ -120,6 +128,9 @@ class CalEprocureScraper(BaseScraper):
         async with context.expect_page() as new_page_info:
             await event_id_cell.click()
         event_page = await new_page_info.value
+
+        # Cal eProcure opens a loading.html page first, then redirects to /event/
+        await event_page.wait_for_url("**/event/**", timeout=30000)
         await event_page.wait_for_load_state("networkidle", timeout=30000)
 
         try:

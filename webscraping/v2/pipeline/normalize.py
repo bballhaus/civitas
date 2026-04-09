@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from webscraping.v2.models import RawScrapedEvent, EnrichedEvent, AttachmentExtraction
+from webscraping.v2.models import RawScrapedEvent, EnrichedEvent, AttachmentExtraction, EventStatus
 from webscraping.v2.utils import make_event_id
 
 

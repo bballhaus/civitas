@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Civitas RFP Scraping System — Lambda + EventBridge scheduling.
+
+  Deploys a container-based Lambda function that runs the scraping pipeline
+  on a schedule via EventBridge. Uses a Docker image with Playwright + Chromium
+  for browser-based scrapers.
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Default: civitas-ai
+    Description: S3 bucket for scraped RFP data
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+    Description: Groq API key for PDF enrichment
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: Anthropic API key for agentic scraper (optional)
+  ScrapeSchedule:
+    Type: String
+    Default: 'rate(4 hours)'
+    Description: How often to run the scraper (EventBridge schedule expression)
+
+Globals:
+  Function:
+    Timeout: 900  # 15 minutes max for Lambda
+    MemorySize: 2048
+
+Resources:
+  # ------------------------------------------------------------------
+  # Lambda function — runs the scraping pipeline
+  # ------------------------------------------------------------------
+  ScraperFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: civitas-rfp-scraper
+      PackageType: Image
+      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/civitas-scraper:latest'
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          AWS_STORAGE_BUCKET_NAME: !Ref S3BucketName
+          GROQ_API_KEY: !Ref GroqApiKey
+          ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+          SITE_ID: caleprocure  # Default site; override per-invocation via event payload
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref S3BucketName
+      Events:
+        ScheduledScrape:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref ScrapeSchedule
+            Description: Scheduled RFP scraping run
+            Input: '{"site_id": "caleprocure"}'
+            Enabled: true
+
+  # ------------------------------------------------------------------
+  # Per-site scheduled rules (add more as sites come online)
+  # ------------------------------------------------------------------
+  # CalEprocureRule is created automatically by the Events property above.
+  # Additional sites can be added as separate EventBridge rules:
+
+  # PlanetBidsSanDiegoRule:
+  #   Type: AWS::Events::Rule
+  #   Properties:
+  #     ScheduleExpression: 'rate(4 hours)'
+  #     State: ENABLED
+  #     Targets:
+  #       - Arn: !GetAtt ScraperFunction.Arn
+  #         Id: planetbids-san-diego
+  #         Input: '{"site_id": "planetbids_san_diego"}'
+
+Outputs:
+  ScraperFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt ScraperFunction.Arn
+  ScraperFunctionName:
+    Description: Lambda function name
+    Value: !Ref ScraperFunction
