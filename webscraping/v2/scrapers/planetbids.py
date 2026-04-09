@@ -59,7 +59,13 @@ class PlanetBidsScraper(BaseScraper):
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                ],
             )
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
