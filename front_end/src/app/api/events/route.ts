@@ -41,7 +41,7 @@ const s3 = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
   },
 });
-const S3_BUCKET = process.env.AWS_S3_BUCKET || "civitas-uploads";
+const S3_BUCKET = process.env.AWS_S3_BUCKET || "civitas-ai";
 
 // ---------------------------------------------------------------------------
 // Server-side S3 cache (5-minute TTL)
