@@ -9,8 +9,9 @@ phases:
   pre_build:
     commands:
       - echo Logging in to Amazon ECR...
+      - echo "Region=$AWS_DEFAULT_REGION Account=$AWS_ACCOUNT_ID"
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
-      - aws ecr describe-repositories --repository-names $ECR_REPO || aws ecr create-repository --repository-name $ECR_REPO
+      - aws ecr describe-repositories --repository-names $ECR_REPO --region $AWS_DEFAULT_REGION || aws ecr create-repository --repository-name $ECR_REPO --region $AWS_DEFAULT_REGION
 
   build:
     commands:
@@ -24,9 +25,10 @@ phases:
       - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO:latest
       - echo Updating Lambda function...
       - |
-        aws lambda get-function --function-name $LAMBDA_FUNCTION 2>/dev/null && \
+        aws lambda get-function --function-name $LAMBDA_FUNCTION --region $AWS_DEFAULT_REGION 2>/dev/null && \
         aws lambda update-function-code \
           --function-name $LAMBDA_FUNCTION \
-          --image-uri $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO:latest || \
+          --image-uri $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO:latest \
+          --region $AWS_DEFAULT_REGION || \
         echo "Lambda function does not exist yet — will be created by setup script"
       - echo Done!
