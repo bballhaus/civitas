@@ -1,47 +1,21 @@
 # Lambda container image with Playwright + Chromium for browser-based scrapers.
-#
-# Uses multi-stage build:
-#   Stage 1: Install Playwright + Chromium in a full Python image
-#   Stage 2: Copy to Lambda runtime
+# Single-stage build using the Lambda base image directly.
 
-# --- Stage 1: Build with full Python + Playwright ---
-FROM public.ecr.aws/docker/library/python:3.11-slim AS builder
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY webscraping/v2/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --target /opt/python -r /tmp/requirements.txt
-
-RUN pip install playwright && python -m playwright install chromium
-RUN python -m playwright install-deps chromium
-
-# --- Stage 2: Lambda runtime ---
 FROM public.ecr.aws/lambda/python:3.11
 
-# Copy Chromium deps (installed by playwright install-deps in stage 1)
-RUN microdnf install -y \
-    nss \
-    atk \
-    cups-libs \
-    libdrm \
-    libXcomposite \
-    libXdamage \
-    libXrandr \
-    mesa-libgbm \
-    pango \
-    alsa-lib \
-    at-spi2-atk \
-    gtk3 \
-    libxkbcommon \
-    && microdnf clean all
+# The Lambda Python 3.11 image is based on Amazon Linux 2023.
+# Determine available package manager and install Chromium dependencies.
+RUN (command -v dnf && dnf install -y nss atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib at-spi2-atk gtk3 libxkbcommon && dnf clean all) || \
+    (command -v microdnf && microdnf install -y nss atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib && microdnf clean all) || \
+    (command -v yum && yum install -y nss atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib && yum clean all) || \
+    echo "WARNING: No package manager found, Chromium may not work"
 
-# Copy Python packages from builder
-COPY --from=builder /opt/python ${LAMBDA_TASK_ROOT}
+# Install Python dependencies
+COPY webscraping/v2/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
-# Copy Playwright browsers from builder
-COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
+# Install Playwright Chromium
+RUN python -m playwright install chromium
 
 # Copy application code
 COPY webscraping/__init__.py ${LAMBDA_TASK_ROOT}/webscraping/__init__.py
