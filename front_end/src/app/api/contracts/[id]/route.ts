@@ -7,6 +7,14 @@ import {
 } from "@/lib/contract-storage";
 import { refreshProfileFromContracts } from "@/lib/profile-storage";
 
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+const ALLOWED_EXTENSIONS = new Set([".pdf", ".docx", ".doc", ".txt"]);
+
+function getFileExtension(name: string): string {
+  const idx = name.lastIndexOf(".");
+  return idx >= 0 ? name.slice(idx).toLowerCase() : "";
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -46,6 +54,19 @@ export async function PATCH(
       const formData = await request.formData();
       const file = formData.get("document") as File | null;
       if (file) {
+        if (file.size > MAX_FILE_SIZE) {
+          return NextResponse.json(
+            { error: "File too large. Maximum size is 25 MB." },
+            { status: 413 }
+          );
+        }
+        const ext = getFileExtension(file.name);
+        if (!ALLOWED_EXTENSIONS.has(ext)) {
+          return NextResponse.json(
+            { error: "Unsupported file type. Allowed: PDF, DOCX, DOC, TXT." },
+            { status: 400 }
+          );
+        }
         fileBuffer = Buffer.from(await file.arrayBuffer());
         fileName = file.name;
         contentType = file.type || "application/pdf";

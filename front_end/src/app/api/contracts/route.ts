@@ -9,6 +9,14 @@ import { refreshProfileFromContracts } from "@/lib/profile-storage";
 
 export const maxDuration = 60; // LLM extraction can take time
 
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+const ALLOWED_EXTENSIONS = new Set([".pdf", ".docx", ".doc", ".txt"]);
+
+function getFileExtension(name: string): string {
+  const idx = name.lastIndexOf(".");
+  return idx >= 0 ? name.slice(idx).toLowerCase() : "";
+}
+
 export async function GET(request: Request) {
   const user = await getAuthenticatedUser(request);
   if (!user) {
@@ -16,7 +24,9 @@ export async function GET(request: Request) {
   }
 
   const contracts = await listContracts(user.username);
-  return NextResponse.json(contracts);
+  return NextResponse.json(contracts, {
+    headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=60" },
+  });
 }
 
 export async function POST(request: Request) {
@@ -64,6 +74,23 @@ export async function POST(request: Request) {
     let contentType: string | undefined;
 
     if (file) {
+      // Validate file size
+      if (file.size > MAX_FILE_SIZE) {
+        return NextResponse.json(
+          { error: `File too large. Maximum size is 25 MB.` },
+          { status: 413 }
+        );
+      }
+
+      // Validate file extension
+      const ext = getFileExtension(file.name);
+      if (!ALLOWED_EXTENSIONS.has(ext)) {
+        return NextResponse.json(
+          { error: `Unsupported file type. Allowed: PDF, DOCX, DOC, TXT.` },
+          { status: 400 }
+        );
+      }
+
       const arrayBuffer = await file.arrayBuffer();
       fileBuffer = Buffer.from(arrayBuffer);
       fileName = file.name;
