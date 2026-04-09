@@ -155,7 +155,7 @@ function ProfileSetupInner() {
     });
 
     try {
-      const response = await fetch("http://localhost:8000/api/profile/extract/", {
+      const response = await fetch("/api/profile/extract/", {
         method: "POST",
         body: formData,
       });
@@ -189,7 +189,7 @@ function ProfileSetupInner() {
     } catch (error) {
       if (error instanceof TypeError && error.message.includes("fetch")) {
         throw new Error(
-          "Cannot connect to backend server. Please make sure the Django server is running on http://localhost:8000"
+          "Cannot connect to server. Please try again later."
         );
       }
       throw error;

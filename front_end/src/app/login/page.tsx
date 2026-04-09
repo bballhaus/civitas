@@ -3,11 +3,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getApiBase, setCachedUser, setAuthToken, clearCachedUser } from "@/lib/api";
+import { setCachedUser, setAuthToken, clearCachedUser } from "@/lib/api";
 import { clearCachedEvents } from "@/lib/events-cache";
 import { MeshBackground } from "@/components/MeshBackground";
-
-const API_BASE = getApiBase();
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,25 +20,9 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      // Get CSRF token first (required for Django session auth)
-      const csrfRes = await fetch(`${API_BASE}/auth/csrf/`, {
-        method: "GET",
-        credentials: "include",
-      });
-      if (!csrfRes.ok) {
-        const errData = await csrfRes.json().catch(() => ({}));
-        const msg = errData?.error || (csrfRes.status === 503 ? "Backend not reachable." : "Failed to get CSRF token");
-        throw new Error(msg);
-      }
-      const { csrfToken } = await csrfRes.json();
-
-      const res = await fetch(`${API_BASE}/auth/login/`, {
+      const res = await fetch("/api/auth/login/", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRFToken": csrfToken,
-        },
-        credentials: "include",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
       });
 
@@ -68,7 +50,6 @@ export default function LoginPage() {
       clearCachedUser();
       clearCachedEvents();
       setCachedUser({
-        user_id: typeof data?.user_id === "number" ? data.user_id : 0,
         username: typeof data?.username === "string" ? data.username : username,
       });
       router.push("/home");
