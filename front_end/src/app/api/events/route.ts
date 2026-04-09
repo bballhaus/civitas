@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { normalizeCapability } from "@/lib/capabilities";
 
 interface ScrapedEvent {
@@ -88,6 +88,106 @@ async function loadS3Data(): Promise<{
 
   s3Cache = { data, extractions, timestamp: now };
   return { events: data.events ?? [], extractions };
+}
+
+// ---------------------------------------------------------------------------
+// v2 multi-source manifest loading
+// ---------------------------------------------------------------------------
+interface V2EnrichedEvent {
+  id: string;
+  source_id: string;
+  source_event_id: string;
+  source_url: string;
+  title: string;
+  description: string;
+  agency: string;
+  location: string;
+  deadline: string;
+  estimated_value: string;
+  industry: string;
+  procurement_type: string;
+  naics_codes: string[];
+  capabilities: string[];
+  certifications: string[];
+  contact: { name?: string; email?: string; phone?: string };
+  clearances_required: string[];
+  set_aside_types: string[];
+  deliverables: string[];
+  contract_duration: string | null;
+  evaluation_criteria: string[];
+  attachment_rollup: { summary: string; text: string; pdfsProcessed: string[] } | null;
+  posted_date: string | null;
+  scraped_at: string;
+}
+
+interface V2Manifest {
+  source_id: string;
+  source_name: string;
+  updated_at: string;
+  total_events: number;
+  events: V2EnrichedEvent[];
+}
+
+let v2Cache: { manifests: V2Manifest[]; timestamp: number } | null = null;
+
+async function loadV2Manifests(): Promise<V2Manifest[]> {
+  const now = Date.now();
+  if (v2Cache && now - v2Cache.timestamp < S3_CACHE_TTL) {
+    return v2Cache.manifests;
+  }
+
+  try {
+    // List all manifest files under scrapes/v2/manifests/
+    const listCmd = new ListObjectsV2Command({
+      Bucket: S3_BUCKET,
+      Prefix: "scrapes/v2/manifests/",
+      Delimiter: "/",
+    });
+    const listResp = await s3.send(listCmd);
+    const prefixes = listResp.CommonPrefixes?.map(p => p.Prefix).filter(Boolean) ?? [];
+
+    const manifests: V2Manifest[] = [];
+    for (const prefix of prefixes) {
+      const key = `${prefix}latest.json`;
+      const manifest = await fetchS3Json<V2Manifest>(key);
+      if (manifest && manifest.events?.length > 0) {
+        manifests.push(manifest);
+      }
+    }
+
+    v2Cache = { manifests, timestamp: now };
+    return manifests;
+  } catch (err) {
+    console.warn("Could not load v2 manifests:", err);
+    return [];
+  }
+}
+
+function v2EventToRfp(e: V2EnrichedEvent) {
+  return {
+    id: e.id,
+    title: e.title,
+    agency: e.agency,
+    location: e.location,
+    deadline: e.deadline,
+    estimatedValue: e.estimated_value,
+    industry: e.industry,
+    naicsCodes: e.naics_codes,
+    capabilities: e.capabilities,
+    certifications: e.certifications,
+    contractType: e.procurement_type || "RFx",
+    description: e.description,
+    eventUrl: e.source_url,
+    contactName: e.contact?.name,
+    contactEmail: e.contact?.email,
+    contactPhone: e.contact?.phone,
+    clearancesRequired: e.clearances_required,
+    setAsideTypes: e.set_aside_types,
+    deliverables: e.deliverables,
+    contractDuration: e.contract_duration,
+    evaluationCriteria: e.evaluation_criteria,
+    attachmentRollup: e.attachment_rollup,
+  };
 }
 
 // Infer location from title, description, and department
@@ -532,8 +632,29 @@ export async function GET() {
       };
     });
 
+    // Load v2 multi-source events and merge (deduplicating by title+agency)
+    const v2Manifests = await loadV2Manifests();
+    const v2Rfps = v2Manifests.flatMap(m =>
+      m.events
+        .filter(e => !!e.title?.trim())
+        // Skip caleprocure v2 events — they're already in legacy
+        .filter(e => e.source_id !== "caleprocure")
+        .map(v2EventToRfp)
+    );
+
+    const allRfps = [...rfps, ...v2Rfps];
+
+    // Deduplicate by normalized title (in case same RFP appears on multiple platforms)
+    const seen = new Set<string>();
+    const deduped = allRfps.filter(rfp => {
+      const key = rfp.title.toLowerCase().trim().replace(/\s+/g, " ");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
     return NextResponse.json(
-      { events: rfps, total: rfps.length },
+      { events: deduped, total: deduped.length },
       {
         headers: {
           "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600",
