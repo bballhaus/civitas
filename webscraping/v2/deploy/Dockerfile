@@ -5,7 +5,7 @@
 #   Stage 2: Copy to Lambda runtime
 
 # --- Stage 1: Build with full Python + Playwright ---
-FROM python:3.11-slim AS builder
+FROM public.ecr.aws/docker/library/python:3.11-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
