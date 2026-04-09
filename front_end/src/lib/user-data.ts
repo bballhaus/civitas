@@ -77,8 +77,21 @@ function userKey(username: string): string {
   return `${USER_DATA_PREFIX}${encodeURIComponent(username)}.json`;
 }
 
+// Short-lived cache to avoid repeated S3 reads within the same request flow.
+// Each API request typically reads user data 2-3 times (auth check + profile + status).
+const userCache = new Map<string, { data: UserData; expiresAt: number }>();
+const CACHE_TTL_MS = 10_000; // 10 seconds
+
 export async function getUserData(username: string): Promise<UserData | null> {
-  return getObjectJSON<UserData>(userKey(username));
+  const cached = userCache.get(username);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data;
+  }
+  const data = await getObjectJSON<UserData>(userKey(username));
+  if (data) {
+    userCache.set(username, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+  }
+  return data;
 }
 
 export async function saveUserData(
@@ -86,6 +99,8 @@ export async function saveUserData(
   data: UserData
 ): Promise<void> {
   await putObjectJSON(userKey(username), data);
+  // Update cache with fresh data
+  userCache.set(username, { data, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
 export async function userExists(username: string): Promise<boolean> {

@@ -32,10 +32,10 @@ front_end/src/
 │   │   ├── page.tsx                  # Main RFP search & matching interface
 │   │   └── rfp/[id]/page.tsx         # Individual RFP detail view
 │   └── api/                          # Server-side API routes
-│       ├── auth/                     # Authentication (signup, login, logout, me, change-password)
+│       ├── auth/                     # JWT auth (login, signup, logout, me, change-password)
 │       ├── contracts/                # Contract CRUD + extraction
-│       ├── profile/                  # Profile CRUD + refresh + extraction
-│       ├── user/                     # RFP status, generated POE/proposals
+│       ├── profile/                  # Profile CRUD + multi-doc extraction
+│       ├── user/                     # RFP status, saved POE/proposals
 │       ├── events/route.ts           # Fetch & transform RFPs from S3
 │       ├── capabilities-analysis/route.ts
 │       ├── match-summary/route.ts
@@ -50,16 +50,18 @@ front_end/src/
 │   └── MarkdownContent.tsx           # Markdown renderer
 ├── lib/
 │   ├── api.ts                        # Frontend API client (auth, profile, contracts)
-│   ├── s3.ts                         # S3 client utility
-│   ├── user-data.ts                  # User JSON read/write in S3
-│   ├── auth.ts                       # JWT + password hashing
-│   ├── extraction.ts                 # LLM document extraction
+│   ├── auth.ts                       # JWT signing/verification, password hashing
+│   ├── s3.ts                         # S3 client (singleton, lazy-init)
+│   ├── user-data.ts                  # User JSON CRUD with in-memory cache
 │   ├── contract-storage.ts           # Contract CRUD operations
-│   ├── profile-storage.ts            # Profile management + aggregation
-│   ├── rfp-status.ts                 # RFP status tracking
+│   ├── profile-storage.ts            # Profile read/write/aggregate
+│   ├── extraction.ts                 # LLM document extraction
+│   ├── rfp-status.ts                 # RFP application tracking
+│   ├── rate-limit.ts                 # Rate limiting utility
 │   ├── rfp-matching.ts               # Matching algorithm (1300+ lines)
 │   ├── capabilities.ts               # Capability normalization & synonyms
 │   └── events-cache.ts               # Client-side RFP caching
+├── proxy.ts                          # Edge proxy: rate limiting for auth & extraction
 ├── data/
 │   ├── filter-options.ts             # California cities, NAICS codes, filter lists
 │   ├── california-counties.json      # County list
@@ -174,10 +176,10 @@ npm run lint    # ESLint
 
 **Environment Variables** (`front_end/.env.local`):
 ```
-AWS_ACCESS_KEY_ID=...              # S3 credentials
+JWT_SECRET=...                  # Required. Strong random value for JWT signing.
+GROQ_API_KEY=...                # For AI generation and extraction routes
+AWS_ACCESS_KEY_ID=...           # For S3 data storage
 AWS_SECRET_ACCESS_KEY=...
 AWS_REGION=us-east-1
 AWS_S3_BUCKET=civitas-ai
-GROQ_API_KEY=...                   # For AI generation + extraction
-JWT_SECRET=...                     # HS256 signing key (min 256 bits)
 ```

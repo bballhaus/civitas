@@ -54,7 +54,10 @@ export async function POST(request: Request) {
     }
 
     const token = await signJwt(username);
-    return NextResponse.json({ username, token });
+    return NextResponse.json(
+      { username, token },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (err) {
     console.error("Login error:", err);
     return NextResponse.json(

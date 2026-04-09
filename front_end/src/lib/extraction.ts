@@ -90,11 +90,10 @@ const DEFAULT_MODEL = "llama-3.1-8b-instant";
 // ── Text extraction ──
 
 async function extractTextFromPdf(buffer: Buffer): Promise<string> {
-  // pdf-parse dynamic import
-  const pdfParseModule = await import("pdf-parse");
-  const pdfParse = (pdfParseModule as any).default ?? pdfParseModule;
+  const { PDFParse } = await import("pdf-parse");
   try {
-    const result = await pdfParse(buffer);
+    const parser = new PDFParse(new Uint8Array(buffer));
+    const result = await parser.getText();
     const text = (result.text || "").trim();
     if (!text) throw new ExtractionError("No text could be extracted from the PDF");
     return text;

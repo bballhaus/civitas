@@ -65,7 +65,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       { username, token },
-      { status: 201 }
+      { status: 201, headers: { "Cache-Control": "no-store" } }
     );
   } catch (err) {
     console.error("Signup error:", err);

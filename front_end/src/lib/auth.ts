@@ -9,10 +9,17 @@ import { promisify } from "util";
 
 const pbkdf2Async = promisify(pbkdf2Callback);
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "CHANGE_ME_IN_PRODUCTION"
-);
-const JWT_EXPIRY_DAYS = 30;
+function getJwtSecret(): Uint8Array {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret === "CHANGE_ME_IN_PRODUCTION") {
+    throw new Error(
+      "JWT_SECRET environment variable must be set to a strong random value."
+    );
+  }
+  return new TextEncoder().encode(secret);
+}
+
+const JWT_EXPIRY_DAYS = 7;
 
 // ── JWT ──
 
@@ -25,12 +32,12 @@ export async function signJwt(username: string): Promise<string> {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${JWT_EXPIRY_DAYS}d`)
-    .sign(JWT_SECRET);
+    .sign(getJwtSecret());
 }
 
 export async function verifyJwt(token: string): Promise<AuthPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
+    const { payload } = await jwtVerify(token, getJwtSecret());
     return payload as AuthPayload;
   } catch {
     return null;

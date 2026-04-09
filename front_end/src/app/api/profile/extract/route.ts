@@ -3,9 +3,19 @@ import { extractMetadataFromDocument, ExtractionError } from "@/lib/extraction";
 
 export const maxDuration = 60;
 
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+const MAX_FILES = 10;
+const ALLOWED_EXTENSIONS = new Set([".pdf", ".docx", ".doc", ".txt"]);
+
+function getFileExtension(name: string): string {
+  const idx = name.lastIndexOf(".");
+  return idx >= 0 ? name.slice(idx).toLowerCase() : "";
+}
+
 /**
  * Extract and aggregate profile from multiple uploaded documents.
- * Public endpoint (no auth required) — used during onboarding before account creation.
+ * Public endpoint — used during onboarding before account creation.
+ * Rate limited via middleware (5 req/min per IP).
  */
 export async function POST(request: Request) {
   try {
@@ -17,6 +27,30 @@ export async function POST(request: Request) {
         { error: "No document files provided" },
         { status: 400 }
       );
+    }
+
+    if (files.length > MAX_FILES) {
+      return NextResponse.json(
+        { error: `Too many files. Maximum is ${MAX_FILES}.` },
+        { status: 400 }
+      );
+    }
+
+    // Validate all files before processing
+    for (const file of files) {
+      if (file.size > MAX_FILE_SIZE) {
+        return NextResponse.json(
+          { error: `File "${file.name}" is too large. Maximum size is 25 MB.` },
+          { status: 413 }
+        );
+      }
+      const ext = getFileExtension(file.name);
+      if (!ALLOWED_EXTENSIONS.has(ext)) {
+        return NextResponse.json(
+          { error: `File "${file.name}" has unsupported type. Allowed: PDF, DOCX, DOC, TXT.` },
+          { status: 400 }
+        );
+      }
     }
 
     const results: Record<string, unknown>[] = [];
