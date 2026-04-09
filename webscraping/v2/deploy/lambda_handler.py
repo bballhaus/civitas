@@ -1,22 +1,19 @@
 """
 AWS Lambda handler for the Civitas RFP scraping system.
 
-Triggered by EventBridge on a schedule. Runs the scraping pipeline for
-a specific site or all enabled sites.
+Supports chained invocations for large sites: each invocation scrapes a batch
+of events, saves progress, then invokes itself with the next batch offset.
 
-Environment variables (set in Lambda config):
-    SITE_ID: Optional — run a specific site. If unset, runs all enabled sites.
-    SKIP_ENRICH: Optional — set to "true" to skip PDF enrichment.
-    AWS_STORAGE_BUCKET_NAME: S3 bucket for scraped data.
-    GROQ_API_KEY: For PDF enrichment.
-    ANTHROPIC_API_KEY: For agentic scraper (optional).
+Event payload:
+    {
+        "site_id": "caleprocure",       # required
+        "batch_offset": 0,              # optional: start index (default 0)
+        "batch_size": 40,               # optional: events per invocation (default 40)
+        "skip_enrich": true             # optional: skip PDF enrichment (default true)
+    }
 
-Note: This handler is designed for sites that DON'T need a browser (API scrapers).
-For Playwright-based scrapers (Cal eProcure, PlanetBids, agentic), use ECS Fargate
-tasks instead — Lambda doesn't support headless Chromium well within its constraints.
-
-For Cal eProcure specifically, we provide an ECS-compatible entry point that can
-also be run as a Lambda with a container image that includes Chromium.
+When batch_offset + batch_size < total events, the Lambda self-invokes with
+the next offset. This chains until all events are scraped.
 """
 
 import asyncio
@@ -24,38 +21,71 @@ import json
 import logging
 import os
 
+import boto3
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
 def handler(event, context):
-    """Lambda entry point."""
-    site_id = os.environ.get("SITE_ID", event.get("site_id", ""))
-    skip_enrich = os.environ.get("SKIP_ENRICH", "false").lower() == "true"
+    """Lambda entry point with chained batch support."""
+    site_id = event.get("site_id", os.environ.get("SITE_ID", ""))
+    batch_offset = event.get("batch_offset", 0)
+    batch_size = event.get("batch_size", 40)
+    skip_enrich = event.get("skip_enrich", True)
 
-    logger.info(f"Lambda invoked: site_id={site_id or 'all'}, skip_enrich={skip_enrich}")
+    if not site_id:
+        return {"statusCode": 400, "body": "site_id is required"}
 
-    # Import here to allow Lambda cold start to be faster
-    from webscraping.v2.orchestrator.runner import run_site, run_all
+    logger.info(
+        f"Lambda invoked: site={site_id}, offset={batch_offset}, "
+        f"batch_size={batch_size}, skip_enrich={skip_enrich}"
+    )
 
-    if site_id:
-        result = asyncio.get_event_loop().run_until_complete(
-            run_site(site_id, skip_enrich=skip_enrich)
+    from webscraping.v2.orchestrator.runner import run_site_batch
+
+    result = asyncio.get_event_loop().run_until_complete(
+        run_site_batch(
+            site_id,
+            batch_offset=batch_offset,
+            batch_size=batch_size,
+            skip_enrich=skip_enrich,
         )
-        return {
-            "statusCode": 200,
-            "body": json.dumps({
+    )
+
+    events_scraped = result.get("events_scraped", 0)
+    total_events = result.get("total_events", 0)
+    next_offset = batch_offset + events_scraped
+
+    logger.info(
+        f"Batch complete: scraped {events_scraped} events "
+        f"(offset {batch_offset}-{next_offset} of {total_events})"
+    )
+
+    # Chain: invoke next batch if there are more events
+    if next_offset < total_events and events_scraped > 0:
+        logger.info(f"Chaining next batch: offset={next_offset}")
+        lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+        lambda_client.invoke(
+            FunctionName=context.function_name,
+            InvocationType="Event",  # async — fire and forget
+            Payload=json.dumps({
                 "site_id": site_id,
-                "events_processed": len(result),
+                "batch_offset": next_offset,
+                "batch_size": batch_size,
+                "skip_enrich": skip_enrich,
             }),
-        }
-    else:
-        results = asyncio.get_event_loop().run_until_complete(
-            run_all(skip_enrich=skip_enrich)
         )
-        return {
-            "statusCode": 200,
-            "body": json.dumps({
-                "sites_processed": results,
-            }),
-        }
+        logger.info(f"Next batch invoked (offset={next_offset})")
+
+    return {
+        "statusCode": 200,
+        "body": json.dumps({
+            "site_id": site_id,
+            "events_scraped": events_scraped,
+            "batch_offset": batch_offset,
+            "next_offset": next_offset,
+            "total_events": total_events,
+            "chain_continues": next_offset < total_events,
+        }),
+    }

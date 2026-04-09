@@ -2,8 +2,8 @@
 Cal eProcure scraper — migrated from Selenium to Playwright.
 
 Scrapes California's state procurement portal at caleprocure.ca.gov.
-Navigates the event search page, clicks into individual events, extracts
-metadata, and downloads attachment PDFs.
+Extracts event URLs from the search page, then scrapes event detail pages
+in parallel batches for speed.
 
 This is a "structured" scraper (Tier 2) with hardcoded selectors for the
 known page layout. If selectors break, the agentic scraper can take over.
@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import tempfile
 from typing import AsyncIterator
 
 from playwright.async_api import async_playwright, Page, BrowserContext
@@ -26,12 +24,19 @@ logger = logging.getLogger(__name__)
 
 SEARCH_URL = "https://caleprocure.ca.gov/pages/Events-BS3/event-search.aspx"
 MAX_EVENTS = 1000
+# How many event pages to scrape concurrently within a batch
+CONCURRENCY = 5
 
 
 class CalEprocureScraper(BaseScraper):
     """Playwright-based scraper for Cal eProcure."""
 
-    def __init__(self, site_config: SiteConfig | None = None):
+    def __init__(
+        self,
+        site_config: SiteConfig | None = None,
+        batch_offset: int = 0,
+        batch_size: int | None = None,
+    ):
         if site_config is None:
             site_config = SiteConfig(
                 site_id="caleprocure",
@@ -41,6 +46,9 @@ class CalEprocureScraper(BaseScraper):
                 min_request_interval_ms=2000,
             )
         super().__init__(site_config)
+        self.batch_offset = batch_offset
+        self.batch_size = batch_size  # None = scrape all
+        self.total_available = 0  # Set after loading search page
 
     async def scrape(self) -> AsyncIterator[RawScrapedEvent]:
         """Scrape all events from Cal eProcure search page."""
@@ -68,51 +76,104 @@ class CalEprocureScraper(BaseScraper):
             await context.add_init_script(
                 'Object.defineProperty(navigator, "webdriver", {get: () => undefined});'
             )
-            page = await context.new_page()
 
             try:
-                logger.info("Loading search page...")
-                await page.goto(SEARCH_URL, wait_until="networkidle", timeout=60000)
-                await page.wait_for_timeout(5000)
+                # Step 1: Load search page and discover event URLs
+                all_urls = await self._get_event_urls(context)
+                self.total_available = len(all_urls)
+                logger.info(f"Found {self.total_available} total events on search page")
 
-                # Find visible event rows
-                all_rows = await page.query_selector_all('[data-if-label^="tblBodyTr"]')
-                visible_rows = []
-                for row in all_rows:
-                    cls = await row.get_attribute("class") or ""
-                    if "if-hide" not in cls and await row.is_visible():
-                        visible_rows.append(row)
+                # Apply batch window
+                start = self.batch_offset
+                end = min(
+                    start + (self.batch_size or self.total_available),
+                    self.total_available,
+                    MAX_EVENTS,
+                )
+                batch_urls = all_urls[start:end]
+                logger.info(f"Scraping batch: events {start+1}-{end} of {self.total_available}")
 
-                total = min(len(visible_rows), MAX_EVENTS)
-                logger.info(f"Found {len(visible_rows)} events, scraping first {total}")
+                # Step 2: Scrape events in parallel sub-batches
+                scraped = 0
+                for sub_start in range(0, len(batch_urls), CONCURRENCY):
+                    sub_end = min(sub_start + CONCURRENCY, len(batch_urls))
+                    sub_urls = batch_urls[sub_start:sub_end]
 
-                for i in range(total):
-                    try:
-                        event = await self._scrape_event(context, page, i, total)
-                        if event and event.title:
-                            yield event
-                    except Exception as e:
-                        logger.error(f"Error on event {i + 1}/{total}: {e}")
-                        continue
+                    tasks = [
+                        self._scrape_event_by_url(
+                            context, url, start + sub_start + i, self.total_available
+                        )
+                        for i, url in enumerate(sub_urls)
+                    ]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                    for result in results:
+                        if isinstance(result, Exception):
+                            logger.error(f"Batch error: {result}")
+                        elif result and result.title:
+                            scraped += 1
+                            yield result
+
+                    self.throttle()
+
+                logger.info(f"Scraped {scraped}/{len(batch_urls)} events in this batch")
 
             finally:
                 await browser.close()
 
-    async def _scrape_event(
-        self,
-        context: BrowserContext,
-        search_page: Page,
-        index: int,
-        total: int,
-    ) -> RawScrapedEvent | None:
-        """Scrape a single event by clicking its row on the search page."""
-        self.throttle()
+    async def _get_event_urls(self, context: BrowserContext) -> list[str]:
+        """Load the search page and extract all event detail URLs."""
+        page = await context.new_page()
+        try:
+            await page.goto(SEARCH_URL, wait_until="networkidle", timeout=60000)
+            await page.wait_for_timeout(5000)
 
-        # Reload search page to reset state
-        await search_page.goto(SEARCH_URL, wait_until="networkidle", timeout=60000)
-        await search_page.wait_for_timeout(3000)
+            # Extract event IDs and construct URLs directly
+            # Each row has a click handler that opens /event/{dept_id}/{event_id}
+            # We can extract these from the row data attributes
+            urls = await page.evaluate("""() => {
+                const rows = document.querySelectorAll('[data-if-label^="tblBodyTr"]');
+                const urls = [];
+                for (const row of rows) {
+                    if (row.classList.contains('if-hide') || row.offsetParent === null) continue;
 
-        # Re-find visible rows
+                    // Get event ID from the cell
+                    const idCell = row.querySelector('[data-if-label="tdEventId"]');
+                    if (!idCell) continue;
+
+                    // Look for onclick or href that reveals the event URL
+                    const links = row.querySelectorAll('a[href*="event"]');
+                    if (links.length > 0) {
+                        urls.push(links[0].href);
+                        continue;
+                    }
+
+                    // Extract the event ID text — we'll need to click to get URLs
+                    const eventId = idCell.textContent.trim();
+                    if (eventId) {
+                        urls.push(eventId);
+                    }
+                }
+                return urls;
+            }""")
+
+            # If we got event IDs instead of URLs, we need to click to discover URLs
+            # For now, try clicking the first one to see the URL pattern
+            if urls and not urls[0].startswith("http"):
+                logger.info(f"Got {len(urls)} event IDs, discovering URL pattern via click...")
+                event_urls = await self._discover_urls_by_clicking(context, page, urls)
+                return event_urls
+
+            return urls[:MAX_EVENTS]
+        finally:
+            await page.close()
+
+    async def _discover_urls_by_clicking(
+        self, context: BrowserContext, search_page: Page, event_ids: list[str]
+    ) -> list[str]:
+        """Click each event row to discover its URL (via the loading.html redirect)."""
+        urls = []
+
         all_rows = await search_page.query_selector_all('[data-if-label^="tblBodyTr"]')
         visible_rows = []
         for row in all_rows:
@@ -120,36 +181,98 @@ class CalEprocureScraper(BaseScraper):
             if "if-hide" not in cls and await row.is_visible():
                 visible_rows.append(row)
 
-        if index >= len(visible_rows):
-            return None
+        # Click first row to discover URL pattern
+        if visible_rows:
+            row = visible_rows[0]
+            cell = await row.query_selector('[data-if-label="tdEventId"]')
+            if cell:
+                async with context.expect_page(timeout=15000) as new_page_info:
+                    await cell.click()
+                event_page = await new_page_info.value
+                try:
+                    await event_page.wait_for_url("**/event/**", timeout=30000)
+                    # URL pattern: https://caleprocure.ca.gov/event/{dept}/{id}
+                    url = event_page.url
+                    logger.info(f"Discovered URL pattern: {url}")
 
-        row = visible_rows[index]
+                    # The URL follows pattern: base/event/{dept_code}/{event_number}
+                    # We can construct URLs for all events using their IDs
+                    # But Cal eProcure URLs require dept code which isn't in the search table
+                    # So we need to click each one individually
+                finally:
+                    await event_page.close()
 
-        # Click the event ID cell to open in new tab
-        event_id_cell = await row.query_selector('[data-if-label="tdEventId"]')
-        if not event_id_cell:
-            return None
+        # Fall back to clicking each row since we can't construct URLs
+        # But do it efficiently: load search page once, click in sequence
+        logger.info(f"Clicking {len(visible_rows)} events to get URLs...")
+        for i, row in enumerate(visible_rows[:MAX_EVENTS]):
+            try:
+                # Need to reload search page for each click (Cal eProcure quirk)
+                if i > 0:
+                    await search_page.goto(SEARCH_URL, wait_until="networkidle", timeout=60000)
+                    await search_page.wait_for_timeout(3000)
+                    all_rows = await search_page.query_selector_all('[data-if-label^="tblBodyTr"]')
+                    visible_rows = [
+                        r for r in all_rows
+                        if "if-hide" not in (await r.get_attribute("class") or "")
+                        and await r.is_visible()
+                    ]
+                    if i >= len(visible_rows):
+                        break
+                    row = visible_rows[i]
 
-        # Open in new page via popup
-        async with context.expect_page() as new_page_info:
-            await event_id_cell.click()
-        event_page = await new_page_info.value
+                cell = await row.query_selector('[data-if-label="tdEventId"]')
+                if not cell:
+                    continue
 
-        # Cal eProcure opens a loading.html page first, then redirects to /event/
-        await event_page.wait_for_url("**/event/**", timeout=30000)
-        await event_page.wait_for_load_state("networkidle", timeout=30000)
+                async with context.expect_page(timeout=15000) as new_page_info:
+                    await cell.click()
+                event_page = await new_page_info.value
+                try:
+                    await event_page.wait_for_url("**/event/**", timeout=30000)
+                    urls.append(event_page.url)
+                finally:
+                    await event_page.close()
 
+            except Exception as e:
+                logger.debug(f"Could not get URL for event {i}: {e}")
+
+        return urls
+
+    async def _scrape_event_by_url(
+        self,
+        context: BrowserContext,
+        url: str,
+        index: int,
+        total: int,
+    ) -> RawScrapedEvent | None:
+        """Scrape a single event by navigating directly to its URL."""
+        page = await context.new_page()
         try:
-            event_data = await self._extract_event_data(event_page)
-            logger.info(f"[{index + 1}/{total}] {event_data.title[:60]}")
+            # If it's an event URL, navigate directly
+            if url.startswith("http"):
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+                await page.wait_for_timeout(2000)
+            else:
+                # It's an event ID — we'd need to construct the URL
+                # This shouldn't happen with the current flow
+                return None
 
-            # Download attachments
-            attachment_urls = await self._get_attachment_urls(event_page)
+            event_data = await self._extract_event_data(page)
+            if event_data.title:
+                logger.info(f"[{index + 1}/{total}] {event_data.title[:60]}")
+
+            # Download attachment URLs (not the PDFs themselves)
+            attachment_urls = await self._get_attachment_urls(page)
             event_data.attachment_urls = attachment_urls
 
             return event_data
+
+        except Exception as e:
+            logger.error(f"Error on event {index + 1}/{total}: {e}")
+            return None
         finally:
-            await event_page.close()
+            await page.close()
 
     async def _extract_event_data(self, page: Page) -> RawScrapedEvent:
         """Extract event metadata from an event detail page."""

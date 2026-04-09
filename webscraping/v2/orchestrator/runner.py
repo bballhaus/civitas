@@ -316,6 +316,87 @@ async def run_site(site_id: str, skip_enrich: bool = False, skip_upload: bool = 
     return enriched_events
 
 
+async def run_site_batch(
+    site_id: str,
+    batch_offset: int = 0,
+    batch_size: int = 40,
+    skip_enrich: bool = True,
+) -> dict:
+    """
+    Run a single batch of scraping for a site. Used by the Lambda handler
+    for chained invocations.
+
+    Returns: {"events_scraped": N, "total_events": M}
+    """
+    if site_id not in SITE_REGISTRY:
+        raise ValueError(f"Unknown site: {site_id}")
+
+    config = SITE_REGISTRY[site_id]
+
+    # Create scraper with batch parameters
+    if site_id == "caleprocure":
+        from webscraping.v2.scrapers.caleprocure import CalEprocureScraper
+        scraper = CalEprocureScraper(config, batch_offset=batch_offset, batch_size=batch_size)
+    else:
+        scraper = get_scraper(config)
+
+    # Scrape
+    logger.info(f"=== Scraping {config.name} (batch offset={batch_offset}, size={batch_size}) ===")
+    raw_events = await scraper.run()
+    logger.info(f"Scraped {len(raw_events)} raw events")
+
+    total_events = getattr(scraper, "total_available", len(raw_events))
+
+    if not raw_events:
+        return {"events_scraped": 0, "total_events": total_events}
+
+    # Enrich
+    enrichments: dict = {}
+    if not skip_enrich:
+        for event in raw_events:
+            if event.attachment_urls:
+                try:
+                    extraction = enrich_event(event)
+                    if extraction:
+                        enrichments[event.source_event_id] = extraction.model_dump()
+                except Exception as e:
+                    logger.warning(f"Enrichment failed: {e}")
+
+    # Normalize
+    from webscraping.v2.models import AttachmentExtraction as AE
+    enriched_events = []
+    for event in raw_events:
+        extraction = AE(**enrichments[event.source_event_id]) if event.source_event_id in enrichments else None
+        enriched_events.append(normalize_event(event, extraction))
+
+    # Merge with existing and upload
+    s3 = get_s3()
+    existing = load_existing_manifest(s3, config.site_id)
+    if existing:
+        logger.info(f"Loaded {len(existing)} existing events")
+
+    # For batched scraping, we ADD to existing without marking anything as closed
+    # (since we're only scraping a subset). Closing happens only on full scrapes.
+    now = datetime.now().isoformat()
+    for event in enriched_events:
+        eid = event.id
+        if eid in existing:
+            event.first_seen_at = existing[eid].first_seen_at
+        event.last_seen_at = now
+        event.status = EventStatus.OPEN
+        existing[eid] = event
+
+    all_events = list(existing.values())
+    upload_manifest(s3, config.site_id, config.name, all_events)
+
+    # Legacy format
+    if site_id == "caleprocure":
+        open_events = [e for e in all_events if e.status == EventStatus.OPEN]
+        upload_legacy_format(s3, open_events, enrichments)
+
+    return {"events_scraped": len(raw_events), "total_events": total_events}
+
+
 async def run_all(skip_enrich: bool = False, skip_upload: bool = False):
     """Run the pipeline for all enabled sites."""
     results = {}
