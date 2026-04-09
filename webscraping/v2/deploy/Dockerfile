@@ -1,25 +1,33 @@
-# Lambda container image with Playwright + Chromium for browser-based scrapers.
-# Single-stage build using the Lambda base image directly.
+# Lambda container image with Playwright + Chromium.
+# Uses python:3.11-slim as base (full glibc) with awslambdaric for Lambda compatibility.
 
-FROM public.ecr.aws/lambda/python:3.11
+FROM public.ecr.aws/docker/library/python:3.11-slim
 
-# The Lambda Python 3.11 image is based on Amazon Linux 2023.
-# Determine available package manager and install Chromium dependencies.
-RUN (command -v dnf && dnf install -y nss atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib at-spi2-atk gtk3 libxkbcommon && dnf clean all) || \
-    (command -v microdnf && microdnf install -y nss atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib && microdnf clean all) || \
-    (command -v yum && yum install -y nss atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib && yum clean all) || \
-    echo "WARNING: No package manager found, Chromium may not work"
+# Install system deps for Chromium + Lambda RIC
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Chromium dependencies
+    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \
+    libpangocairo-1.0-0 libasound2 libxshmfence1 libx11-xcb1 \
+    libxkbcommon0 libgtk-3-0 libdbus-glib-1-2 \
+    # Lambda RIC build deps
+    g++ make cmake \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY webscraping/v2/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
-RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
+# Install Python deps + Lambda Runtime Interface Client
+COPY webscraping/v2/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir \
+    -r /tmp/requirements.txt \
+    awslambdaric
 
 # Install Playwright Chromium
 RUN python -m playwright install chromium
 
 # Copy application code
-COPY webscraping/__init__.py ${LAMBDA_TASK_ROOT}/webscraping/__init__.py
-COPY webscraping/v2/ ${LAMBDA_TASK_ROOT}/webscraping/v2/
+WORKDIR /app
+COPY webscraping/__init__.py /app/webscraping/__init__.py
+COPY webscraping/v2/ /app/webscraping/v2/
 
-# Lambda handler
+# Lambda RIC entry point
+ENTRYPOINT ["python", "-m", "awslambdaric"]
 CMD ["webscraping.v2.deploy.lambda_handler.handler"]
