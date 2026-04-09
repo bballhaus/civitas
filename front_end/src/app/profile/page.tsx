@@ -11,7 +11,6 @@ import {
 } from "@/data/filter-options";
 import { AppHeader } from "@/components/AppHeader";
 import {
-  getApiBase,
   getCurrentUser,
   getCachedUser,
   getCachedProfile,
@@ -206,7 +205,7 @@ export default function ProfilePage() {
     });
 
     try {
-      const response = await fetch(`${getApiBase()}/profile/extract/`, {
+      const response = await fetch("/api/profile/extract/", {
         method: "POST",
         body: formData,
       });
@@ -240,7 +239,7 @@ export default function ProfilePage() {
     } catch (error) {
       if (error instanceof TypeError && error.message.includes("fetch")) {
         throw new Error(
-          `Cannot connect to backend server. Please make sure the Django server is running at ${getApiBase()}.`
+          "Cannot connect to server. Please try again later."
         );
       }
       throw error;

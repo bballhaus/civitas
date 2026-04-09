@@ -1,27 +1,10 @@
-const PRODUCTION_API = "https://civitas-srv.onrender.com/api";
-const DEV_API = "http://localhost:8000/api";
-
-export function getApiBase(): string {
-  const isDev = process.env.NODE_ENV === "development";
-  const base =
-    process.env.NEXT_PUBLIC_API_BASE ||
-    (typeof window === "undefined" ? process.env.API_BASE : undefined) ||
-    (isDev ? DEV_API : PRODUCTION_API) ||
-    PRODUCTION_API;
-  const url = (base || PRODUCTION_API).replace(/\/$/, "");
-  return url || PRODUCTION_API;
-}
-const API_BASE = getApiBase();
-
-async function getCsrfToken(): Promise<string> {
-  const res = await fetch(`${API_BASE}/auth/csrf/`, { method: "GET", credentials: "include" });
-  if (!res.ok) throw new Error("Failed to get CSRF token");
-  const data = await res.json();
-  return data.csrfToken;
-}
+/**
+ * Frontend API client.
+ * All API calls go to same-origin /api/... routes (no Django proxy, no CSRF).
+ */
 
 export interface CurrentUser {
-  user_id: number;
+  user_id?: number;
   username: string;
   email?: string;
   profile?: AuthMeProfile;
@@ -29,12 +12,12 @@ export interface CurrentUser {
   in_progress_rfp_ids?: string[];
 }
 
-/** Profile shape returned by GET /api/auth/me/ (from AWS). */
+/** Profile shape returned by GET /api/auth/me/ and GET /api/profile/. */
 export interface AuthMeProfile {
-  id: number;
   name: string;
   contract_count: number;
-  total_past_contract_value: number | string;
+  total_contract_value?: number | string;
+  total_past_contract_value?: number | string;
   certifications: string[];
   clearances: string[];
   naics_codes: string[];
@@ -92,14 +75,12 @@ function cleanStringArray(arr: unknown, opts?: { titleCase?: boolean }): string[
   for (const entry of arr) {
     if (entry == null) continue;
     const str = String(entry);
-    // Split comma-separated entries
     for (const part of str.split(",")) {
       const trimmed = part.trim();
       if (!trimmed || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined") continue;
       items.push(trimmed);
     }
   }
-  // Deduplicate case-insensitively (keep first occurrence's casing)
   const seen = new Map<string, string>();
   for (const item of items) {
     const key = item.toLowerCase();
@@ -116,9 +97,7 @@ function titleCase(s: string): string {
     .split(/\s+/)
     .map((word, i) => {
       const lower = word.toLowerCase();
-      // Always capitalize first word; skip small words otherwise
       if (i > 0 && TITLE_CASE_LOWER.has(lower)) return lower;
-      // Don't lowercase all-caps abbreviations (SB, DBE, HVAC, ADA, etc.)
       if (word.length <= 4 && word === word.toUpperCase() && /^[A-Z]/.test(word)) return word;
       return lower.charAt(0).toUpperCase() + lower.slice(1);
     })
@@ -129,10 +108,8 @@ export function mapBackendProfileToCompanyProfile(
   p: AuthMeProfile | null | undefined
 ): CompanyProfileFromApi | null {
   if (!p) return null;
-  const total =
-    typeof p.total_past_contract_value === "number"
-      ? String(p.total_past_contract_value)
-      : String(p.total_past_contract_value ?? "0");
+  const totalRaw = p.total_past_contract_value ?? p.total_contract_value ?? "0";
+  const total = typeof totalRaw === "number" ? String(totalRaw) : String(totalRaw);
   return {
     companyName: titleCase((p.name ?? "").trim()),
     industry: cleanStringArray(p.industry_tags, { titleCase: true }),
@@ -189,7 +166,6 @@ const AUTH_TOKEN_KEY = "civitas_auth_token";
 
 const LOG_PREFIX = "[Civitas]";
 
-/** Auth token (Bearer) stored in AWS DynamoDB; avoids session/cookie cross-origin issues. */
 export function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -203,7 +179,7 @@ export function setAuthToken(token: string): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(AUTH_TOKEN_KEY, token);
-    console.log(`${LOG_PREFIX} Auth token stored (Bearer, from AWS DynamoDB)`);
+    console.log(`${LOG_PREFIX} Auth token stored`);
   } catch {
     // ignore
   }
@@ -225,15 +201,14 @@ function authHeaders(): Record<string, string> {
   return {};
 }
 
-/** Read cached user from localStorage (for instant dashboard load when profile + events are also cached). */
 export function getCachedUser(): { user_id: number; username: string; email?: string } | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(CACHED_USER_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as { user_id?: number; username?: string; email?: string };
-    if (typeof data?.user_id === "number" && typeof data?.username === "string") {
-      return { user_id: data.user_id, username: data.username, email: data.email };
+    if (typeof data?.username === "string") {
+      return { user_id: data.user_id ?? 0, username: data.username, email: data.email };
     }
     return null;
   } catch {
@@ -241,18 +216,16 @@ export function getCachedUser(): { user_id: number; username: string; email?: st
   }
 }
 
-/** Store user in localStorage (used only for non–profile flows if needed). */
-export function setCachedUser(user: { user_id: number; username: string; email?: string }): void {
+export function setCachedUser(user: { user_id?: number; username: string; email?: string }): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(CACHED_USER_KEY, JSON.stringify(user));
-    console.log(`${LOG_PREFIX} Cache set: user_id=${user.user_id} username=${user.username}`);
+    console.log(`${LOG_PREFIX} Cache set: username=${user.username}`);
   } catch {
     // ignore
   }
 }
 
-/** Keys used for RFP saved/expressed/not-interested (per-browser; must clear on login/logout so new account doesn't see previous account's data). */
 export const RFP_STORAGE_KEYS = [
   "civitas_saved_rfps",
   "civitas_not_interested_rfps",
@@ -260,47 +233,43 @@ export const RFP_STORAGE_KEYS = [
   "civitas_preload_rfp",
 ] as const;
 
-/** Clear localStorage used for saved/expressed/not-interested RFPs and preload. Call on login/signup and from clearCachedUser. */
 export function clearUserSpecificStorage(): void {
   if (typeof window === "undefined") return;
   try {
     for (const key of RFP_STORAGE_KEYS) {
       localStorage.removeItem(key);
     }
-    // Clear profile/upload draft data so new account doesn't see previous account's company info
     localStorage.removeItem("companyProfile");
     localStorage.removeItem("extractedProfileData");
     localStorage.removeItem("uploadedFiles");
-    console.log(`${LOG_PREFIX} User-specific storage cleared (saved/expressed RFPs, profile drafts)`);
+    console.log(`${LOG_PREFIX} User-specific storage cleared`);
   } catch {
     // ignore
   }
 }
 
-/** Clear cached user so only backend/AWS is trusted. Also clears RFP and profile-draft storage. */
 export function clearCachedUser(): void {
   if (typeof window === "undefined") return;
   try {
-    const had = localStorage.getItem(CACHED_USER_KEY);
     localStorage.removeItem(CACHED_USER_KEY);
     clearProfileCache();
     clearUserSpecificStorage();
-    console.log(`${LOG_PREFIX} Cache cleared: cached user removed${had ? " (had previous user)" : ""} — only backend/AWS trusted`);
+    console.log(`${LOG_PREFIX} Cache cleared`);
   } catch {
     // ignore
   }
 }
 
-/** In-memory profile cache: only refetch from backend when profile is saved or cache is empty. */
-let profileCache: { userId: number; profile: CompanyProfileFromApi } | null = null;
+let profileCache: { username: string; profile: CompanyProfileFromApi } | null = null;
 
-export function getCachedProfile(userId: number): CompanyProfileFromApi | null {
-  if (profileCache && profileCache.userId === userId) return profileCache.profile;
+export function getCachedProfile(userId?: number): CompanyProfileFromApi | null {
+  if (profileCache) return profileCache.profile;
   return null;
 }
 
-export function setCachedProfile(userId: number, profile: CompanyProfileFromApi): void {
-  profileCache = { userId, profile };
+export function setCachedProfile(userId: number | undefined, profile: CompanyProfileFromApi): void {
+  const cached = getCachedUser();
+  profileCache = { username: cached?.username || "", profile };
 }
 
 export function clearProfileCache(): void {
@@ -309,33 +278,19 @@ export function clearProfileCache(): void {
 
 /**
  * Fetch current user (and optionally profile) from backend.
- * When includeProfile is false (default), only user_id/username are returned — no S3/AWS call.
- * When includeProfile is true, profile is loaded from S3 (slower). Use for dashboard matching, etc.
  */
 export async function getCurrentUser(includeProfile = false): Promise<CurrentUser | null> {
-  const url = includeProfile ? `${API_BASE}/auth/me/?include_profile=1` : `${API_BASE}/auth/me/`;
-  console.log(`${LOG_PREFIX} Fetching current user from backend (GET auth/me, includeProfile=${includeProfile})...`);
-  const res = await fetch(url, {
-    credentials: "include",
-    headers: { ...authHeaders() },
-  });
-  if (!res.ok) {
-    console.log(`${LOG_PREFIX} Backend auth/me returned ${res.status} — not logged in or token/session invalid`);
-    return null;
-  }
-  const data = await res.json();
-  console.log(`${LOG_PREFIX} Backend auth/me OK: user_id=${data?.user_id} username=${data?.username}${includeProfile ? " (profile from AWS)" : ""}`);
-  return data;
+  const url = includeProfile ? "/api/auth/me/?include_profile=1" : "/api/auth/me/";
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) return null;
+  return res.json();
 }
 
 /**
- * Fetch profile from backend (S3). Use when user wants to view/edit profile so we only hit AWS on demand.
+ * Fetch profile from backend (S3).
  */
 export async function getProfileFromBackend(): Promise<AuthMeProfile> {
-  const res = await fetch(`${API_BASE}/profile/`, {
-    credentials: "include",
-    headers: { ...authHeaders() },
-  });
+  const res = await fetch("/api/profile/", { headers: authHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || err.error || "Failed to load profile");
@@ -349,13 +304,10 @@ export interface UserRfpStatusResponse {
   in_progress_rfp_ids: string[];
 }
 
-/**
- * Fetch saved Plan of Execution for the current user and RFP. Returns null if none saved.
- */
 export async function getGeneratedPoe(rfpId: string): Promise<string | null> {
   const res = await fetch(
-    `${getApiBase()}/user/generated-poe/?rfp_id=${encodeURIComponent(rfpId)}`,
-    { credentials: "include", headers: { ...authHeaders() } }
+    `/api/user/generated-poe/?rfp_id=${encodeURIComponent(rfpId)}`,
+    { headers: authHeaders() }
   );
   if (!res.ok) return null;
   const data = (await res.json()) as { plan_of_execution?: string | null };
@@ -364,18 +316,14 @@ export async function getGeneratedPoe(rfpId: string): Promise<string | null> {
 
 export async function getGeneratedProposal(rfpId: string): Promise<string | null> {
   const res = await fetch(
-    `${getApiBase()}/user/generated-proposal/?rfp_id=${encodeURIComponent(rfpId)}`,
-    { credentials: "include", headers: { ...authHeaders() } }
+    `/api/user/generated-proposal/?rfp_id=${encodeURIComponent(rfpId)}`,
+    { headers: authHeaders() }
   );
   if (!res.ok) return null;
   const data = (await res.json()) as { proposal?: string | null };
   return data.proposal ?? null;
 }
 
-/**
- * Mark an RFP as applied, remove from applied, mark in progress, and/or save generated POE/proposal. Stored in user data in S3.
- * Requires auth (Bearer token or session + CSRF).
- */
 export async function updateUserRfpStatus(payload: {
   mark_applied?: string;
   remove_applied?: string;
@@ -384,12 +332,9 @@ export async function updateUserRfpStatus(payload: {
   save_generated_poe?: { rfp_id: string; content: string };
   save_generated_proposal?: { rfp_id: string; content: string };
 }): Promise<UserRfpStatusResponse> {
-  const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
-  if (!getAuthToken()) headers["X-CSRFToken"] = await getCsrfToken();
-  const res = await fetch(`${API_BASE}/user/rfp-status/`, {
+  const res = await fetch("/api/user/rfp-status/", {
     method: "PATCH",
-    headers,
-    credentials: "include",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -397,12 +342,13 @@ export async function updateUserRfpStatus(payload: {
     const msg =
       res.status === 401
         ? "Please log in to save your RFP status."
-        : err?.error || err?.detail || (typeof err?.detail === "string" ? err.detail : null) || `Failed to update (${res.status})`;
+        : err?.error || err?.detail || `Failed to update (${res.status})`;
     throw new Error(msg);
   }
   return res.json();
 }
-/** Payload for PATCH /api/profile/ (snake_case, writable fields only). */
+
+/** Payload for PATCH /api/profile/ */
 export interface ProfilePatchPayload {
   name?: string;
   contract_count?: number;
@@ -416,54 +362,32 @@ export interface ProfilePatchPayload {
   agency_experience?: string[];
 }
 
-/**
- * Save profile to backend. Persists to S3 users/{username}.json. Requires session or Bearer token.
- */
 export async function saveProfileToBackend(payload: ProfilePatchPayload): Promise<AuthMeProfile> {
-  console.log(`${LOG_PREFIX} Saving profile to backend (PATCH /api/profile/) — will update user JSON in S3`);
-  const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
-  if (!getAuthToken()) headers["X-CSRFToken"] = await getCsrfToken();
-  const res = await fetch(`${API_BASE}/profile/`, {
+  const res = await fetch("/api/profile/", {
     method: "PATCH",
-    headers,
-    credentials: "include",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const msg = err.detail || err.error || "Failed to save profile";
-    if (res.status === 401 && (String(msg).toLowerCase().includes("credential") || String(msg).toLowerCase().includes("authentic"))) {
+    if (res.status === 401) {
       throw new Error("Your session may have expired. Please log out and log back in, then try saving again.");
     }
     throw new Error(msg);
   }
-  const data = await res.json();
-  console.log(`${LOG_PREFIX} Profile saved to backend; user JSON updated in S3`);
-  return data;
+  return res.json();
 }
 
-/**
- * List all contracts for the current user. Returns contract objects with S3 document URLs.
- */
 export async function listContracts(): Promise<Array<{ id: string; title: string; document: string }>> {
-  const headers: Record<string, string> = { ...authHeaders() };
-  if (!getAuthToken()) {
-    headers["X-CSRFToken"] = await getCsrfToken();
-  }
-  const res = await fetch(`${API_BASE}/contracts/`, {
-    method: "GET",
-    headers,
-    credentials: "include",
+  const res = await fetch("/api/contracts/", {
+    headers: authHeaders(),
   });
   if (!res.ok) return [];
   const data = await res.json();
   return Array.isArray(data) ? data : [];
 }
 
-/**
- * Upload a single document as a contract. File is stored in S3 (uploads/{user_id}/{contract_id}/)
- * and the user's profile JSON is updated with uploaded_documents. Requires auth.
- */
 export async function uploadContractDocument(
   file: File,
   title?: string
@@ -472,16 +396,9 @@ export async function uploadContractDocument(
   formData.append("document", file);
   formData.append("title", title ?? file.name ?? "document");
 
-  const headers: Record<string, string> = { ...authHeaders() };
-  if (!getAuthToken()) {
-    headers["X-CSRFToken"] = await getCsrfToken();
-  }
-  // Do not set Content-Type; browser sets multipart/form-data with boundary
-
-  const res = await fetch(`${API_BASE}/contracts/`, {
+  const res = await fetch("/api/contracts/", {
     method: "POST",
-    headers,
-    credentials: "include",
+    headers: authHeaders(),
     body: formData,
   });
   if (!res.ok) {
@@ -490,44 +407,29 @@ export async function uploadContractDocument(
     const docStr = err.document != null
       ? (Array.isArray(err.document) ? err.document.join(", ") : String(err.document))
       : "";
-    const msg =
-      err.error || detailStr || docStr || `Upload failed (${res.status})`;
+    const msg = err.error || detailStr || docStr || `Upload failed (${res.status})`;
     throw new Error(msg.trim() || "Failed to upload document");
   }
   const data = await res.json();
   return { id: data.id, title: data.title ?? title ?? file.name, document: data.document ?? "" };
 }
 
-/**
- * Delete a contract document by id. Removes it from S3 and from the user's profile JSON. Requires auth.
- */
 export async function deleteContractDocument(contractId: string): Promise<void> {
-  const headers: Record<string, string> = { ...authHeaders() };
-  if (!getAuthToken()) {
-    headers["X-CSRFToken"] = await getCsrfToken();
-  }
-  const res = await fetch(`${API_BASE}/contracts/${encodeURIComponent(contractId)}/`, {
+  const res = await fetch(`/api/contracts/${encodeURIComponent(contractId)}/`, {
     method: "DELETE",
-    headers,
-    credentials: "include",
+    headers: authHeaders(),
   });
-  if (!res.ok) {
+  if (!res.ok && res.status !== 204) {
     const err = await res.json().catch(() => ({}));
     const msg = err.detail ?? err.error ?? `Delete failed (${res.status})`;
     throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
   }
 }
 
-/**
- * Update email only. Username cannot be changed.
- */
 export async function updateUser(data: { email?: string }): Promise<CurrentUser> {
-  const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
-  if (!getAuthToken()) headers["X-CSRFToken"] = await getCsrfToken();
-  const res = await fetch(`${API_BASE}/auth/me/`, {
+  const res = await fetch("/api/auth/me/", {
     method: "PATCH",
-    headers,
-    credentials: "include",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(data),
   });
   if (!res.ok) {
@@ -537,17 +439,10 @@ export async function updateUser(data: { email?: string }): Promise<CurrentUser>
   return res.json();
 }
 
-
-/**
- * Change password.
- */
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
-  if (!getAuthToken()) headers["X-CSRFToken"] = await getCsrfToken();
-  const res = await fetch(`${API_BASE}/auth/change-password/`, {
+  const res = await fetch("/api/auth/change-password/", {
     method: "POST",
-    headers,
-    credentials: "include",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({
       current_password: currentPassword,
       new_password: newPassword,
@@ -559,27 +454,21 @@ export async function changePassword(currentPassword: string, newPassword: strin
   }
 }
 
-/**
- * Log out: send Bearer token so backend can delete it from AWS; then clear local token and redirect.
- */
 export async function logout(router: { push: (path: string) => void }) {
   try {
-    const headers: Record<string, string> = { ...authHeaders() };
-    try {
-      headers["X-CSRFToken"] = await getCsrfToken();
-    } catch {
-      // CSRF optional when using Bearer
-    }
-    await fetch(`${API_BASE}/auth/logout/`, {
+    await fetch("/api/auth/logout/", {
       method: "POST",
-      headers,
-      credentials: "include",
+      headers: authHeaders(),
     });
   } catch {
-    // Still redirect so user can try again
+    // Still redirect
   }
-  console.log(`${LOG_PREFIX} Logout: clearing auth token and cached user, redirecting to login`);
   clearAuthToken();
   clearCachedUser();
   router.push("/login");
+}
+
+// Keep getApiBase export for any code that still imports it (will return empty string)
+export function getApiBase(): string {
+  return "";
 }

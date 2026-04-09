@@ -4,7 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  getApiBase,
   getAuthToken,
   uploadContractDocument,
   getProfileFromBackend,
@@ -88,7 +87,7 @@ export default function UploadPage() {
     });
 
     try {
-      const response = await fetch(`${getApiBase()}/profile/extract/`, {
+      const response = await fetch("/api/profile/extract/", {
         method: "POST",
         body: formData,
       });
@@ -125,7 +124,7 @@ export default function UploadPage() {
       // Handle network errors (backend not running, CORS, etc.)
       if (error instanceof TypeError && error.message.includes("fetch")) {
         throw new Error(
-          `Cannot connect to backend server. Please make sure the Django server is running at ${getApiBase()}.`
+          "Cannot connect to server. Please try again later."
         );
       }
       throw error;

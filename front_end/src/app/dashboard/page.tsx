@@ -636,7 +636,7 @@ function SortByDropdown({
 export default function DashboardPage() {
   const pathname = usePathname();
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
-  const [currentUser, setCurrentUser] = useState<{ user_id: number; username: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ user_id?: number; username: string } | null>(null);
   const [selectedRfpId, setSelectedRfpId] = useState<string | null>(null);
   const [rfps, setRfps] = useState<RFP[]>([]);
   const [loading, setLoading] = useState(true);

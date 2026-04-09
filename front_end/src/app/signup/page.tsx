@@ -3,11 +3,9 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getApiBase, setCachedUser, setAuthToken, clearCachedUser } from "@/lib/api";
+import { setCachedUser, setAuthToken, clearCachedUser } from "@/lib/api";
 import { clearCachedEvents } from "@/lib/events-cache";
 import { MeshBackground } from "@/components/MeshBackground";
-
-const API_BASE = getApiBase();
 
 const PASSWORD_RULES = [
   { key: "length", label: "At least 8 characters", test: (p: string) => p.length >= 8 },
@@ -42,24 +40,9 @@ export default function SignupPage() {
     setIsLoading(true);
 
     try {
-      const csrfRes = await fetch(`${API_BASE}/auth/csrf/`, {
-        method: "GET",
-        credentials: "include",
-      });
-      if (!csrfRes.ok) {
-        const errData = await csrfRes.json().catch(() => ({}));
-        const msg = errData?.error || (csrfRes.status === 503 ? "Backend not reachable." : "Failed to get CSRF token");
-        throw new Error(msg);
-      }
-      const { csrfToken } = await csrfRes.json();
-
-      const res = await fetch(`${API_BASE}/auth/signup/`, {
+      const res = await fetch("/api/auth/signup/", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRFToken": csrfToken,
-        },
-        credentials: "include",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password, email }),
       });
 
@@ -73,8 +56,8 @@ export default function SignupPage() {
       if (data?.token) setAuthToken(data.token);
       clearCachedUser();
       clearCachedEvents();
-      if (data?.user_id != null && data?.username) {
-        setCachedUser({ user_id: data.user_id, username: data.username, email: data.email });
+      if (data?.username) {
+        setCachedUser({ username: data.username, email: data.email });
       }
       router.push("/upload");
     } catch (err) {
