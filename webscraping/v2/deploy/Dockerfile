@@ -16,29 +16,38 @@
 
 FROM public.ecr.aws/lambda/python:3.11
 
-# Install system dependencies for Playwright/Chromium
+# Install system dependencies for Chromium (Amazon Linux 2023)
 RUN dnf install -y \
     nss \
-    atk \
+    nspr \
+    at-spi2-atk \
     cups-libs \
     libdrm \
     libXcomposite \
     libXdamage \
     libXrandr \
+    libXScrnSaver \
     mesa-libgbm \
     pango \
     alsa-lib \
+    libXtst \
+    gtk3 \
+    libxkbcommon \
+    dbus-glib \
+    wget \
     && dnf clean all
 
 # Copy requirements and install Python deps
 COPY webscraping/v2/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
-# Install Playwright Chromium
+# Install Playwright Chromium + its system deps
 RUN python -m playwright install chromium
+# Playwright install-deps doesn't support Amazon Linux — the dnf packages above cover it
 
-# Copy application code
-COPY webscraping/ ${LAMBDA_TASK_ROOT}/webscraping/
+# Copy application code (webscraping package at the task root)
+COPY webscraping/__init__.py ${LAMBDA_TASK_ROOT}/webscraping/__init__.py
+COPY webscraping/v2/ ${LAMBDA_TASK_ROOT}/webscraping/v2/
 
 # Lambda handler
 CMD ["webscraping.v2.deploy.lambda_handler.handler"]
