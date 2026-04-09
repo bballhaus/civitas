@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir \
     -r /tmp/requirements.txt \
     awslambdaric
 
-# Install Playwright Chromium
+# Install Playwright Chromium in a shared location accessible by Lambda's sandbox user
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN python -m playwright install chromium
 
 # Copy application code
