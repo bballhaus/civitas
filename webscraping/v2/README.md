@@ -12,7 +12,7 @@ EventBridge ("rate(4 hours)")
     ▼
 Lambda (civitas-rfp-scraper)  ──▶  {"mode": "all"}
     │
-    ├── Cal eProcure (Playwright, ~625 events, chained batches)
+    ├── Cal eProcure (Playwright, ~646 events, chained batches of 15)
     ├── PlanetBids (Playwright, 43 portals)
     ├── BidSync/Periscope (Playwright, CA-filtered search)
     └── Agentic (Playwright + Claude, 2 custom portals)
@@ -28,7 +28,7 @@ Lambda (civitas-rfp-scraper)  ──▶  {"mode": "all"}
 
 | Tier | Type | Technology | Sites | Status |
 |------|------|-----------|-------|--------|
-| Structured | **Cal eProcure** | Playwright | 1 (state-level) | Tested locally. May be IP-blocked from AWS. |
+| Structured | **Cal eProcure** | Playwright | 1 (state-level) | Working on Lambda. Chained batches of 15 events (~43 invocations for full scrape). |
 | Structured | **PlanetBids** | Playwright | 43 portals | Tested: San Diego, Sacramento, Fresno, Anaheim (30 events each) |
 | Structured | **BidSync/Periscope** | Playwright + JSF | 15 agencies | Tested: 35 CA bids via Advanced Search with CA state filter |
 | Agentic | **Custom portals** | Playwright + Claude Sonnet | 2 (LA, SF) | Recipe-cached after first run |
@@ -143,9 +143,18 @@ aws lambda invoke --function-name civitas-rfp-scraper \
 
 # Run single site with chained batching (Cal eProcure)
 aws lambda invoke --function-name civitas-rfp-scraper \
-    --payload '{"site_id":"caleprocure","batch_offset":0,"batch_size":40}' \
+    --payload '{"site_id":"caleprocure","batch_offset":0,"batch_size":15}' \
     --invocation-type Event --cli-binary-format raw-in-base64-out /tmp/out.json
 ```
+
+### How Run-All Works
+
+When EventBridge triggers `{"mode": "all"}`:
+1. Lambda separates Cal eProcure from the rest (it needs chained batching)
+2. Cal eProcure is launched as an async chained invocation (`batch_size=15`)
+   - Each invocation clicks 15 event rows, scrapes them, uploads to S3, then self-invokes with the next offset
+   - ~43 chained invocations to cover all ~646 events (~3 hours total)
+3. All other sites (PlanetBids, BidSync, agentic) run sequentially in the main invocation
 
 ### Deploying Code Changes
 
