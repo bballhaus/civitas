@@ -32,7 +32,10 @@ front_end/src/
 │   │   ├── page.tsx                  # Main RFP search & matching interface
 │   │   └── rfp/[id]/page.tsx         # Individual RFP detail view
 │   └── api/                          # Server-side API routes
-│       ├── django/[...path]/route.ts # Proxy to Django backend
+│       ├── auth/                     # JWT auth (login, signup, logout, me, change-password)
+│       ├── contracts/                # Contract CRUD + extraction
+│       ├── profile/                  # Profile CRUD + multi-doc extraction
+│       ├── user/                     # RFP status, saved POE/proposals
 │       ├── events/route.ts           # Fetch & transform RFPs from S3
 │       ├── capabilities-analysis/route.ts
 │       ├── match-summary/route.ts
@@ -46,10 +49,19 @@ front_end/src/
 │   ├── LoadingScreen.tsx             # Loading spinner
 │   └── MarkdownContent.tsx           # Markdown renderer
 ├── lib/
-│   ├── api.ts                        # Backend API client (auth, profile, contracts)
+│   ├── api.ts                        # Frontend API client (auth, profile, contracts)
+│   ├── auth.ts                       # JWT signing/verification, password hashing
+│   ├── s3.ts                         # S3 client (singleton, lazy-init)
+│   ├── user-data.ts                  # User JSON CRUD with in-memory cache
+│   ├── contract-storage.ts           # Contract CRUD operations
+│   ├── profile-storage.ts            # Profile read/write/aggregate
+│   ├── extraction.ts                 # LLM document extraction
+│   ├── rfp-status.ts                 # RFP application tracking
+│   ├── rate-limit.ts                 # Rate limiting utility
 │   ├── rfp-matching.ts               # Matching algorithm (1300+ lines)
 │   ├── capabilities.ts               # Capability normalization & synonyms
 │   └── events-cache.ts               # Client-side RFP caching
+├── proxy.ts                          # Edge proxy: rate limiting for auth & extraction
 ├── data/
 │   ├── filter-options.ts             # California cities, NAICS codes, filter lists
 │   ├── california-counties.json      # County list
@@ -62,7 +74,7 @@ front_end/src/
 
 ### Authentication
 
-**Login** (`/login`) — Username/password form that authenticates against Django. On success, stores a Bearer token in localStorage and redirects to `/home`.
+**Login** (`/login`) — Username/password form that authenticates via `/api/auth/login`. On success, stores a JWT in localStorage and redirects to `/home`.
 
 **Signup** (`/signup`) — Registration form with real-time password strength validation:
 - At least 8 characters
@@ -112,9 +124,6 @@ These Next.js API routes run on the server and handle data fetching and AI gener
 
 ### `GET /api/events`
 Fetches scraped RFPs from S3 and transforms them into structured objects. Merges attachment extraction data (NAICS codes, certifications, deliverables) with base event data. Includes intelligent inference of industry, capabilities, and location from title/description text. Cached for 5 minutes.
-
-### `ALL /api/django/[...path]`
-Transparent proxy to the Django backend. Forwards all HTTP methods with auth headers and CSRF tokens.
 
 ### `POST /api/generate-proposal`
 Generates an AI proposal draft using Groq LLM. Accepts the RFP, company profile, and optional past proposals for style matching. Supports iterative refinement with user feedback.
@@ -167,8 +176,10 @@ npm run lint    # ESLint
 
 **Environment Variables** (`front_end/.env.local`):
 ```
-NEXT_PUBLIC_API_BASE=http://localhost:8000/api   # Django backend URL
-GROQ_API_KEY=...                                  # For AI generation routes
-AWS_ACCESS_KEY_ID=...                             # For S3 RFP data
+JWT_SECRET=...                  # Required. Strong random value for JWT signing.
+GROQ_API_KEY=...                # For AI generation and extraction routes
+AWS_ACCESS_KEY_ID=...           # For S3 data storage
 AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
+AWS_S3_BUCKET=civitas-ai
 ```
