@@ -246,6 +246,30 @@ class BidSyncScraper(BaseScraper):
 
             logger.info(f"After search submit, URL: {page.url}")
 
+            # Check the "California" checkbox in the sidebar state filter
+            # This AJAX-filters the datatable to only CA bids
+            try:
+                ca_checked = await page.evaluate("""() => {
+                    const section = document.querySelector('[id$="statesSection"]');
+                    if (!section) return 'no_section';
+                    const checkboxes = section.querySelectorAll('input[type="checkbox"]');
+                    for (const cb of checkboxes) {
+                        const label = section.querySelector('label[for="' + cb.id + '"]');
+                        if (label && label.textContent.trim() === 'California') {
+                            cb.click();
+                            return 'clicked';
+                        }
+                    }
+                    return 'not_found';
+                }""")
+                if ca_checked == "clicked":
+                    await page.wait_for_timeout(8000)  # Wait for AJAX filter
+                    logger.info("Applied California state filter")
+                else:
+                    logger.warning(f"California checkbox: {ca_checked}")
+            except Exception as e:
+                logger.warning(f"Failed to apply state filter: {e}")
+
             return True
 
         except PlaywrightTimeout as e:
