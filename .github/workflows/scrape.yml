@@ -1,9 +1,7 @@
 name: Scrape All Sites
 
 on:
-  schedule:
-    # Run every 4 hours
-    - cron: "0 */4 * * *"
+  # Manual trigger only — Lambda + EventBridge handles scheduled scraping
   workflow_dispatch:
     inputs:
       site:

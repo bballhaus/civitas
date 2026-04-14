@@ -151,17 +151,13 @@ def _handle_multi_site(sites, event, context):
 
 
 def _handle_run_all(event, context):
-    """Scrape all enabled sites except Cal eProcure (which is IP-blocked from Lambda)."""
+    """Scrape all enabled sites."""
     skip_enrich = event.get("skip_enrich", True)
     logger.info(f"Run-all mode, skip_enrich={skip_enrich}")
 
     from webscraping.v2.orchestrator.runner import SITE_REGISTRY
 
-    # Exclude Cal eProcure — it's blocked from AWS IPs, runs via GH Actions instead
-    sites = [
-        sid for sid, cfg in SITE_REGISTRY.items()
-        if cfg.enabled and sid != "caleprocure"
-    ]
+    sites = [sid for sid, cfg in SITE_REGISTRY.items() if cfg.enabled]
     logger.info(f"Running {len(sites)} sites: {sites}")
 
     return _handle_multi_site(sites, event, context)
