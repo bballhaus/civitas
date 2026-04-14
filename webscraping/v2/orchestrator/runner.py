@@ -65,16 +65,14 @@ def _build_site_registry() -> dict[str, SiteConfig]:
     # Add BidSync agencies (~15 agencies)
     registry.update(get_bidsync_site_configs())
 
-    # Add PlanetBids agencies (~12 agencies)
+    # Add PlanetBids agencies (~44 agencies)
     registry.update(get_planetbids_site_configs())
 
-    # Agentic sites (custom portals)
+    # Agentic sites (custom portals that aren't on PlanetBids/BidSync)
+    # San Diego + Sacramento are now on PlanetBids; Oakland uses iSupplier (not scrapable)
     agentic_sites = [
         ("la_city", "City of Los Angeles", "https://www.labavn.org/"),
         ("sf_city", "City of San Francisco", "https://sfgov.org/oca/contracting-opportunities"),
-        ("san_diego", "City of San Diego", "https://www.sandiego.gov/purchasing/contracts"),
-        ("sacramento", "City of Sacramento", "https://www.cityofsacramento.org/Finance/Procurement"),
-        ("oakland", "City of Oakland", "https://www.oaklandca.gov/services/contracting-with-the-city"),
     ]
     for site_id, name, url in agentic_sites:
         registry[site_id] = SiteConfig(
@@ -98,11 +96,11 @@ def get_scraper(site_config: SiteConfig) -> BaseScraper:
         from webscraping.v2.scrapers.caleprocure import CalEprocureScraper
         return CalEprocureScraper(site_config)
 
-    if site_config.scraper_type == ScraperType.API:
+    if site_config.site_id.startswith("bidsync"):
         from webscraping.v2.scrapers.bidsync import BidSyncScraper
         return BidSyncScraper(site_config)
 
-    if site_config.scraper_type == ScraperType.STRUCTURED:
+    if site_config.scraper_type in (ScraperType.STRUCTURED, ScraperType.API):
         from webscraping.v2.scrapers.planetbids import PlanetBidsScraper
         return PlanetBidsScraper(site_config)
 

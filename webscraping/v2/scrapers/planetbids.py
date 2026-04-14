@@ -22,22 +22,225 @@ from webscraping.v2.scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-# Known California agencies on PlanetBids
-# Verified PlanetBids portal IDs (discovered via agentic scraper + manual research)
-# URL format: https://vendors.planetbids.com/portal/{portal_id}/bo/bo-search
+# Known California agencies on PlanetBids (44 verified portals)
 PLANETBIDS_AGENCIES: dict[str, dict] = {
+    # --- Cities ---
     "planetbids_san_diego": {
         "portal_id": "17950",
         "name": "City of San Diego",
         "url": "https://vendors.planetbids.com/portal/17950/bo/bo-search",
     },
-    # Additional agencies to be discovered — use the agentic scraper to find
-    # their portal IDs by navigating their procurement pages and seeing if
-    # they redirect to vendors.planetbids.com/portal/{id}/...
-    #
-    # To discover a new PlanetBids agency:
-    #   python -m webscraping.v2.scrapers.agentic <agency_procurement_url> <site_id>
-    # The agentic scraper will follow links and reveal the PlanetBids portal ID.
+    "planetbids_sacramento": {
+        "portal_id": "15300",
+        "name": "City of Sacramento",
+        "url": "https://vendors.planetbids.com/portal/15300/bo/bo-search",
+    },
+    "planetbids_long_beach": {
+        "portal_id": "15810",
+        "name": "City of Long Beach",
+        "url": "https://vendors.planetbids.com/portal/15810/bo/bo-search",
+    },
+    "planetbids_riverside": {
+        "portal_id": "39475",
+        "name": "City of Riverside",
+        "url": "https://vendors.planetbids.com/portal/39475/bo/bo-search",
+    },
+    "planetbids_santa_ana": {
+        "portal_id": "20137",
+        "name": "City of Santa Ana",
+        "url": "https://vendors.planetbids.com/portal/20137/bo/bo-search",
+    },
+    "planetbids_anaheim": {
+        "portal_id": "14424",
+        "name": "City of Anaheim",
+        "url": "https://vendors.planetbids.com/portal/14424/bo/bo-search",
+    },
+    "planetbids_fresno": {
+        "portal_id": "14769",
+        "name": "City of Fresno",
+        "url": "https://vendors.planetbids.com/portal/14769/bo/bo-search",
+    },
+    "planetbids_glendale": {
+        "portal_id": "39503",
+        "name": "City of Glendale",
+        "url": "https://vendors.planetbids.com/portal/39503/bo/bo-search",
+    },
+    "planetbids_fontana": {
+        "portal_id": "14391",
+        "name": "City of Fontana",
+        "url": "https://vendors.planetbids.com/portal/14391/bo/bo-search",
+    },
+    "planetbids_moreno_valley": {
+        "portal_id": "24660",
+        "name": "City of Moreno Valley",
+        "url": "https://vendors.planetbids.com/portal/24660/bo/bo-search",
+    },
+    "planetbids_san_bernardino": {
+        "portal_id": "39495",
+        "name": "City of San Bernardino",
+        "url": "https://vendors.planetbids.com/portal/39495/bo/bo-search",
+    },
+    "planetbids_bakersfield": {
+        "portal_id": "14660",
+        "name": "City of Bakersfield",
+        "url": "https://vendors.planetbids.com/portal/14660/bo/bo-search",
+    },
+    "planetbids_torrance": {
+        "portal_id": "47426",
+        "name": "City of Torrance",
+        "url": "https://vendors.planetbids.com/portal/47426/bo/bo-search",
+    },
+    "planetbids_pasadena": {
+        "portal_id": "14770",
+        "name": "City of Pasadena",
+        "url": "https://vendors.planetbids.com/portal/14770/bo/bo-search",
+    },
+    "planetbids_downey": {
+        "portal_id": "24661",
+        "name": "City of Downey",
+        "url": "https://vendors.planetbids.com/portal/24661/bo/bo-search",
+    },
+    "planetbids_costa_mesa": {
+        "portal_id": "45476",
+        "name": "City of Costa Mesa",
+        "url": "https://vendors.planetbids.com/portal/45476/bo/bo-search",
+    },
+    "planetbids_inglewood": {
+        "portal_id": "45619",
+        "name": "City of Inglewood",
+        "url": "https://vendors.planetbids.com/portal/45619/bo/bo-search",
+    },
+    "planetbids_pomona": {
+        "portal_id": "24662",
+        "name": "City of Pomona",
+        "url": "https://vendors.planetbids.com/portal/24662/bo/bo-search",
+    },
+    "planetbids_burbank": {
+        "portal_id": "14210",
+        "name": "City of Burbank",
+        "url": "https://vendors.planetbids.com/portal/14210/bo/bo-search",
+    },
+    "planetbids_norwalk": {
+        "portal_id": "54783",
+        "name": "City of Norwalk",
+        "url": "https://vendors.planetbids.com/portal/54783/bo/bo-search",
+    },
+    "planetbids_carson": {
+        "portal_id": "32461",
+        "name": "City of Carson",
+        "url": "https://vendors.planetbids.com/portal/32461/bo/bo-search",
+    },
+    "planetbids_chula_vista": {
+        "portal_id": "15381",
+        "name": "City of Chula Vista",
+        "url": "https://vendors.planetbids.com/portal/15381/bo/bo-search",
+    },
+    "planetbids_rialto": {
+        "portal_id": "28159",
+        "name": "City of Rialto",
+        "url": "https://vendors.planetbids.com/portal/28159/bo/bo-search",
+    },
+    "planetbids_jurupa_valley": {
+        "portal_id": "26879",
+        "name": "City of Jurupa Valley",
+        "url": "https://vendors.planetbids.com/portal/26879/bo/bo-search",
+    },
+    "planetbids_corona": {
+        "portal_id": "39497",
+        "name": "City of Corona",
+        "url": "https://vendors.planetbids.com/portal/39497/bo/bo-search",
+    },
+    "planetbids_el_cajon": {
+        "portal_id": "14593",
+        "name": "City of El Cajon",
+        "url": "https://vendors.planetbids.com/portal/14593/bo/bo-search",
+    },
+    "planetbids_goleta": {
+        "portal_id": "45299",
+        "name": "City of Goleta",
+        "url": "https://vendors.planetbids.com/portal/45299/bo/bo-search",
+    },
+    "planetbids_huntington_beach": {
+        "portal_id": "15340",
+        "name": "City of Huntington Beach",
+        "url": "https://vendors.planetbids.com/portal/15340/bo/bo-search",
+    },
+    "planetbids_carlsbad": {
+        "portal_id": "27970",
+        "name": "City of Carlsbad",
+        "url": "https://vendors.planetbids.com/portal/27970/bo/bo-search",
+    },
+    "planetbids_santa_fe_springs": {
+        "portal_id": "65093",
+        "name": "City of Santa Fe Springs",
+        "url": "https://vendors.planetbids.com/portal/65093/bo/bo-search",
+    },
+    "planetbids_palm_springs": {
+        "portal_id": "47688",
+        "name": "City of Palm Springs",
+        "url": "https://vendors.planetbids.com/portal/47688/bo/bo-search",
+    },
+    "planetbids_maywood": {
+        "portal_id": "64496",
+        "name": "City of Maywood",
+        "url": "https://vendors.planetbids.com/portal/64496/bo/bo-search",
+    },
+    "planetbids_palmdale": {
+        "portal_id": "23532",
+        "name": "City of Palmdale",
+        "url": "https://vendors.planetbids.com/portal/23532/bo/bo-search",
+    },
+    "planetbids_la_mesa": {
+        "portal_id": "15382",
+        "name": "City of La Mesa",
+        "url": "https://vendors.planetbids.com/portal/15382/bo/bo-search",
+    },
+    "planetbids_san_marcos": {
+        "portal_id": "39481",
+        "name": "City of San Marcos",
+        "url": "https://vendors.planetbids.com/portal/39481/bo/bo-search",
+    },
+    "planetbids_national_city": {
+        "portal_id": "16151",
+        "name": "City of National City",
+        "url": "https://vendors.planetbids.com/portal/16151/bo/bo-search",
+    },
+    "planetbids_south_pasadena": {
+        "portal_id": "44654",
+        "name": "City of South Pasadena",
+        "url": "https://vendors.planetbids.com/portal/44654/bo/bo-search",
+    },
+    # --- Ports, transit, education, and regional agencies ---
+    "planetbids_port_long_beach": {
+        "portal_id": "19236",
+        "name": "Port of Long Beach",
+        "url": "https://vendors.planetbids.com/portal/19236/bo/bo-search",
+    },
+    "planetbids_port_san_diego": {
+        "portal_id": "13982",
+        "name": "Port of San Diego",
+        "url": "https://vendors.planetbids.com/portal/13982/bo/bo-search",
+    },
+    "planetbids_bgp_airport": {
+        "portal_id": "21910",
+        "name": "Burbank-Glendale-Pasadena Airport Authority",
+        "url": "https://vendors.planetbids.com/portal/21910/bo/bo-search",
+    },
+    "planetbids_riverside_transit": {
+        "portal_id": "55483",
+        "name": "Riverside Transit Agency",
+        "url": "https://vendors.planetbids.com/portal/55483/bo/bo-search",
+    },
+    "planetbids_scag": {
+        "portal_id": "14434",
+        "name": "Southern California Association of Governments",
+        "url": "https://vendors.planetbids.com/portal/14434/bo/bo-search",
+    },
+    "planetbids_csu_fresno": {
+        "portal_id": "26037",
+        "name": "CSU Fresno",
+        "url": "https://vendors.planetbids.com/portal/26037/bo/bo-search",
+    },
 }
 
 
@@ -57,54 +260,30 @@ class PlanetBidsScraper(BaseScraper):
     async def scrape(self) -> AsyncIterator[RawScrapedEvent]:
         """Scrape open bids from a PlanetBids portal."""
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--single-process",
-                ],
-            )
+            browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent=(
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                     "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
                 ),
-                locale="en-US",
-            )
-            await context.add_init_script(
-                'Object.defineProperty(navigator, "webdriver", {get: () => undefined});'
             )
             page = await context.new_page()
 
             try:
-                # Navigate directly to the bid search page
-                search_url = self._portal_url
-                if "bo-search" not in search_url:
-                    # If given a portal-home URL, convert to bo-search
-                    search_url = search_url.replace("portal-home", "bo/bo-search")
-
-                logger.info(f"Loading PlanetBids: {self._agency_name} ({search_url})")
-                await page.goto(search_url, wait_until="networkidle", timeout=60000)
+                logger.info(f"Loading PlanetBids portal: {self._agency_name}")
+                await page.goto(self._portal_url, wait_until="networkidle", timeout=60000)
                 await page.wait_for_timeout(5000)
 
-                # Wait for the table to appear
-                try:
-                    await page.wait_for_selector("table tbody tr", timeout=10000)
-                except Exception:
-                    logger.info("No table found immediately, checking for tab navigation...")
-                    open_bids_tab = await page.query_selector(
-                        'a[href*="bo-search"], a:has-text("Open Bids"), a:has-text("Bid Opportunities")'
-                    )
-                    if open_bids_tab:
-                        href = await open_bids_tab.get_attribute("href")
-                        if href:
-                            await page.goto(href if href.startswith("http") else f"https://vendors.planetbids.com{href}",
-                                          wait_until="networkidle", timeout=30000)
-                            await page.wait_for_timeout(3000)
+                # Click "Open Bids" or "Current Solicitations" tab
+                open_bids_tab = await page.query_selector(
+                    'a[href*="bo-search"], button:has-text("Open"), '
+                    'a:has-text("Open Bids"), a:has-text("Current")'
+                )
+                if open_bids_tab:
+                    await open_bids_tab.click()
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+                    await page.wait_for_timeout(3000)
 
                 # Extract bids from the table
                 page_num = 0
@@ -133,43 +312,13 @@ class PlanetBidsScraper(BaseScraper):
                         except Exception as e:
                             logger.debug(f"Failed to extract row: {e}")
 
-                    # Try pagination — PlanetBids may use buttons, scroll, or no pagination
-                    next_btn = None
-                    for sel in ['.pagination .next', '[aria-label="Next"]', 'button.next-page']:
-                        next_btn = await page.query_selector(sel)
-                        if next_btn and await next_btn.is_visible():
-                            break
-                        next_btn = None
-
-                    # Also try finding a "Next" button/link by evaluating JS (avoids has-text timeout)
-                    if not next_btn:
-                        has_next = await page.evaluate("""() => {
-                            const els = Array.from(document.querySelectorAll('button, a'));
-                            const next = els.find(el => el.textContent.trim() === 'Next' || el.textContent.trim() === '>');
-                            return next ? true : false;
-                        }""")
-                        if has_next:
-                            await page.evaluate("""() => {
-                                const els = Array.from(document.querySelectorAll('button, a'));
-                                const next = els.find(el => el.textContent.trim() === 'Next' || el.textContent.trim() === '>');
-                                if (next) next.click();
-                            }""")
-                            await page.wait_for_timeout(3000)
-                            page_num += 1
-                            self.throttle()
-                            continue
-
-                    if not next_btn:
-                        # Try scrolling to load more (infinite scroll)
-                        prev_count = len(rows)
-                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        await page.wait_for_timeout(3000)
-                        new_rows = await page.query_selector_all('table tbody tr')
-                        if len(new_rows) <= prev_count:
-                            break  # No more rows loaded
-                        page_num += 1
-                        self.throttle()
-                        continue
+                    # Try pagination
+                    next_btn = await page.query_selector(
+                        'button:has-text("Next"), a:has-text("Next"), '
+                        '.pagination .next, [aria-label="Next"]'
+                    )
+                    if not next_btn or not await next_btn.is_visible():
+                        break
 
                     disabled = await next_btn.get_attribute("disabled")
                     cls = await next_btn.get_attribute("class") or ""
@@ -187,9 +336,24 @@ class PlanetBidsScraper(BaseScraper):
 
     async def _extract_row(self, page: Page, row) -> RawScrapedEvent | None:
         """Extract a single bid from a table row."""
+        # Get all text cells
         cells = await row.query_selector_all("td")
-        if not cells or len(cells) < 3:
+        if not cells:
             return None
+
+        # Try to find title link
+        title_link = await row.query_selector("a")
+        if not title_link:
+            return None
+
+        title = (await title_link.inner_text()).strip()
+        if not title:
+            return None
+
+        href = await title_link.get_attribute("href") or ""
+        if href and not href.startswith("http"):
+            base = page.url.split("/portal/")[0] if "/portal/" in page.url else page.url
+            href = f"{base}{href}"
 
         # Extract text from all cells
         cell_texts = []
@@ -197,61 +361,31 @@ class PlanetBidsScraper(BaseScraper):
             text = (await cell.inner_text()).strip()
             cell_texts.append(text)
 
-        # PlanetBids standard layout: posted, title, invitation#, due_date, remaining, stage, format
-        # But layout varies — use heuristics
-        title = ""
-        bid_number = ""
-        posted_date = None
-        due_date = None
-        detail_url = ""
-
-        # Check for a link in any cell (for detail URL)
-        title_link = await row.query_selector("a")
-        if title_link:
-            title = (await title_link.inner_text()).strip()
-            href = await title_link.get_attribute("href") or ""
-            if href and not href.startswith("http"):
-                base = f"{page.url.split('/')[0]}//{page.url.split('/')[2]}"
-                detail_url = f"{base}{href}"
-            else:
-                detail_url = href
-
-        # If no link found, title is the longest non-date cell
-        if not title:
-            best = ""
-            for text in cell_texts:
-                if len(text) > len(best) and not re.match(r'^\d{1,2}/\d{1,2}/\d{2,4}', text):
-                    best = text
-            title = best
-
-        if not title:
-            return None
-
-        # Extract dates
+        # Find date-like values (MM/DD/YYYY or YYYY-MM-DD)
         dates = []
         for text in cell_texts:
-            m = re.search(r'\d{1,2}/\d{1,2}/\d{2,4}(?:\s+\d{1,2}:\d{2}(?:am|pm)?)?', text, re.IGNORECASE)
-            if m:
-                dates.append(m.group(0))
+            date_match = re.search(r'\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}', text)
+            if date_match:
+                dates.append(date_match.group(0))
 
-        # Extract bid/invitation number (alphanumeric with dashes, 5+ chars)
+        # Find bid number (alphanumeric with dashes)
+        bid_number = ""
         for text in cell_texts:
-            if re.match(r'^[A-Z0-9][-A-Z0-9]{4,}$', text.strip(), re.IGNORECASE):
+            if re.match(r'^[A-Z0-9][-A-Z0-9]{3,}$', text.strip(), re.IGNORECASE):
                 bid_number = text.strip()
                 break
 
-        posted_date = dates[0] if dates else None
-        due_date = dates[1] if len(dates) > 1 else (dates[0] if dates else None)
+        due_date = dates[-1] if dates else None
         event_id = bid_number or title[:50]
 
         return RawScrapedEvent(
             source_id=self.source_id,
             source_event_id=event_id,
-            source_url=detail_url or page.url,
+            source_url=href,
             title=title,
             issuing_agency=self._agency_name,
             due_date=due_date,
-            posted_date=posted_date,
+            posted_date=dates[0] if dates else None,
             procurement_type="Bid",
         )
 
