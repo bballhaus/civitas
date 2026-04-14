@@ -125,11 +125,37 @@ def _handle_single_site(site_id, event, context):
 
 
 def _handle_multi_site(sites, event, context):
-    """Scrape multiple sites sequentially in one invocation."""
+    """Scrape multiple sites sequentially in one invocation.
+
+    Cal eProcure is handled separately via chained batching (it has ~640
+    events that each require a page reload to discover URLs). All other
+    sites run the full pipeline in a single call.
+    """
     skip_enrich = event.get("skip_enrich", True)
     logger.info(f"Multi-site: {len(sites)} sites, skip_enrich={skip_enrich}")
 
     from webscraping.v2.orchestrator.runner import run_site
+
+    # Cal eProcure needs chained batching — kick it off separately
+    if "caleprocure" in sites:
+        sites = [s for s in sites if s != "caleprocure"]
+        logger.info("Launching Cal eProcure as chained batch invocation")
+        try:
+            lambda_client = boto3.client(
+                "lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")
+            )
+            lambda_client.invoke(
+                FunctionName=context.function_name,
+                InvocationType="Event",
+                Payload=json.dumps({
+                    "site_id": "caleprocure",
+                    "batch_offset": 0,
+                    "batch_size": 40,
+                    "skip_enrich": skip_enrich,
+                }),
+            )
+        except Exception as e:
+            logger.error(f"Failed to launch Cal eProcure: {e}")
 
     results = {}
     for site_id in sites:
