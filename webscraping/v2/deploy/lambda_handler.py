@@ -150,7 +150,7 @@ def _handle_multi_site(sites, event, context):
                 Payload=json.dumps({
                     "site_id": "caleprocure",
                     "batch_offset": 0,
-                    "batch_size": 40,
+                    "batch_size": 15,
                     "skip_enrich": skip_enrich,
                 }),
             )
