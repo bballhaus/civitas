@@ -79,19 +79,10 @@ class CalEprocureScraper(BaseScraper):
 
             try:
                 # Step 1: Load search page and discover event URLs
-                all_urls = await self._get_event_urls(context)
-                self.total_available = len(all_urls)
-                logger.info(f"Found {self.total_available} total events on search page")
-
-                # Apply batch window
-                start = self.batch_offset
-                end = min(
-                    start + (self.batch_size or self.total_available),
-                    self.total_available,
-                    MAX_EVENTS,
-                )
-                batch_urls = all_urls[start:end]
-                logger.info(f"Scraping batch: events {start+1}-{end} of {self.total_available}")
+                # _get_event_urls already respects batch_offset/batch_size
+                # when clicking rows, so it returns only the URLs we need.
+                batch_urls = await self._get_event_urls(context)
+                logger.info(f"Scraping {len(batch_urls)} events (total available: {self.total_available})")
 
                 # Step 2: Scrape events in parallel sub-batches
                 scraped = 0
@@ -157,8 +148,9 @@ class CalEprocureScraper(BaseScraper):
                 return urls;
             }""")
 
+            self.total_available = len(urls)
+
             # If we got event IDs instead of URLs, we need to click to discover URLs
-            # For now, try clicking the first one to see the URL pattern
             if urls and not urls[0].startswith("http"):
                 logger.info(f"Got {len(urls)} event IDs, discovering URL pattern via click...")
                 event_urls = await self._discover_urls_by_clicking(context, page, urls)
@@ -202,10 +194,17 @@ class CalEprocureScraper(BaseScraper):
                 finally:
                     await event_page.close()
 
-        # Fall back to clicking each row since we can't construct URLs
-        # But do it efficiently: load search page once, click in sequence
-        logger.info(f"Clicking {len(visible_rows)} events to get URLs...")
-        for i, row in enumerate(visible_rows[:MAX_EVENTS]):
+        # Click each row to discover its URL. Only click the rows we need
+        # for this batch (respects batch_offset and batch_size from Lambda).
+        start = self.batch_offset
+        end = min(
+            start + (self.batch_size or len(visible_rows)),
+            len(visible_rows),
+            MAX_EVENTS,
+        )
+        batch_rows = list(range(start, end))
+        logger.info(f"Clicking events {start+1}-{end} of {len(visible_rows)} to get URLs...")
+        for i in batch_rows:
             try:
                 # Need to reload search page for each click (Cal eProcure quirk)
                 if i > 0:
