@@ -336,56 +336,73 @@ class PlanetBidsScraper(BaseScraper):
 
     async def _extract_row(self, page: Page, row) -> RawScrapedEvent | None:
         """Extract a single bid from a table row."""
-        # Get all text cells
+        # PlanetBids uses Ember.js — rows have CSS classes (.title, .invitationNum)
+        # and typically NO <a> links. Extract by class first, fall back to heuristics.
         cells = await row.query_selector_all("td")
         if not cells:
             return None
 
-        # Try to find title link
-        title_link = await row.query_selector("a")
-        if not title_link:
-            return None
+        # Try class-based extraction (PlanetBids Ember layout)
+        title = ""
+        title_cell = await row.query_selector("td.title")
+        if title_cell:
+            title = (await title_cell.inner_text()).strip()
 
-        title = (await title_link.inner_text()).strip()
+        bid_number = ""
+        inv_cell = await row.query_selector("td.invitationNum")
+        if inv_cell:
+            bid_number = (await inv_cell.inner_text()).strip()
+
+        # Fall back to <a> link if present (older PlanetBids versions)
+        if not title:
+            title_link = await row.query_selector("a")
+            if title_link:
+                title = (await title_link.inner_text()).strip()
+
         if not title:
             return None
 
-        href = await title_link.get_attribute("href") or ""
-        if href and not href.startswith("http"):
-            base = page.url.split("/portal/")[0] if "/portal/" in page.url else page.url
-            href = f"{base}{href}"
+        # Build detail URL from the row's data-itemid or the portal URL
+        detail_url = page.url
+        item_cell = await row.query_selector("td[data-itemid]")
+        if item_cell:
+            item_id = await item_cell.get_attribute("data-itemid")
+            if item_id:
+                portal_base = page.url.split("/bo/")[0] if "/bo/" in page.url else page.url
+                detail_url = f"{portal_base}/bo/bo-detail/{item_id}"
 
-        # Extract text from all cells
+        # Extract text from all cells for date parsing
         cell_texts = []
         for cell in cells:
             text = (await cell.inner_text()).strip()
             cell_texts.append(text)
 
-        # Find date-like values (MM/DD/YYYY or YYYY-MM-DD)
+        # Find dates (MM/DD/YYYY)
         dates = []
         for text in cell_texts:
-            date_match = re.search(r'\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}', text)
+            date_match = re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', text)
             if date_match:
                 dates.append(date_match.group(0))
 
-        # Find bid number (alphanumeric with dashes)
-        bid_number = ""
-        for text in cell_texts:
-            if re.match(r'^[A-Z0-9][-A-Z0-9]{3,}$', text.strip(), re.IGNORECASE):
-                bid_number = text.strip()
-                break
+        # Find bid number from cell text if not found by class
+        if not bid_number:
+            for text in cell_texts:
+                if re.match(r'^[A-Z0-9][-A-Z0-9]{3,}$', text.strip(), re.IGNORECASE):
+                    bid_number = text.strip()
+                    break
 
-        due_date = dates[-1] if dates else None
         event_id = bid_number or title[:50]
+        posted_date = dates[0] if dates else None
+        due_date = dates[1] if len(dates) > 1 else (dates[0] if dates else None)
 
         return RawScrapedEvent(
             source_id=self.source_id,
             source_event_id=event_id,
-            source_url=href,
+            source_url=detail_url,
             title=title,
             issuing_agency=self._agency_name,
             due_date=due_date,
-            posted_date=dates[0] if dates else None,
+            posted_date=posted_date,
             procurement_type="Bid",
         )
 
