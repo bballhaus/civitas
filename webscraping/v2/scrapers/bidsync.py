@@ -133,7 +133,8 @@ class BidSyncScraper(BaseScraper):
             try:
                 # Step 1: Load Advanced Search page
                 logger.info(f"Loading BidSync Advanced Search: {BIDSYNC_ADVANCED_SEARCH}")
-                await page.goto(BIDSYNC_ADVANCED_SEARCH, wait_until="networkidle", timeout=60000)
+                await page.goto(BIDSYNC_ADVANCED_SEARCH, wait_until="domcontentloaded", timeout=60000)
+                await page.wait_for_timeout(5000)  # Let JSF app initialize
                 await page.wait_for_timeout(3000)
 
                 # Step 2: Fill in the search form
@@ -179,115 +180,62 @@ class BidSyncScraper(BaseScraper):
         """
         Fill in the BidSync Advanced Search form and submit it.
 
-        The JSF form has dropdowns for product type, region/state, and
-        bid status. We select:
-        - Product type: "State & Local" (if available)
-        - Region: California
-        - Status: Current/Open bids
+        The JSF form uses radio buttons for bid type and product type,
+        a <select> for region, and an <a> link to submit. Element IDs are
+        JSF-generated (e.g., bidSearchForm:j_idt211:j_idt225:1).
+
+        We select:
+        - Product type: "State & Local bids" (radio index 1)
+        - Region: California (select value "5")
 
         Returns True if the form was submitted successfully.
         """
         try:
-            # Wait for the form to be present
             await page.wait_for_selector("form", timeout=15000)
 
-            # Try to select "State & Local" product type
-            # JSF forms often use <select> elements or PrimeFaces dropdowns
-            await self._try_select_option(
-                page,
-                selectors=[
-                    'select[id*="productType"]',
-                    'select[id*="product"]',
-                    'select[name*="productType"]',
-                    'select[name*="product"]',
-                ],
-                value_patterns=["state", "local", "State & Local", "State and Local"],
+            # Select "State & Local bids" radio button (index 1 in product type group)
+            state_local_radio = await page.query_selector(
+                'label:has-text("State & Local")'
             )
+            if state_local_radio:
+                await state_local_radio.click()
+                await page.wait_for_timeout(500)
+                logger.info("Selected 'State & Local bids'")
 
-            # Try to set state/region to California
-            await self._try_select_option(
-                page,
-                selectors=[
-                    'select[id*="state"]',
-                    'select[id*="region"]',
-                    'select[name*="state"]',
-                    'select[name*="region"]',
-                ],
-                value_patterns=["CA", "California", "california"],
-            )
-
-            # Try to select "Current" or "Open" bid status
-            await self._try_select_option(
-                page,
-                selectors=[
-                    'select[id*="status"]',
-                    'select[id*="bidStatus"]',
-                    'select[name*="status"]',
-                ],
-                value_patterns=["Current", "current", "Open", "open", "Active", "active"],
-            )
-
-            # If there's a keyword/search text field, we can leave it blank to get all results
-
-            # Try clicking checkboxes for "Current Bids" or similar
-            current_checkbox = await page.query_selector(
-                'input[type="checkbox"][id*="current"], '
-                'input[type="checkbox"][id*="Current"], '
-                'input[type="checkbox"][id*="open"], '
-                'input[type="checkbox"][value*="current"]'
-            )
-            if current_checkbox:
-                is_checked = await current_checkbox.is_checked()
-                if not is_checked:
-                    await current_checkbox.click()
-                    await page.wait_for_timeout(500)
-
-            # Submit the search form
-            # Look for a search/submit button
-            submit_btn = None
-            for sel in [
-                'input[type="submit"][value*="Search"]',
-                'button[type="submit"]',
-                'input[type="submit"]',
-                'a[id*="search" i]',
-                'button[id*="search" i]',
-                'input[value*="Search"]',
-                'a:has-text("Search")',
-                'button:has-text("Search")',
-            ]:
-                try:
-                    submit_btn = await page.query_selector(sel)
-                    if submit_btn and await submit_btn.is_visible():
+            # Select California in the region dropdown
+            # The region <select> has ~50 options; California = value "5"
+            region_select = await page.query_selector('select')
+            if region_select:
+                options = await region_select.query_selector_all("option")
+                for opt in options:
+                    text = (await opt.inner_text()).strip()
+                    if text == "California":
+                        val = await opt.get_attribute("value")
+                        await region_select.select_option(val)
+                        logger.info(f"Selected California (value={val})")
                         break
-                    submit_btn = None
-                except Exception:
-                    continue
+                await page.wait_for_timeout(500)
 
-            if not submit_btn:
-                # Fallback: try clicking via JS
-                clicked = await page.evaluate("""() => {
-                    const btns = Array.from(document.querySelectorAll('input, button, a'));
-                    const search = btns.find(el => {
-                        const text = (el.value || el.textContent || '').toLowerCase();
-                        return text.includes('search') && !text.includes('advanced') && !text.includes('clear');
-                    });
-                    if (search) { search.click(); return true; }
-                    return false;
-                }""")
-                if not clicked:
-                    logger.warning("Could not find search/submit button")
-                    return False
-            else:
-                await submit_btn.click()
+            # Click the "Search" link to submit
+            clicked = await page.evaluate("""() => {
+                const links = Array.from(document.querySelectorAll('a'));
+                const search = links.find(el => el.textContent.trim() === 'Search');
+                if (search) { search.click(); return true; }
+                return false;
+            }""")
 
-            # Wait for results to load
-            await page.wait_for_load_state("networkidle", timeout=30000)
-            await page.wait_for_timeout(3000)
+            if not clicked:
+                logger.warning("Could not find Search link")
+                return False
 
-            # Check if we landed on results page or if results appeared on same page
-            current_url = page.url
-            logger.info(f"After search submit, URL: {current_url}")
+            # Wait for results — use domcontentloaded since networkidle may hang on JSF
+            try:
+                await page.wait_for_load_state("networkidle", timeout=30000)
+            except PlaywrightTimeout:
+                logger.info("networkidle timed out, continuing anyway")
+            await page.wait_for_timeout(5000)
 
+            logger.info(f"After search submit, URL: {page.url}")
             return True
 
         except PlaywrightTimeout as e:
@@ -334,18 +282,16 @@ class BidSyncScraper(BaseScraper):
         """
         events = []
 
-        # Strategy 1: Look for result rows in a table
-        rows = await page.query_selector_all(
-            'table.searchResultsTable tbody tr, '
-            'table[id*="searchResult"] tbody tr, '
-            'table[id*="result"] tbody tr, '
-            '.search-results tr, '
-            'table.list tbody tr'
-        )
+        # Strategy 1: PrimeFaces datatable (the actual results container)
+        rows = await page.query_selector_all('.ui-datatable-data tr')
 
         if not rows:
-            # Strategy 2: Try broader table row selection
-            rows = await page.query_selector_all("table tbody tr")
+            # Strategy 2: Try other table selectors
+            rows = await page.query_selector_all(
+                'table.searchResultsTable tbody tr, '
+                'table[id*="searchResult"] tbody tr, '
+                'table[id*="result"] tbody tr'
+            )
 
         if not rows:
             # Strategy 3: Try div-based result cards
