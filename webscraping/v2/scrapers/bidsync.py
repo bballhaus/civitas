@@ -148,6 +148,15 @@ class BidSyncScraper(BaseScraper):
                 max_pages = 50  # safety limit
                 seen_ids: set[str] = set()
 
+                # Wait for the results datatable to appear
+                try:
+                    await page.wait_for_selector(
+                        '[id$="linksBidSearchResults_data"] tr',
+                        timeout=30000,
+                    )
+                except PlaywrightTimeout:
+                    logger.warning("Timed out waiting for results table")
+
                 while page_num < max_pages:
                     await page.wait_for_timeout(2000)
 
@@ -236,6 +245,7 @@ class BidSyncScraper(BaseScraper):
             await page.wait_for_timeout(5000)
 
             logger.info(f"After search submit, URL: {page.url}")
+
             return True
 
         except PlaywrightTimeout as e:
@@ -282,16 +292,15 @@ class BidSyncScraper(BaseScraper):
         """
         events = []
 
-        # Strategy 1: PrimeFaces datatable (the actual results container)
-        rows = await page.query_selector_all('.ui-datatable-data tr')
-
-        if not rows:
-            # Strategy 2: Try other table selectors
-            rows = await page.query_selector_all(
-                'table.searchResultsTable tbody tr, '
-                'table[id*="searchResult"] tbody tr, '
-                'table[id*="result"] tbody tr'
-            )
+        # Target the Links bid search results datatable specifically.
+        # The page has two datatables — Links (filtered) and Links PLUS (all).
+        # The data tbody has id ending in "linksBidSearchResults_data".
+        results_table = await page.query_selector('[id$="linksBidSearchResults_data"]')
+        if results_table:
+            rows = await results_table.query_selector_all('tr')
+        else:
+            # Fallback: first datatable with bid links
+            rows = await page.query_selector_all('.ui-datatable-data tr')
 
         if not rows:
             # Strategy 3: Try div-based result cards
@@ -336,9 +345,20 @@ class BidSyncScraper(BaseScraper):
     async def _extract_table_row(
         self, page: Page, row, seen_ids: set[str]
     ) -> RawScrapedEvent | None:
-        """Extract a single bid from a results table row."""
+        """
+        Extract a single bid from a results table row.
+
+        BidSync results columns:
+          Cell 0: bid number (e.g., "1090114")
+          Cell 1: title (with <a> link to BidDetail)
+          Cell 2: organization name
+          Cell 3: state (e.g., "California", "Texas")
+          Cell 4: due date
+          Cell 5: time remaining
+          Cell 6: (empty)
+        """
         cells = await row.query_selector_all("td")
-        if not cells or len(cells) < 2:
+        if not cells or len(cells) < 4:
             return None
 
         cell_texts = []
@@ -346,12 +366,17 @@ class BidSyncScraper(BaseScraper):
             text = (await cell.inner_text()).strip()
             cell_texts.append(text)
 
-        # Find the title link (usually links to BidDetail page)
+        # Filter: only California bids
+        state = cell_texts[3] if len(cell_texts) > 3 else ""
+        if state.lower() != "california":
+            return None
+
+        # Extract title and detail URL from the link in cell 1
         title = ""
         detail_url = ""
         bid_id = ""
 
-        title_link = await row.query_selector('a[href*="BidDetail"], a[href*="bidDetail"], a[href*="bidid"]')
+        title_link = await row.query_selector('a[href*="BidDetail"], a[href*="Buyspeed"]')
         if not title_link:
             title_link = await row.query_selector("a")
 
@@ -363,51 +388,22 @@ class BidSyncScraper(BaseScraper):
                     detail_url = f"https://www.bidsync.com{href}"
                 else:
                     detail_url = href
-                # Extract bid ID from URL
                 bid_id_match = re.search(r'bidid=(\d+)', href, re.IGNORECASE)
                 if bid_id_match:
                     bid_id = bid_id_match.group(1)
 
-        # Fallback: title from longest cell text
         if not title:
-            best = ""
-            for text in cell_texts:
-                if len(text) > len(best) and not re.match(r'^\d{1,2}/\d{1,2}/\d{2,4}', text):
-                    best = text
-            title = best
-
+            title = cell_texts[1] if len(cell_texts) > 1 else ""
         if not title:
             return None
 
-        # Extract dates
-        dates = []
-        for text in cell_texts:
-            m = re.search(
-                r'\d{1,2}/\d{1,2}/\d{2,4}(?:\s+\d{1,2}:\d{2}(?:\s*[APap][Mm])?)?',
-                text,
-            )
-            if m:
-                dates.append(m.group(0))
+        bid_number = cell_texts[0] if cell_texts else ""
+        org_name = cell_texts[2] if len(cell_texts) > 2 else ""
+        due_date = cell_texts[4] if len(cell_texts) > 4 else None
+        posted_date = None  # BidSync results don't show posted date in the table
 
-        posted_date = dates[0] if dates else None
-        due_date = dates[1] if len(dates) > 1 else (dates[0] if dates else None)
-
-        # Extract agency/organization name (usually one of the cells)
-        org_name = ""
-        for text in cell_texts:
-            # Skip dates, numbers, and the title
-            if text == title:
-                continue
-            if re.match(r'^\d{1,2}/\d{1,2}/\d{2,4}', text):
-                continue
-            if re.match(r'^\$[\d,.]+$', text):
-                continue
-            if re.match(r'^\d+$', text):
-                continue
-            if len(text) > 5 and not text.isdigit():
-                # Heuristic: agency name is a medium-length text that isn't a date or amount
-                if not org_name or (len(text) > 10 and text != title):
-                    org_name = text
+        if not bid_id:
+            bid_id = bid_number or title[:30]
 
         # Determine source_id and agency based on org name
         if org_name:
@@ -513,60 +509,29 @@ class BidSyncScraper(BaseScraper):
 
     async def _go_to_next_page(self, page: Page) -> bool:
         """
-        Navigate to the next page of search results.
+        Navigate to the next page of search results using PrimeFaces paginator.
+        The paginator is inside the Links results datatable.
         Returns True if pagination succeeded, False if on the last page.
         """
-        # Strategy 1: Look for a "Next" button/link
-        for sel in [
-            'a[aria-label="Next"]',
-            'a:has-text("Next")',
-            'a:has-text("next")',
-            'a:has-text(">")',
-            'input[value="Next"]',
-            'button:has-text("Next")',
-            '.pagination .next a',
-            '.pagination-next a',
-            'a[class*="next"]',
-            'li.next a',
-        ]:
-            try:
-                btn = await page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    disabled = await btn.get_attribute("disabled")
-                    cls = await btn.get_attribute("class") or ""
-                    if disabled or "disabled" in cls:
-                        return False
-                    await btn.click()
-                    await page.wait_for_load_state("networkidle", timeout=30000)
-                    await page.wait_for_timeout(2000)
-                    return True
-            except PlaywrightTimeout:
-                return False
-            except Exception:
-                continue
-
-        # Strategy 2: Use JS to find and click a Next link/button
-        clicked = await page.evaluate("""() => {
-            const els = Array.from(document.querySelectorAll('a, button, input'));
-            const next = els.find(el => {
-                const text = (el.value || el.textContent || el.title || '').trim().toLowerCase();
-                const cls = (el.className || '').toLowerCase();
-                return (text === 'next' || text === '>' || text === '>>' || text === '\u203a' || cls.includes('next'))
-                    && !el.disabled && !cls.includes('disabled');
-            });
-            if (next) { next.click(); return true; }
-            return false;
+        # Find the next button within the Links results table's paginator
+        # Use JS to target the correct datatable (the one with id ending in linksBidSearchResults)
+        result = await page.evaluate("""() => {
+            const dt = document.querySelector('[id$="linksBidSearchResults"]');
+            if (!dt) return 'no_datatable';
+            const nextBtn = dt.querySelector('.ui-paginator-next');
+            if (!nextBtn) return 'no_next';
+            if (nextBtn.classList.contains('ui-state-disabled')) return 'disabled';
+            nextBtn.click();
+            return 'clicked';
         }""")
 
-        if clicked:
-            try:
-                await page.wait_for_load_state("networkidle", timeout=30000)
-                await page.wait_for_timeout(2000)
-                return True
-            except PlaywrightTimeout:
-                return False
+        if result != "clicked":
+            logger.debug(f"Pagination result: {result}")
+            return False
 
-        return False
+        # Wait for AJAX table refresh
+        await page.wait_for_timeout(5000)
+        return True
 
     async def scrape_bid_detail(self, page: Page, bid_id: str) -> dict:
         """

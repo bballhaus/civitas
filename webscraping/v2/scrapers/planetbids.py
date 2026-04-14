@@ -35,11 +35,8 @@ PLANETBIDS_AGENCIES: dict[str, dict] = {
         "name": "City of Sacramento",
         "url": "https://vendors.planetbids.com/portal/15300/bo/bo-search",
     },
-    "planetbids_long_beach": {
-        "portal_id": "15810",
-        "name": "City of Long Beach",
-        "url": "https://vendors.planetbids.com/portal/15810/bo/bo-search",
-    },
+    # Long Beach portal 15810 is deactivated (redirects to error page).
+    # Port of Long Beach (19236) is still active and listed below.
     "planetbids_riverside": {
         "portal_id": "39475",
         "name": "City of Riverside",
