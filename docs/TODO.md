@@ -29,13 +29,20 @@
 - [ ] **S3 concurrent write protection** — User JSON is a single file; concurrent requests could overwrite each other. Add S3 ETag optimistic locking if this becomes an issue
 - [ ] **Backup strategy** — Set up S3 cross-region replication or scheduled backups
 
+## Scraping
+
+- [ ] **Agentic scrapers (LA City, SF City)** — These two sites use the Claude-powered agentic scraper which requires different browser setup and the Anthropic API key. They currently fail on Lambda due to ENOSPC / browser issues. Need to: (1) test recipe caching on Lambda, (2) ensure Anthropic API key is available, (3) consider running these on GitHub Actions instead of Lambda if browser requirements are too heavy
+- [x] **Automated RFP scraping schedule** — EventBridge triggers Lambda every 4 hours with `{"mode": "all"}`
+- [x] **PlanetBids status filtering** — Filter to "Bidding" status only (was scraping closed/awarded bids too)
+- [x] **PlanetBids infinite scroll** — Scroll table container to load all rows (was capped at 30)
+- [x] **Lambda batched chaining** — Sites run in batches of 3 per invocation, chained via async self-invocation
+
 ## Features
 
 - [ ] **Email uniqueness check** — Signup currently only checks username uniqueness, not email (across all users would require an email index in S3)
 - [ ] **Password reset flow** — No forgot-password functionality exists yet
 - [ ] **Email verification** — No email verification on signup
 - [ ] **Profile completeness indicator** — Help users understand what profile data improves match quality
-- [ ] **Automated RFP scraping schedule** — The scraper currently runs manually; set up a cron job or scheduled task
 
 ## Testing
 

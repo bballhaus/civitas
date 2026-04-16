@@ -255,9 +255,26 @@ class PlanetBidsScraper(BaseScraper):
         self._agency_name = site_config.config.get("name", site_config.name)
 
     async def scrape(self) -> AsyncIterator[RawScrapedEvent]:
-        """Scrape open bids from a PlanetBids portal."""
+        """Scrape open bids from a PlanetBids portal.
+
+        PlanetBids uses an Ember.js SPA with:
+        - Filter dropdowns for bid type and status
+        - A Search button to apply filters
+        - Infinite scroll (loads 30 rows per scroll) inside a .table-overflow-container
+        - "Found N bids" count text
+
+        Strategy: filter to "Bidding" status → click Search → scroll to load all rows.
+        """
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                ],
+            )
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent=(
@@ -272,64 +289,83 @@ class PlanetBidsScraper(BaseScraper):
                 await page.goto(self._portal_url, wait_until="networkidle", timeout=60000)
                 await page.wait_for_timeout(5000)
 
-                # Click "Open Bids" or "Current Solicitations" tab
-                open_bids_tab = await page.query_selector(
-                    'a[href*="bo-search"], button:has-text("Open"), '
-                    'a:has-text("Open Bids"), a:has-text("Current")'
-                )
-                if open_bids_tab:
-                    await open_bids_tab.click()
-                    await page.wait_for_load_state("networkidle", timeout=15000)
-                    await page.wait_for_timeout(3000)
+                # Filter to "Bidding" status only (open bids)
+                # The status dropdown is the second <select class="select-field">
+                # Values: 0=All, 2=Planning, 3=Bidding, 4=Closed, 5=Award Pending, etc.
+                await self._apply_bidding_filter(page)
 
-                # Extract bids from the table
-                page_num = 0
-                while page_num < 20:
-                    rows = await page.query_selector_all(
-                        'table tbody tr, .bid-list-item, .solicitation-row'
-                    )
+                # Scroll the table container to load all rows (infinite scroll)
+                await self._scroll_to_load_all(page)
 
-                    if not rows:
-                        # Try alternative selectors for different PlanetBids versions
-                        rows = await page.query_selector_all(
-                            '[class*="bid"] tr, [class*="solicitation"] tr'
-                        )
+                # Extract all loaded rows
+                rows = await page.query_selector_all("table tbody tr")
+                logger.info(f"Total rows loaded: {len(rows)}")
 
-                    if not rows:
-                        logger.info("No bid rows found")
-                        break
-
-                    logger.info(f"Page {page_num + 1}: {len(rows)} rows")
-
-                    for row in rows:
-                        try:
-                            event = await self._extract_row(page, row)
-                            if event:
-                                yield event
-                        except Exception as e:
-                            logger.debug(f"Failed to extract row: {e}")
-
-                    # Try pagination
-                    next_btn = await page.query_selector(
-                        'button:has-text("Next"), a:has-text("Next"), '
-                        '.pagination .next, [aria-label="Next"]'
-                    )
-                    if not next_btn or not await next_btn.is_visible():
-                        break
-
-                    disabled = await next_btn.get_attribute("disabled")
-                    cls = await next_btn.get_attribute("class") or ""
-                    if disabled or "disabled" in cls:
-                        break
-
-                    self.throttle()
-                    await next_btn.click()
-                    await page.wait_for_load_state("networkidle", timeout=15000)
-                    await page.wait_for_timeout(2000)
-                    page_num += 1
+                for row in rows:
+                    try:
+                        event = await self._extract_row(page, row)
+                        if event:
+                            yield event
+                    except Exception as e:
+                        logger.debug(f"Failed to extract row: {e}")
 
             finally:
                 await browser.close()
+
+    async def _apply_bidding_filter(self, page: Page):
+        """Select 'Bidding' status filter and click Search."""
+        try:
+            selects = await page.query_selector_all("select.select-field")
+            if len(selects) >= 2:
+                # Second select is the status dropdown; "3" = Bidding
+                await selects[1].select_option("3")
+                await page.wait_for_timeout(500)
+                logger.info("Selected 'Bidding' status filter")
+
+                # Click the Search button to apply
+                search_btn = await page.query_selector(
+                    'button:has-text("Search"), input[type="submit"], '
+                    'button[type="submit"]'
+                )
+                if search_btn:
+                    await search_btn.click()
+                    await page.wait_for_timeout(3000)
+                    logger.info("Clicked Search to apply filter")
+
+                # Log the filtered count
+                count = await page.evaluate("""() => {
+                    const m = document.body.innerText.match(/Found\\s+(\\d+)\\s+bids/i);
+                    return m ? parseInt(m[1]) : -1;
+                }""")
+                if count >= 0:
+                    logger.info(f"Found {count} open bids after filtering")
+            else:
+                logger.warning("Could not find status filter dropdown")
+        except Exception as e:
+            logger.warning(f"Failed to apply status filter: {e}")
+
+    async def _scroll_to_load_all(self, page: Page, max_scrolls: int = 50):
+        """Scroll the table container to trigger infinite scroll loading."""
+        prev_count = 0
+        for i in range(max_scrolls):
+            self.throttle()
+            await page.evaluate("""() => {
+                const container = document.querySelector('.table-overflow-container');
+                if (container) {
+                    container.scrollTop = container.scrollHeight;
+                } else {
+                    window.scrollTo(0, document.body.scrollHeight);
+                }
+            }""")
+            await page.wait_for_timeout(2000)
+
+            rows = await page.query_selector_all("table tbody tr")
+            current_count = len(rows)
+            if current_count == prev_count:
+                # No new rows loaded — we've reached the end
+                break
+            logger.debug(f"Scroll {i + 1}: {current_count} rows loaded")
+            prev_count = current_count
 
     async def _extract_row(self, page: Page, row) -> RawScrapedEvent | None:
         """Extract a single bid from a table row."""

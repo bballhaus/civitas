@@ -283,7 +283,7 @@ function inferIndustry(department: string, title?: string, description?: string)
   // Content-based inference (most accurate — looks at what the RFP actually asks for)
   // FIRST: catch lease/real estate before anything else — "building code" triggers false positives otherwise
   if (text.match(/\bwanted\s+to\s+lease\b/) || text.match(/\blease\s+(office|warehouse|space|property)\b/) || text.match(/\b(nusf|rentable\s+square|leasable)\b/)) return "Real Estate & Leasing";
-  if (text.match(/\b(software|saas|cloud|cyber|data\s*base|network|telecom|it\s+consult|electronic.*system|computer|digital)\b/)) return "IT Services";
+  if (text.match(/\b(software|saas|cloud|cyber\w*|data\s*base|network|telecom|it\s+consult|electronic.*system|computer|digital)\b/)) return "IT Services";
   if (text.match(/\b(janitorial|cleaning|custodial|sanitation|housekeeping)\b/)) return "Facilities Maintenance";
   if (text.match(/\b(hvac|heating|ventilation|cooling|plumbing|elevator|generator|preventive\s+maintenance|equipment\s+maintenance)\b/)) return "Facilities Maintenance";
   if (text.match(/\b(construction|building\s+construct|demolition|renovation|roofing|concrete|masonry|paving|asphalt|grading|excavation|siding)\b/)) return "Construction";
