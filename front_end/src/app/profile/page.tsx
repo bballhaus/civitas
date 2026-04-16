@@ -19,7 +19,6 @@ import {
   getProfileFromBackend,
   uploadContractDocument,
   deleteContractDocument,
-  getAuthToken,
   mapBackendProfileToCompanyProfile,
   getEmptyCompanyProfile,
   type CurrentUser,
@@ -532,7 +531,7 @@ export default function ProfilePage() {
     let profileToSave = profile;
     try {
       if (editingSection === "contract") {
-        if (currentUser && getAuthToken()) {
+        if (currentUser) {
           for (const key of pendingRemovals) {
             try { await deleteContractDocument(key); } catch (e) { console.error("Delete failed:", key, e); }
           }

@@ -1,0 +1,30 @@
+{
+  "llm": {
+    "provider": "groq",
+    "model": "llama-3.1-8b-instant",
+    "extraction": {
+      "model": "llama-3.1-8b-instant",
+      "maxChars": 50000
+    },
+    "proposal": {
+      "maxContextChars": 80000
+    }
+  },
+  "auth": {
+    "jwtExpiryDays": 7,
+    "bcryptRounds": 12
+  },
+  "rateLimit": {
+    "auth": { "limit": 10, "windowMs": 60000 },
+    "extract": { "limit": 5, "windowMs": 60000 },
+    "cleanupIntervalMs": 300000
+  },
+  "cache": {
+    "userDataTtlMs": 10000,
+    "s3TtlMs": 300000
+  },
+  "upload": {
+    "maxFileSize": 26214400,
+    "maxFiles": 10
+  }
+}

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import Groq from "groq-sdk";
+import { chatCompletion } from "@/lib/llm";
 
 const PROMPT = `You are an expert government contracting consultant creating an INTERNAL planning document for a vendor considering pursuing an RFP. This document is for internal use only—it is NOT a proposal to submit. It helps the user plan and decide whether to bid.
 
@@ -50,15 +50,6 @@ Incorporate the feedback thoughtfully. Preserve the overall structure and qualit
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
-      console.error("[generate-plan-of-execution] GROQ_API_KEY not set");
-      return NextResponse.json(
-        { error: "GROQ_API_KEY not configured" },
-        { status: 500 }
-      );
-    }
-
     const body = await req.json();
     const {
       rfp,
@@ -79,7 +70,6 @@ export async function POST(req: Request) {
       );
     }
 
-    const client = new Groq({ apiKey });
     const trimmedFeedback = (feedback ?? "").trim();
     const isRefinement = trimmedFeedback.length > 0;
 
@@ -111,18 +101,16 @@ User Profile:
 ${profile ? JSON.stringify(profile, null, 2) : "No user profile provided. Create a generic plan structure."}`;
     }
 
-    const completion = await client.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
+    const result = await chatCompletion(
+      [
         { role: "system", content: systemPrompt },
         { role: "user", content: userInput },
       ],
-      temperature: 0.3,
-      max_tokens: 4096,
-    });
+      { temperature: 0.3, maxTokens: 4096 }
+    );
 
     const plan =
-      completion.choices[0]?.message?.content?.trim() ??
+      result.content?.trim() ??
       "Unable to generate plan of execution.";
 
     return NextResponse.json({ plan });

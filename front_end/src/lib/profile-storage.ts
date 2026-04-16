@@ -207,7 +207,14 @@ export async function refreshProfileFromContracts(
       if (kw?.trim()) capabilitiesSet.add(kw.trim());
     }
     // Contract types
-    if (c.contract_type?.trim()) contractTypes.add(c.contract_type.trim());
+    const ct: unknown = c.contract_type;
+    if (Array.isArray(ct)) {
+      for (const t of ct) {
+        if (typeof t === "string" && t.trim()) contractTypes.add(t.trim());
+      }
+    } else if (typeof ct === "string" && ct.trim()) {
+      contractTypes.add(ct.trim());
+    }
 
     // Size/status from dedicated field
     const ss: unknown = c.size_status || [];

@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { extractMetadataFromDocument, ExtractionError } from "@/lib/extraction";
+import { config } from "@/lib/config";
 
 export const maxDuration = 60;
 
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
-const MAX_FILES = 10;
+const MAX_FILE_SIZE = config.upload.maxFileSize;
+const MAX_FILES = config.upload.maxFiles;
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".docx", ".doc", ".txt"]);
 
 function getFileExtension(name: string): string {

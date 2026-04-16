@@ -373,6 +373,7 @@ export async function uploadContractDocument(
   const formData = new FormData();
   formData.append("document", file);
   formData.append("title", title ?? file.name ?? "document");
+  formData.append("extract", "true");
 
   const res = await fetch("/api/contracts/", {
     method: "POST",

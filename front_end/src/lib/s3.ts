@@ -9,38 +9,31 @@ import {
   DeleteObjectCommand,
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
-
-function getRegionValue(): string {
-  return process.env.AWS_REGION || "us-east-1";
-}
-
-function getBucketValue(): string {
-  return process.env.AWS_S3_BUCKET || "civitas-ai";
-}
+import { config } from "./config";
 
 let _client: S3Client | null = null;
 
-function getClient(): S3Client {
+export function getS3Client(): S3Client {
   if (!_client) {
     // Use default credential provider chain (env vars, IAM roles, instance metadata).
     // Works on Vercel (env vars) and Lambda (IAM role) without hardcoding credentials.
-    _client = new S3Client({ region: getRegionValue() });
+    _client = new S3Client({ region: config.aws.region });
   }
   return _client;
 }
 
 export function getBucket(): string {
-  return getBucketValue();
+  return config.aws.s3Bucket;
 }
 
 export function getRegion(): string {
-  return getRegionValue();
+  return config.aws.region;
 }
 
 export async function getObject(key: string): Promise<string | null> {
   try {
-    const resp = await getClient().send(
-      new GetObjectCommand({ Bucket: getBucketValue(), Key: key })
+    const resp = await getS3Client().send(
+      new GetObjectCommand({ Bucket: config.aws.s3Bucket, Key: key })
     );
     return (await resp.Body?.transformToString("utf-8")) ?? null;
   } catch (err: unknown) {
@@ -74,8 +67,8 @@ export async function putObject(
   contentType = "application/json"
 ): Promise<boolean> {
   try {
-    await getClient().send(
-      new PutObjectCommand({ Bucket: getBucketValue(), Key: key, Body: body, ContentType: contentType })
+    await getS3Client().send(
+      new PutObjectCommand({ Bucket: config.aws.s3Bucket, Key: key, Body: body, ContentType: contentType })
     );
     return true;
   } catch (err) {
@@ -93,8 +86,8 @@ export async function putObjectJSON(
 
 export async function deleteObject(key: string): Promise<boolean> {
   try {
-    await getClient().send(
-      new DeleteObjectCommand({ Bucket: getBucketValue(), Key: key })
+    await getS3Client().send(
+      new DeleteObjectCommand({ Bucket: config.aws.s3Bucket, Key: key })
     );
     return true;
   } catch (err) {
@@ -115,8 +108,8 @@ export async function listObjects(
   prefix: string
 ): Promise<string[]> {
   try {
-    const resp = await getClient().send(
-      new ListObjectsV2Command({ Bucket: getBucketValue(), Prefix: prefix })
+    const resp = await getS3Client().send(
+      new ListObjectsV2Command({ Bucket: config.aws.s3Bucket, Prefix: prefix })
     );
     return (resp.Contents ?? []).map((obj) => obj.Key!).filter(Boolean);
   } catch (err) {
@@ -126,9 +119,9 @@ export async function listObjects(
 }
 
 export function getDocumentUrl(s3Key: string): string {
-  const bucket = getBucketValue();
+  const bucket = config.aws.s3Bucket;
   if (!s3Key || !bucket) return "";
-  return `https://${bucket}.s3.${getRegionValue()}.amazonaws.com/${s3Key}`;
+  return `https://${bucket}.s3.${config.aws.region}.amazonaws.com/${s3Key}`;
 }
 
 // ── ETag-based optimistic locking ──
@@ -142,8 +135,8 @@ export async function getObjectJSONWithETag<T = Record<string, unknown>>(
   key: string
 ): Promise<ObjectWithETag<T> | null> {
   try {
-    const resp = await getClient().send(
-      new GetObjectCommand({ Bucket: getBucketValue(), Key: key })
+    const resp = await getS3Client().send(
+      new GetObjectCommand({ Bucket: getBucket(), Key: key })
     );
     const body = await resp.Body?.transformToString("utf-8");
     if (!body) return null;
@@ -164,7 +157,7 @@ export async function putObjectJSONIfMatch(
 ): Promise<boolean> {
   try {
     const params: Record<string, unknown> = {
-      Bucket: getBucketValue(),
+      Bucket: getBucket(),
       Key: key,
       Body: JSON.stringify(data),
       ContentType: "application/json",
@@ -172,7 +165,7 @@ export async function putObjectJSONIfMatch(
     if (etag) {
       (params as Record<string, string>).IfMatch = etag;
     }
-    await getClient().send(new PutObjectCommand(params as any));
+    await getS3Client().send(new PutObjectCommand(params as any));
     return true;
   } catch (err: unknown) {
     if (err instanceof Error && (err.name === "PreconditionFailed" || err.name === "412")) {
