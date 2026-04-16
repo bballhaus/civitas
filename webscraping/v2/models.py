@@ -153,7 +153,7 @@ class SiteConfig(BaseModel):
     name: str = Field(..., description="Human-readable name")
     url: str = Field(..., description="Base URL for the site")
     scraper_type: ScraperType = ScraperType.STRUCTURED
-    schedule_cron: str = "0 */4 * * *"  # default: every 4 hours
+    schedule_cron: str = "0 0 */2 * *"  # default: every 48 hours
     enabled: bool = True
     priority: int = 1  # 1=highest
     min_request_interval_ms: int = 3000

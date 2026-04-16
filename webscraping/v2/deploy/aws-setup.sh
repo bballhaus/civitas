@@ -22,7 +22,7 @@
 #   bash webscraping/v2/deploy/aws-setup.sh
 #
 # To add a new scraping schedule for another site:
-#   aws events put-rule --name civitas-scrape-SITEID --schedule-expression "rate(4 hours)" --state ENABLED
+#   aws events put-rule --name civitas-scrape-SITEID --schedule-expression "rate(48 hours)" --state ENABLED
 #   aws events put-targets --rule civitas-scrape-SITEID --targets '[{"Id":"1","Arn":"LAMBDA_ARN","Input":"{\"site_id\":\"SITEID\"}"}]'
 # ============================================================================
 
@@ -279,7 +279,7 @@ LAMBDA_ARN="arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${LAMBDA_FUNCTION}"
 RULE_NAME="civitas-scrape-caleprocure"
 aws events put-rule \
     --name "$RULE_NAME" \
-    --schedule-expression "rate(4 hours)" \
+    --schedule-expression "rate(48 hours)" \
     --state ENABLED \
     --description "Scrape Cal eProcure every 4 hours" \
     --region "$REGION" \
@@ -321,7 +321,7 @@ echo "  # Check logs"
 echo "  aws logs tail /aws/lambda/$LAMBDA_FUNCTION --follow"
 echo ""
 echo "  # Add another site schedule"
-echo "  aws events put-rule --name civitas-scrape-SITEID --schedule-expression 'rate(4 hours)' --state ENABLED"
+echo "  aws events put-rule --name civitas-scrape-SITEID --schedule-expression 'rate(48 hours)' --state ENABLED"
 echo "  aws events put-targets --rule civitas-scrape-SITEID --targets '[{\"Id\":\"1\",\"Arn\":\"${LAMBDA_ARN}\",\"Input\":\"{\\\\\"site_id\\\\\":\\\\\"SITEID\\\\\"}\"}]'"
 echo ""
 echo "  # Rebuild after code changes"

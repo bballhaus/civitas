@@ -60,7 +60,7 @@ front_end/src/
 ### Authentication
 - **Stateless JWT** (HS256) via the `jose` library
 - JWT_SECRET must be set as an environment variable (server throws on missing/default)
-- Token expiry: **7 days**
+- Token expiry: **24 hours**
 - Passwords hashed with **bcrypt (12 rounds)**
 - Password requirements: 8+ chars, uppercase, lowercase, special character
 - Legacy Django PBKDF2 hashes are transparently migrated to bcrypt on login

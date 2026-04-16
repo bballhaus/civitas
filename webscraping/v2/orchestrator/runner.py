@@ -52,7 +52,7 @@ def _build_site_registry() -> dict[str, SiteConfig]:
             name="Cal eProcure",
             url="https://caleprocure.ca.gov/pages/Events-BS3/event-search.aspx",
             scraper_type=ScraperType.STRUCTURED,
-            schedule_cron="0 */4 * * *",
+            schedule_cron="0 0 */2 * *",
             min_request_interval_ms=2000,
             priority=1,
         ),

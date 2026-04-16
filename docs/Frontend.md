@@ -62,13 +62,29 @@ front_end/src/
 │   ├── capabilities.ts               # Capability normalization & synonyms
 │   └── events-cache.ts               # Client-side RFP caching
 ├── proxy.ts                          # Edge proxy: rate limiting for auth & extraction
-├── data/
-│   ├── filter-options.ts             # California cities, NAICS codes, filter lists
-│   ├── california-counties.json      # County list
-│   └── capabilities.json             # Capability taxonomy
+├── data/                              # Centralized reference data (single source of truth)
+│   ├── filter-options.ts             # Re-exports JSON data as typed constants for filters
+│   ├── california-cities.json        # 482 California incorporated cities (CAL FIRE open data)
+│   ├── california-counties.json      # 58 California counties
+│   ├── naics-codes.json              # 1,012 NAICS codes with titles (2022 Census/OMB)
+│   └── capabilities.json             # 80+ canonical capability categories
 └── types/
     └── file-saver.d.ts               # Type declarations
 ```
+
+## Centralized Data Layer (`src/data/`)
+
+All reference data used across the platform — filters, matching, profile setup, and API routes — is stored as JSON files in `src/data/`. This is the **single source of truth** for global constants, making it easy to update values in one place without touching application logic.
+
+| File | Contents | Used by |
+|------|----------|---------|
+| `capabilities.json` | 80+ canonical capability categories (e.g. "Road & Highway Construction", "HVAC Services") | Matching algorithm, profile setup, dashboard filters, capability normalization (`capabilities.ts`) |
+| `naics-codes.json` | 1,012 NAICS codes with titles (2022 Census/OMB standard) | Dashboard filters, matching algorithm (prefix-based scoring), profile setup |
+| `california-cities.json` | 482 incorporated California cities | Dashboard location filter, matching algorithm (metro-area awareness) |
+| `california-counties.json` | 58 California counties | Dashboard location filter, matching algorithm |
+| `filter-options.ts` | Re-exports the JSON files as typed TypeScript constants (`CALIFORNIA_CITIES`, `NAICS_ENTRIES`, etc.) | Dashboard and profile pages import from here |
+
+**How it connects to the matching algorithm:** `capabilities.ts` imports `capabilities.json` and builds keyword-to-canonical mappings, category groupings, and Jaccard-based fuzzy matching on top of it. The matching algorithm (`rfp-matching.ts`) uses these normalized capabilities for scoring. Adding a new capability or NAICS code is a single JSON edit — no code changes needed.
 
 ## Pages & User Flows
 
