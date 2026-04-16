@@ -26,7 +26,7 @@
 
 ## LLM
 
-- [ ] **Upgrade from Groq free tier** — Groq's free tier has rate limits; upgrade or switch provider for production
+- [x] **Upgrade from Groq free tier** — Groq's free tier has rate limits; upgrade or switch provider for production
 - [ ] **LLM provider abstraction** — The extraction prompt is provider-agnostic, but the SDK calls are Groq-specific. Abstract to support OpenAI/Claude as alternatives
 - [ ] **Extraction quality testing** — Compare pdf-parse (JS) vs pdfplumber (Python) output quality with real contract PDFs
 
