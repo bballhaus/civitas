@@ -3,6 +3,7 @@
  * Port of back_end/contracts/services/user_data_s3.py.
  */
 import { getObjectJSON, putObjectJSON, getObjectJSONWithETag, putObjectJSONIfMatch } from "./s3";
+import { config } from "./config";
 
 const USER_DATA_PREFIX = "users/";
 
@@ -93,7 +94,7 @@ function userKey(username: string): string {
 // Short-lived cache to avoid repeated S3 reads within the same request flow.
 // Each API request typically reads user data 2-3 times (auth check + profile + status).
 const userCache = new Map<string, { data: UserData; etag: string | null; expiresAt: number }>();
-const CACHE_TTL_MS = 10_000; // 10 seconds
+const CACHE_TTL_MS = config.cache.userDataTtlMs;
 
 export async function getUserData(username: string): Promise<UserData | null> {
   const cached = userCache.get(username);

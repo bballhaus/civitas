@@ -2,6 +2,7 @@
  * In-memory sliding-window rate limiter.
  * No external dependencies — stores request timestamps per IP in a Map.
  */
+import { config } from "./config";
 
 interface RateLimitEntry {
   timestamps: number[];
@@ -9,8 +10,7 @@ interface RateLimitEntry {
 
 const store = new Map<string, RateLimitEntry>();
 
-// Clean up stale entries every 5 minutes
-const CLEANUP_INTERVAL = 5 * 60 * 1000;
+const CLEANUP_INTERVAL = config.rateLimit.cleanupIntervalMs;
 let lastCleanup = Date.now();
 
 function cleanup(windowMs: number) {

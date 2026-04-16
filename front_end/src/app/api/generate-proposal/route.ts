@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import Groq from "groq-sdk";
+import { chatCompletion } from "@/lib/llm";
 
 const PROMPT_WITHOUT_STYLE = `You are an expert government contracting consultant helping a vendor write a professional proposal in response to an RFP (Request for Proposal).
 
@@ -117,15 +117,6 @@ async function extractPastProposalTexts(urls: string[]): Promise<string> {
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
-      console.error("[generate-proposal] GROQ_API_KEY not set");
-      return NextResponse.json(
-        { error: "GROQ_API_KEY not configured" },
-        { status: 500 }
-      );
-    }
-
     const body = await req.json();
     const {
       rfp,
@@ -160,7 +151,6 @@ export async function POST(req: Request) {
 
     const hasStyleReference = pastProposalText.length > 0;
 
-    const client = new Groq({ apiKey });
     const trimmedFeedback = (feedback ?? "").trim();
     const isRefinement = trimmedFeedback.length > 0;
 
@@ -199,18 +189,15 @@ ${pastProposalText}`;
       }
     }
 
-    const completion = await client.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
+    const result = await chatCompletion(
+      [
         { role: "system", content: systemPrompt },
         { role: "user", content: userInput },
       ],
-      temperature: 0.4,
-      max_tokens: 4096,
-    });
+      { temperature: 0.4, maxTokens: 4096 }
+    );
 
-    const proposal =
-      completion.choices[0]?.message?.content?.trim() ?? "Unable to generate proposal.";
+    const proposal = result.content?.trim() ?? "Unable to generate proposal.";
 
     return NextResponse.json({ proposal });
   } catch (err) {

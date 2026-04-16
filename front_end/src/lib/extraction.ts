@@ -2,10 +2,11 @@
  * Contract metadata extraction service.
  * Port of back_end/contracts/services/extraction.py.
  *
- * Extracts text from uploaded documents (PDF, DOCX, TXT) and uses Groq LLM
+ * Extracts text from uploaded documents (PDF, DOCX, TXT) and uses LLM
  * to parse structured metadata.
  */
-import Groq from "groq-sdk";
+import { chatCompletion } from "./llm";
+import { config } from "./config";
 
 export class ExtractionError extends Error {
   constructor(message: string) {
@@ -81,8 +82,7 @@ Rules:
 
 Return ONLY the JSON object, no other text.`;
 
-const MAX_TEXT_CHARS = 50000;
-const DEFAULT_MODEL = "llama-3.1-8b-instant";
+const MAX_TEXT_CHARS = config.llm.extraction.maxChars;
 
 // ── Text extraction ──
 
@@ -131,26 +131,15 @@ function extractText(buffer: Buffer, filename: string): Promise<string> | string
 
 // ── LLM call ──
 
-async function callGroq(text: string): Promise<Record<string, unknown>> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    throw new ExtractionError("GROQ_API_KEY not set in environment");
-  }
-
-  const client = new Groq({ apiKey });
-  const model = process.env.EXTRACTION_LLM_MODEL || DEFAULT_MODEL;
-
-  const response = await client.chat.completions.create({
-    model,
-    messages: [
+async function callLlm(text: string): Promise<Record<string, unknown>> {
+  const result = await chatCompletion(
+    [
       { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
       { role: "user", content: text },
     ],
-    temperature: 0.1,
-  });
-
-  const raw = response.choices[0]?.message?.content?.trim() || "";
-  return parseLlmJson(raw);
+    { model: config.llm.extraction.model, temperature: 0.1 },
+  );
+  return parseLlmJson(result.content.trim());
 }
 
 function parseLlmJson(raw: string): Record<string, unknown> {
@@ -262,6 +251,6 @@ export async function extractMetadataFromDocument(
     text = text.slice(0, MAX_TEXT_CHARS) + "\n\n[... document truncated ...]";
   }
 
-  const data = await callGroq(text);
+  const data = await callLlm(text);
   return normalizeResult(data);
 }

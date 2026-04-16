@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { S3Client, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { normalizeCapability } from "@/lib/capabilities";
+import { getS3Client, getBucket, getObjectJSON } from "@/lib/s3";
+import { config } from "@/lib/config";
 
 interface ScrapedEvent {
   event_id: string;
@@ -33,9 +36,8 @@ interface AttachmentExtraction {
   total_pdfs_available?: number;
 }
 
-// Use default credential provider chain (env vars, IAM roles, instance metadata)
-const s3 = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
-const S3_BUCKET = process.env.AWS_S3_BUCKET || "civitas-ai";
+const s3 = getS3Client();
+const S3_BUCKET = getBucket();
 
 // ---------------------------------------------------------------------------
 // Server-side S3 cache (5-minute TTL)
@@ -46,19 +48,10 @@ interface S3Cache {
   timestamp: number;
 }
 let s3Cache: S3Cache | null = null;
-const S3_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const S3_CACHE_TTL = config.cache.s3TtlMs;
 
 async function fetchS3Json<T>(key: string): Promise<T | null> {
-  try {
-    const cmd = new GetObjectCommand({ Bucket: S3_BUCKET, Key: key });
-    const resp = await s3.send(cmd);
-    const body = await resp.Body?.transformToString("utf-8");
-    if (!body) return null;
-    return JSON.parse(body) as T;
-  } catch (err) {
-    console.warn(`Could not fetch s3://${S3_BUCKET}/${key}:`, err);
-    return null;
-  }
+  return getObjectJSON<T>(key);
 }
 
 async function loadS3Data(): Promise<{

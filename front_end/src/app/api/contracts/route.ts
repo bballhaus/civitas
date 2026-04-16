@@ -6,10 +6,11 @@ import {
 } from "@/lib/contract-storage";
 import { extractMetadataFromDocument } from "@/lib/extraction";
 import { refreshProfileFromContracts } from "@/lib/profile-storage";
+import { config } from "@/lib/config";
 
 export const maxDuration = 60; // LLM extraction can take time
 
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+const MAX_FILE_SIZE = config.upload.maxFileSize;
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".docx", ".doc", ".txt"]);
 
 function getFileExtension(name: string): string {

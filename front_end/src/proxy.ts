@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { config as appConfig } from "./lib/config";
 
 /**
  * Proxy: nonce-based CSP + rate limiting.
@@ -15,13 +16,11 @@ interface RateLimitEntry {
 
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
-// Auth endpoints: 10 requests per minute
-const AUTH_RATE_LIMIT = 10;
-const AUTH_WINDOW_MS = 60 * 1000;
+const AUTH_RATE_LIMIT = appConfig.rateLimit.auth.limit;
+const AUTH_WINDOW_MS = appConfig.rateLimit.auth.windowMs;
 
-// Profile extract (public, expensive): 5 requests per minute
-const EXTRACT_RATE_LIMIT = 5;
-const EXTRACT_WINDOW_MS = 60 * 1000;
+const EXTRACT_RATE_LIMIT = appConfig.rateLimit.extract.limit;
+const EXTRACT_WINDOW_MS = appConfig.rateLimit.extract.windowMs;
 
 function getIp(request: NextRequest): string {
   return request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
@@ -66,7 +65,7 @@ function cleanupStore() {
 function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}'`,
+    `script-src 'self' 'nonce-${nonce}'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
     // style-src still needs 'unsafe-inline' — Tailwind v4 injects <style> tags at runtime
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.s3.*.amazonaws.com",
@@ -91,8 +90,11 @@ export function proxy(request: NextRequest) {
   // Generate nonce for every request
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
-  // Rate limit auth endpoints
-  if (pathname.startsWith("/api/auth/")) {
+  // Rate limit auth mutation endpoints (login, signup, change-password)
+  // Skip /api/auth/me/ — it's a session check called on every page load
+  const isAuthMutation = pathname.startsWith("/api/auth/") &&
+    !pathname.startsWith("/api/auth/me");
+  if (isAuthMutation) {
     const ip = getIp(request);
     const { limited, remaining, retryAfterMs } = isRateLimited(
       ip, "auth", AUTH_RATE_LIMIT, AUTH_WINDOW_MS

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import Groq from "groq-sdk";
+import { chatCompletion } from "@/lib/llm";
 
 const PROMPT = `You are an expert government contracting consultant. Given the full text of an RFP (Request for Proposal) description and any pre-extracted key requirements from attachments, produce a clear, structured summary of the contract's requirements.
 
@@ -31,15 +31,6 @@ Formatting rules:
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
-      console.error("[rfp-requirements-summary] GROQ_API_KEY not set");
-      return NextResponse.json(
-        { error: "GROQ_API_KEY not configured" },
-        { status: 500 }
-      );
-    }
-
     const body = await req.json();
     const {
       rfp,
@@ -62,8 +53,6 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-
-    const client = new Groq({ apiKey });
 
     // When attachment data is present, it's the most valuable context — give it more room
     const hasAttachments = attachmentRollup && (attachmentRollup.text || attachmentRollup.summary);
@@ -100,18 +89,15 @@ ${hasAttachments ? JSON.stringify(attachmentRollup).slice(0, attachmentSlice) : 
 
 Summarize the contract requirements:`;
 
-    const completion = await client.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
+    const result = await chatCompletion(
+      [
         { role: "system", content: PROMPT },
         { role: "user", content: input },
       ],
-      temperature: 0.3,
-      max_tokens: 700,
-    });
+      { temperature: 0.3, maxTokens: 700 }
+    );
 
-    const summary =
-      completion.choices[0]?.message?.content?.trim() ?? description.slice(0, 500);
+    const summary = result.content?.trim() ?? description.slice(0, 500);
 
     return NextResponse.json({ summary });
   } catch (err) {

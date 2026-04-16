@@ -4,7 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  getAuthToken,
   uploadContractDocument,
   getProfileFromBackend,
   mapBackendProfileToCompanyProfile,
@@ -46,7 +45,7 @@ export default function UploadPage() {
   const dragCounter = useRef(0);
 
   useEffect(() => {
-    setIsLoggedIn(!!getAuthToken());
+    setIsLoggedIn(!!getCachedUser());
   }, []);
 
   const ACCEPTED_EXTENSIONS = [".pdf", ".doc", ".docx", ".txt"];
@@ -147,7 +146,7 @@ export default function UploadPage() {
       const extractedData = await parseDocumentsWithBackend(files);
       setProgress(50);
 
-      const isLoggedIn = !!getAuthToken();
+      const isLoggedIn = !!getCachedUser();
       if (isLoggedIn) {
         for (let i = 0; i < files.length; i++) {
           await uploadContractDocument(files[i], files[i].name);

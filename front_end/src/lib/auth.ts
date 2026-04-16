@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { createHash, pbkdf2 as pbkdf2Callback } from "crypto";
 import { promisify } from "util";
+import { config } from "./config";
 
 const pbkdf2Async = promisify(pbkdf2Callback);
 
@@ -20,7 +21,8 @@ function getJwtSecret(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
-const JWT_EXPIRY_HOURS = 24;
+const JWT_EXPIRY_DAYS = config.auth.jwtExpiryDays;
+const JWT_EXPIRY_HOURS = JWT_EXPIRY_DAYS * 24;
 const AUTH_COOKIE_NAME = "civitas_session";
 
 // ── JWT ──
@@ -102,7 +104,7 @@ export async function getAuthenticatedUser(
 
 // ── Passwords ──
 
-const BCRYPT_ROUNDS = 12;
+const BCRYPT_ROUNDS = config.auth.bcryptRounds;
 
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, BCRYPT_ROUNDS);

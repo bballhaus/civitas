@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import Groq from "groq-sdk";
+import { chatCompletion } from "@/lib/llm";
 
 const PROMPT = `You are helping a vendor/contractor understand why an RFP (Request for Proposal) is or isn't a good match for their business.
 
@@ -29,15 +29,6 @@ Rules:
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
-      console.error("[match-summary] GROQ_API_KEY not set");
-      return NextResponse.json(
-        { error: "GROQ_API_KEY not configured" },
-        { status: 500 }
-      );
-    }
-
     const body = await req.json();
     const {
       rfp,
@@ -59,8 +50,6 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-
-    const client = new Groq({ apiKey });
 
     // Build structured attachment context
     const rfpAny = rfp as Record<string, unknown>;
@@ -86,18 +75,15 @@ Negative reasons: ${
       Array.isArray(negativeReasons) ? JSON.stringify(negativeReasons) : "[]"
     }`;
 
-    const completion = await client.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
+    const result = await chatCompletion(
+      [
         { role: "system", content: PROMPT },
         { role: "user", content: input },
       ],
-      temperature: 0.3,
-      max_tokens: 280,
-    });
+      { temperature: 0.3, maxTokens: 280 }
+    );
 
-    const summary =
-      completion.choices[0]?.message?.content?.trim() ?? currentSummary;
+    const summary = result.content?.trim() ?? currentSummary;
 
     return NextResponse.json({ summary });
   } catch (err) {

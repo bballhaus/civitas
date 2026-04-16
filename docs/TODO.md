@@ -27,7 +27,9 @@
 ## LLM
 
 - [x] **Upgrade from Groq free tier** — Groq's free tier has rate limits; upgrade or switch provider for production
-- [ ] **LLM provider abstraction** — The extraction prompt is provider-agnostic, but the SDK calls are Groq-specific. Abstract to support OpenAI/Claude as alternatives
+- [x] **LLM provider abstraction** — Provider-agnostic `chatCompletion` layer in `lib/llm.ts` supports Groq, OpenAI, and Anthropic. Switch via `civitas.config.json`
+- [x] **Centralized configuration** — All infrastructure config (auth, rate limiting, caching, uploads) in `civitas.config.json`. Secrets stay in `.env.local`
+- [x] **S3 client consolidation** — Removed duplicate S3Client from events/route.ts; all routes use shared `lib/s3.ts`
 - [ ] **Extraction quality testing** — Compare pdf-parse (JS) vs pdfplumber (Python) output quality with real contract PDFs
 
 ## Data
