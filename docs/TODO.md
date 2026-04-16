@@ -32,6 +32,7 @@
 ## Scraping
 
 - [ ] **Agentic scrapers (LA City, SF City)** — These two sites use the Claude-powered agentic scraper which requires different browser setup and the Anthropic API key. They currently fail on Lambda due to ENOSPC / browser issues. Need to: (1) test recipe caching on Lambda, (2) ensure Anthropic API key is available, (3) consider running these on GitHub Actions instead of Lambda if browser requirements are too heavy
+- [ ] **PlanetBids / BidSync document login** — Most RFP documents on PlanetBids require vendor login to download (items marked with `*`). BidSync detail pages also appear to require authentication. Need to: (1) investigate creating vendor accounts for scraping, (2) determine if there's a public API alternative, (3) consider whether free addenda-only access is sufficient for matching, (4) evaluate legal/ToS implications of automated vendor account access
 - [x] **Automated RFP scraping schedule** — EventBridge triggers Lambda every 4 hours with `{"mode": "all"}`
 - [x] **PlanetBids status filtering** — Filter to "Bidding" status only (was scraping closed/awarded bids too)
 - [x] **PlanetBids infinite scroll** — Scroll table container to load all rows (was capped at 30)

@@ -297,17 +297,27 @@ class PlanetBidsScraper(BaseScraper):
                 # Scroll the table container to load all rows (infinite scroll)
                 await self._scroll_to_load_all(page)
 
-                # Extract all loaded rows
+                # Extract all loaded rows (basic data from search table)
                 rows = await page.query_selector_all("table tbody tr")
                 logger.info(f"Total rows loaded: {len(rows)}")
 
+                events = []
                 for row in rows:
                     try:
                         event = await self._extract_row(page, row)
                         if event:
-                            yield event
+                            events.append(event)
                     except Exception as e:
                         logger.debug(f"Failed to extract row: {e}")
+
+                # Visit each detail page for description, contact, categories, and addenda
+                for i, event in enumerate(events):
+                    try:
+                        self.throttle()
+                        await self._enrich_from_detail(page, event, i + 1, len(events))
+                    except Exception as e:
+                        logger.debug(f"Failed to scrape detail for {event.source_event_id}: {e}")
+                    yield event
 
             finally:
                 await browser.close()
@@ -366,6 +376,112 @@ class PlanetBidsScraper(BaseScraper):
                 break
             logger.debug(f"Scroll {i + 1}: {current_count} rows loaded")
             prev_count = current_count
+
+    async def _enrich_from_detail(
+        self, page: Page, event: RawScrapedEvent, index: int, total: int
+    ):
+        """Navigate to a bid's detail page and extract description, contact, and addenda.
+
+        PlanetBids is an SPA — clicking a row navigates to the detail view.
+        We extract public data, then click "Back to Bid Search" to return.
+
+        Modifies the event in-place with enriched data.
+        """
+        if not event.source_url or event.source_url == page.url:
+            return
+
+        try:
+            await page.goto(event.source_url, wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(2000)
+
+            # Extract description, contact, and categories from detail page
+            detail = await page.evaluate("""() => {
+                const text = document.body.innerText;
+                const info = {};
+
+                // Description / Scope
+                const descMatch = text.match(/(?:Description|Scope of Services)\\n([\\s\\S]*?)(?:\\nOther Details|\\nNotes|$)/);
+                info.description = descMatch ? descMatch[1].trim().substring(0, 2000) : '';
+
+                // Contact info
+                const contactMatch = text.match(/Contact Info\\n([\\s\\S]*?)(?:\\nBids to|\\nOwner|$)/);
+                if (contactMatch) {
+                    const block = contactMatch[1].trim();
+                    info.contact_text = block;
+                    const emailMatch = block.match(/[\\w.+-]+@[\\w.-]+\\.\\w+/);
+                    const phoneMatch = block.match(/[\\(]?\\d{3}[\\).\\-\\s]?\\d{3}[.\\-\\s]?\\d{4}/);
+                    // Name is typically the first line
+                    const lines = block.split('\\n').map(l => l.trim()).filter(l => l);
+                    info.contact_name = lines[0] || '';
+                    info.contact_email = emailMatch ? emailMatch[0] : '';
+                    info.contact_phone = phoneMatch ? phoneMatch[0] : '';
+                }
+
+                // Categories (like NAICS)
+                const catSection = text.match(/Categories\\n([\\s\\S]*?)(?:\\nDepartment|$)/);
+                if (catSection) {
+                    info.categories = catSection[1].trim().split('\\n').map(l => l.trim()).filter(l => l);
+                } else {
+                    info.categories = [];
+                }
+
+                return info;
+            }""")
+
+            # Update event with detail data
+            if detail.get("description"):
+                event.description = detail["description"]
+            if detail.get("contact_name") or detail.get("contact_email"):
+                event.contact = ContactInfo(
+                    name=detail.get("contact_name") or None,
+                    email=detail.get("contact_email") or None,
+                    phone=detail.get("contact_phone") or None,
+                )
+            if detail.get("categories"):
+                event.raw_metadata["categories"] = detail["categories"]
+
+            # Click "Documents" tab and collect public addenda URLs
+            docs_tab = await page.query_selector('a:has-text("Documents"), button:has-text("Documents")')
+            if docs_tab:
+                await docs_tab.click()
+                await page.wait_for_timeout(2000)
+
+                # Extract public document names (items without * prefix = no login required)
+                doc_info = await page.evaluate("""() => {
+                    const rows = document.querySelectorAll('table tr');
+                    const docs = [];
+                    for (const row of rows) {
+                        const text = row.textContent.trim();
+                        // Skip header rows and login-required docs (marked with *)
+                        if (text.startsWith('Title') || text.startsWith('*')) continue;
+                        // Look for PDF filenames
+                        const pdfMatch = text.match(/([\\w\\-\\s]+\\.pdf)/i);
+                        if (pdfMatch) {
+                            docs.push(pdfMatch[1].trim());
+                        }
+                    }
+                    return docs;
+                }""")
+                if doc_info:
+                    event.raw_metadata["public_documents"] = doc_info
+                    logger.debug(f"  Found {len(doc_info)} public documents")
+
+            logger.info(f"[{index}/{total}] Detail: {event.title[:50]} | {len(detail.get('categories', []))} categories")
+
+        except Exception as e:
+            logger.debug(f"Detail page failed for {event.source_event_id}: {e}")
+
+        # Navigate back to search results for the next event
+        try:
+            back_btn = await page.query_selector('a:has-text("Back to Bid Search")')
+            if back_btn:
+                await back_btn.click()
+                await page.wait_for_timeout(2000)
+            else:
+                await page.go_back()
+                await page.wait_for_timeout(2000)
+        except Exception:
+            pass
 
     async def _extract_row(self, page: Page, row) -> RawScrapedEvent | None:
         """Extract a single bid from a table row."""
