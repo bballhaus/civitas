@@ -2,7 +2,7 @@
  * User RFP status tracking: applied, in-progress, generated docs.
  * Port of back_end/contracts/services/user_rfp_status.py.
  */
-import { getUserData, saveUserData, type UserData } from "./user-data";
+import { getUserData, saveUserData, type UserData, type MatchFeedback } from "./user-data";
 
 function ensureList(val: unknown): string[] {
   return Array.isArray(val) ? val : [];
@@ -11,14 +11,22 @@ function ensureList(val: unknown): string[] {
 export interface RfpStatus {
   applied_rfp_ids: string[];
   in_progress_rfp_ids: string[];
+  match_feedback_by_rfp: Record<string, MatchFeedback>;
+}
+
+function ensureFeedbackMap(val: unknown): Record<string, MatchFeedback> {
+  return val && typeof val === "object" && !Array.isArray(val)
+    ? (val as Record<string, MatchFeedback>)
+    : {};
 }
 
 export async function getRfpStatus(username: string): Promise<RfpStatus> {
   const data = await getUserData(username);
-  if (!data) return { applied_rfp_ids: [], in_progress_rfp_ids: [] };
+  if (!data) return { applied_rfp_ids: [], in_progress_rfp_ids: [], match_feedback_by_rfp: {} };
   return {
     applied_rfp_ids: ensureList(data.applied_rfp_ids),
     in_progress_rfp_ids: ensureList(data.in_progress_rfp_ids),
+    match_feedback_by_rfp: ensureFeedbackMap(data.match_feedback_by_rfp),
   };
 }
 
@@ -37,6 +45,7 @@ export async function addAppliedRfp(
   return {
     applied_rfp_ids: applied,
     in_progress_rfp_ids: ensureList(data.in_progress_rfp_ids),
+    match_feedback_by_rfp: ensureFeedbackMap(data.match_feedback_by_rfp),
   };
 }
 
@@ -54,6 +63,7 @@ export async function removeAppliedRfp(
   return {
     applied_rfp_ids: ensureList(data.applied_rfp_ids),
     in_progress_rfp_ids: ensureList(data.in_progress_rfp_ids),
+    match_feedback_by_rfp: ensureFeedbackMap(data.match_feedback_by_rfp),
   };
 }
 
@@ -72,6 +82,7 @@ export async function addInProgressRfp(
   return {
     applied_rfp_ids: ensureList(data.applied_rfp_ids),
     in_progress_rfp_ids: inProgress,
+    match_feedback_by_rfp: ensureFeedbackMap(data.match_feedback_by_rfp),
   };
 }
 
@@ -89,6 +100,7 @@ export async function removeInProgressRfp(
   return {
     applied_rfp_ids: ensureList(data.applied_rfp_ids),
     in_progress_rfp_ids: ensureList(data.in_progress_rfp_ids),
+    match_feedback_by_rfp: ensureFeedbackMap(data.match_feedback_by_rfp),
   };
 }
 
@@ -144,4 +156,56 @@ export async function saveGeneratedProposal(
   }
   data.generated_proposal_by_rfp[id] = content;
   await saveUserData(username, data);
+}
+
+export async function getMatchFeedback(
+  username: string
+): Promise<Record<string, MatchFeedback>> {
+  const data = await getUserData(username);
+  if (!data) return {};
+  return ensureFeedbackMap(data.match_feedback_by_rfp);
+}
+
+export async function saveMatchFeedback(
+  username: string,
+  rfpId: string,
+  feedback: MatchFeedback
+): Promise<RfpStatus> {
+  const id = rfpId.trim();
+  if (!id) {
+    return getRfpStatus(username);
+  }
+  const data = (await getUserData(username)) || ({} as UserData);
+  if (!data.match_feedback_by_rfp || typeof data.match_feedback_by_rfp !== "object") {
+    data.match_feedback_by_rfp = {};
+  }
+  data.match_feedback_by_rfp[id] = feedback;
+  await saveUserData(username, data);
+  return {
+    applied_rfp_ids: ensureList(data.applied_rfp_ids),
+    in_progress_rfp_ids: ensureList(data.in_progress_rfp_ids),
+    match_feedback_by_rfp: ensureFeedbackMap(data.match_feedback_by_rfp),
+  };
+}
+
+export async function removeMatchFeedback(
+  username: string,
+  rfpId: string
+): Promise<RfpStatus> {
+  const id = rfpId.trim();
+  if (!id) {
+    return getRfpStatus(username);
+  }
+  const data = (await getUserData(username)) || ({} as UserData);
+  const feedbackMap = ensureFeedbackMap(data.match_feedback_by_rfp);
+  if (id in feedbackMap) {
+    delete feedbackMap[id];
+    data.match_feedback_by_rfp = feedbackMap;
+    await saveUserData(username, data);
+  }
+  return {
+    applied_rfp_ids: ensureList(data.applied_rfp_ids),
+    in_progress_rfp_ids: ensureList(data.in_progress_rfp_ids),
+    match_feedback_by_rfp: ensureFeedbackMap(data.match_feedback_by_rfp),
+  };
 }

@@ -649,6 +649,7 @@ export default function DashboardPage() {
   const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [summaryCache, setSummaryCache] = useState<Record<string, string>>({});
+  const [matchFeedback, setMatchFeedback] = useState<Record<string, { rating: "good" | "bad"; reason?: string }>>({});
 
   // Load RFP lists from localStorage after mount to avoid hydration mismatch (server has no localStorage)
   useEffect(() => {
@@ -777,6 +778,39 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const handleSubmitMatchFeedback = useCallback(async (rfpId: string, rating: "good" | "bad", reason: string | undefined, matchScore: number, matchTier: string) => {
+    setMatchFeedback((prev) => ({ ...prev, [rfpId]: { rating, reason } }));
+    try {
+      await updateUserRfpStatus({
+        submit_match_feedback: { rfp_id: rfpId, rating, reason, match_score: matchScore, match_tier: matchTier },
+      });
+    } catch (e) {
+      setMatchFeedback((prev) => {
+        const next = { ...prev };
+        delete next[rfpId];
+        return next;
+      });
+      console.error("Failed to submit match feedback:", e);
+      showToast("Failed to save feedback — try again");
+    }
+  }, []);
+
+  const handleRemoveMatchFeedback = useCallback(async (rfpId: string) => {
+    const previous = matchFeedback[rfpId];
+    setMatchFeedback((prev) => {
+      const next = { ...prev };
+      delete next[rfpId];
+      return next;
+    });
+    try {
+      await updateUserRfpStatus({ remove_match_feedback: rfpId });
+    } catch (e) {
+      if (previous) setMatchFeedback((prev) => ({ ...prev, [rfpId]: previous }));
+      console.error("Failed to remove match feedback:", e);
+      showToast("Failed to remove feedback — try again");
+    }
+  }, [matchFeedback]);
+
   const [showNotInterestedList, setShowNotInterestedList] = useState(false);
   const [listFilter, setListFilter] = useState<"all" | "saved" | "applied" | "in_progress">("all");
   const [preloadRfpId, setPreloadRfpId] = useState<string | null>(null);
@@ -872,6 +906,7 @@ export default function DashboardPage() {
         if (cancelled || !full) return;
         setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
         setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+        if (full.match_feedback_by_rfp) setMatchFeedback(full.match_feedback_by_rfp);
         // Refresh profile from API so sizeStatus and other fields stay current
         const apiProfile = mapBackendProfileToCompanyProfile(full.profile ?? null);
         if (apiProfile) {
@@ -895,6 +930,7 @@ export default function DashboardPage() {
           if (apiProfile) setCachedProfile(full.user_id, apiProfile);
           setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
           setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+          if (full.match_feedback_by_rfp) setMatchFeedback(full.match_feedback_by_rfp);
           setProfileLoadDone(true);
         } else {
         setCurrentUser(null);
@@ -1345,7 +1381,18 @@ export default function DashboardPage() {
                         Applied
                       </span>
                     )}
-                    
+                    {matchFeedback[rfp.id]?.rating === "good" && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3v11z" /></svg>
+                        Good match
+                      </span>
+                    )}
+                    {matchFeedback[rfp.id]?.rating === "bad" && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M10 15V19a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10zM17 2h3a2 2 0 012 2v7a2 2 0 01-2 2h-3V2z" /></svg>
+                        Bad match
+                      </span>
+                    )}
                   </div>
                   {reasonSnippet && (
                     <p className="text-xs text-slate-500 mt-2 line-clamp-2">
@@ -1402,6 +1449,9 @@ export default function DashboardPage() {
                 isInProgress={inProgressRfpIds.has(deferredSelectedRfp.id)}
                 cachedSummary={summaryCache[deferredSelectedRfp.id]}
                 onSummaryReady={handleSummaryReady}
+                matchFeedbackRating={matchFeedback[deferredSelectedRfp.id]?.rating ?? null}
+                onSubmitMatchFeedback={(rating, reason) => handleSubmitMatchFeedback(deferredSelectedRfp.id, rating, reason, deferredSelectedRfp.match.score, deferredSelectedRfp.match.tier)}
+                onRemoveMatchFeedback={() => handleRemoveMatchFeedback(deferredSelectedRfp.id)}
               />
             ) : (
               <div className="flex items-center justify-center h-full text-slate-500">
@@ -1427,6 +1477,9 @@ function RFPDetailPanel({
   isInProgress,
   cachedSummary,
   onSummaryReady,
+  matchFeedbackRating,
+  onSubmitMatchFeedback,
+  onRemoveMatchFeedback,
 }: {
   rfp: RFPWithMatch;
   profile: CompanyProfile | null;
@@ -1439,6 +1492,9 @@ function RFPDetailPanel({
   isInProgress: boolean;
   cachedSummary?: string;
   onSummaryReady: (rfpId: string, summary: string) => void;
+  matchFeedbackRating: "good" | "bad" | null;
+  onSubmitMatchFeedback: (rating: "good" | "bad", reason?: string) => void;
+  onRemoveMatchFeedback: () => void;
 }) {
   const { match } = rfp;
   const isHighMatch = match.tier === "excellent" || match.tier === "strong";
@@ -1462,6 +1518,7 @@ function RFPDetailPanel({
   const [proposalError, setProposalError] = useState<string | null>(null);
   const [proposalFeedback, setProposalFeedback] = useState("");
   const [proposalDropdownOpen, setProposalDropdownOpen] = useState(false);
+  const [feedbackReason, setFeedbackReason] = useState("");
 
   useEffect(() => {
     if (!rfp.id) return;
@@ -1865,6 +1922,23 @@ function RFPDetailPanel({
             <div className="w-px h-6 bg-slate-200 mx-0.5" />
             <button
               type="button"
+              title="Good match"
+              onClick={(e) => { e.stopPropagation(); if (matchFeedbackRating === "good") { onRemoveMatchFeedback(); } else { onSubmitMatchFeedback("good"); setFeedbackReason(""); } }}
+              className={`shrink-0 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 h-10 ${matchFeedbackRating === "good" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600"}`}
+            >
+              <svg className="w-4 h-4" fill={matchFeedbackRating === "good" ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3" /></svg>
+            </button>
+            <button
+              type="button"
+              title="Bad match"
+              onClick={(e) => { e.stopPropagation(); if (matchFeedbackRating === "bad") { onRemoveMatchFeedback(); setFeedbackReason(""); } else { onSubmitMatchFeedback("bad"); } }}
+              className={`shrink-0 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 h-10 ${matchFeedbackRating === "bad" ? "bg-red-600 text-white" : "bg-slate-100 text-slate-500 hover:bg-red-50 hover:text-red-600"}`}
+            >
+              <svg className="w-4 h-4" fill={matchFeedbackRating === "bad" ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 15V19a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 2h3a2 2 0 012 2v7a2 2 0 01-2 2h-3" /></svg>
+            </button>
+            <div className="w-px h-6 bg-slate-200 mx-0.5" />
+            <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 setProposalDropdownOpen((open) => !open);
@@ -1899,6 +1973,32 @@ function RFPDetailPanel({
               </a>
             )}
           </div>
+          {matchFeedbackRating === "bad" && (
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="text"
+                value={feedbackReason}
+                onChange={(e) => setFeedbackReason(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && feedbackReason.trim()) {
+                    onSubmitMatchFeedback("bad", feedbackReason.trim());
+                    setFeedbackReason("");
+                  }
+                }}
+                placeholder="What's wrong with this match? (optional)"
+                className="flex-1 px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400"
+              />
+              {feedbackReason.trim() && (
+                <button
+                  type="button"
+                  onClick={() => { onSubmitMatchFeedback("bad", feedbackReason.trim()); setFeedbackReason(""); }}
+                  className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                >
+                  Submit
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Generated Proposal — persistent header, collapsible body */}

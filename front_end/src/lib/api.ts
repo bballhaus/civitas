@@ -3,6 +3,8 @@
  * All API calls go to same-origin /api/... routes (no Django proxy, no CSRF).
  */
 
+import type { MatchFeedback } from "./user-data";
+
 export interface CurrentUser {
   user_id?: number;
   username: string;
@@ -10,6 +12,7 @@ export interface CurrentUser {
   profile?: AuthMeProfile;
   applied_rfp_ids?: string[];
   in_progress_rfp_ids?: string[];
+  match_feedback_by_rfp?: Record<string, MatchFeedback>;
 }
 
 /** Profile shape returned by GET /api/auth/me/ and GET /api/profile/. */
@@ -302,6 +305,7 @@ export async function getProfileFromBackend(): Promise<AuthMeProfile> {
 export interface UserRfpStatusResponse {
   applied_rfp_ids: string[];
   in_progress_rfp_ids: string[];
+  match_feedback_by_rfp?: Record<string, MatchFeedback>;
 }
 
 export async function getGeneratedPoe(rfpId: string): Promise<string | null> {
@@ -331,6 +335,8 @@ export async function updateUserRfpStatus(payload: {
   remove_in_progress?: string;
   save_generated_poe?: { rfp_id: string; content: string };
   save_generated_proposal?: { rfp_id: string; content: string };
+  submit_match_feedback?: { rfp_id: string; rating: "good" | "bad"; reason?: string; match_score: number; match_tier: string };
+  remove_match_feedback?: string;
 }): Promise<UserRfpStatusResponse> {
   const res = await fetch("/api/user/rfp-status/", {
     method: "PATCH",

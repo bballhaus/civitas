@@ -58,6 +58,14 @@ export interface UserProfile {
   uploaded_documents: StoredContract[];
 }
 
+export interface MatchFeedback {
+  rating: "good" | "bad";
+  reason?: string;
+  match_score: number;
+  match_tier: string;
+  created_at: string;
+}
+
 export interface UserData {
   password_hash?: string;
   password_hash_legacy?: string; // Django PBKDF2 hash for migrated users
@@ -68,6 +76,7 @@ export interface UserData {
   in_progress_rfp_ids?: string[];
   generated_poe_by_rfp?: Record<string, string>;
   generated_proposal_by_rfp?: Record<string, string>;
+  match_feedback_by_rfp?: Record<string, MatchFeedback>;
   // Legacy fields (from old bearer token system, kept for compatibility)
   token?: string;
   token_expires_at?: string;
