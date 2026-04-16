@@ -309,7 +309,7 @@ async def run_site_batch(
     site_id: str,
     batch_offset: int = 0,
     batch_size: int = 40,
-    skip_enrich: bool = True,
+    skip_enrich: bool = False,
 ) -> dict:
     """
     Run a single batch of scraping for a site. Used by the Lambda handler

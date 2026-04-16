@@ -23,7 +23,7 @@ Parameters:
     Description: Anthropic API key for agentic scraper (optional)
   ScrapeSchedule:
     Type: String
-    Default: 'rate(4 hours)'
+    Default: 'rate(48 hours)'
     Description: How often to run the scraper (EventBridge schedule expression)
 
 Globals:

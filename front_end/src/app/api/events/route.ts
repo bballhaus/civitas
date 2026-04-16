@@ -114,6 +114,7 @@ interface V2EnrichedEvent {
   capabilities: string[];
   certifications: string[];
   contact: { name?: string; email?: string; phone?: string };
+  attachment_urls: string[];
   clearances_required: string[];
   set_aside_types: string[];
   deliverables: string[];
@@ -185,6 +186,7 @@ function v2EventToRfp(e: V2EnrichedEvent) {
     contactName: e.contact?.name,
     contactEmail: e.contact?.email,
     contactPhone: e.contact?.phone,
+    attachmentUrls: e.attachment_urls || [],
     clearancesRequired: e.clearances_required,
     setAsideTypes: e.set_aside_types,
     deliverables: e.deliverables,

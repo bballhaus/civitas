@@ -299,6 +299,7 @@ def normalize_event(
         capabilities=capabilities,
         certifications=extraction.certifications_required if extraction else [],
         contact=raw.contact,
+        attachment_urls=raw.attachment_urls,
         clearances_required=extraction.clearances_required if extraction else [],
         set_aside_types=extraction.set_aside_types if extraction else [],
         deliverables=extraction.deliverables if extraction else [],

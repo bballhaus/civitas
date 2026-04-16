@@ -127,7 +127,10 @@ class EnrichedEvent(BaseModel):
     # Contact
     contact: ContactInfo = Field(default_factory=ContactInfo)
 
-    # Attachment-derived
+    # Attachments
+    attachment_urls: list[str] = Field(default_factory=list, description="Direct download URLs for RFP documents")
+
+    # Attachment-derived (from LLM enrichment)
     clearances_required: list[str] = Field(default_factory=list)
     set_aside_types: list[str] = Field(default_factory=list)
     deliverables: list[str] = Field(default_factory=list)
