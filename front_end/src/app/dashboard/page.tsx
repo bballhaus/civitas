@@ -1986,7 +1986,7 @@ function RFPDetailPanel({
                   }
                 }}
                 placeholder="What's wrong with this match? (optional)"
-                className="flex-1 px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400"
+                className="flex-1 px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-500 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400"
               />
               {feedbackReason.trim() && (
                 <button

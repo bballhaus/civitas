@@ -351,3 +351,48 @@ User Profile (from S3)          RFP Catalog (from S3)
                    ▼
      { score, tier, breakdown, reasons }
 ```
+
+---
+
+## User Feedback Loop
+
+Users can provide direct feedback on match quality via thumbs up/down buttons on the RFP detail panel. This feedback is stored server-side and is designed to inform future algorithm improvements.
+
+### How It Works
+
+1. **Thumbs up/down** buttons appear in the detail panel action row (between "I've applied" and "Generate Proposal")
+2. Clicking thumbs down optionally reveals a text input for the user to explain why the match is bad
+3. Sidebar cards show a "Good match" or "Bad match" tag for RFPs the user has rated
+4. Clicking an active thumb toggles the feedback off
+
+### Data Captured
+
+Each feedback entry stores:
+
+| Field | Purpose |
+|---|---|
+| `rating` | `"good"` or `"bad"` |
+| `reason` | Optional free text (only on bad matches) |
+| `match_score` | Score at the time of feedback (0-100) |
+| `match_tier` | Tier at the time of feedback |
+| `created_at` | ISO timestamp |
+
+**Why snapshot the score?** When the algorithm changes, old scores become meaningless. Recording the score the user saw enables analysis like: "Of all matches we showed at 75+ that users thumbed down, what categories were weak?"
+
+### Storage
+
+Feedback is stored in the user's S3 JSON file (`users/{username}.json`) under `match_feedback_by_rfp`, keyed by RFP ID. It follows the same pattern as `generated_poe_by_rfp` and `generated_proposal_by_rfp`.
+
+### API
+
+- `PATCH /api/user/rfp-status/` with `submit_match_feedback` or `remove_match_feedback`
+- Feedback is loaded on dashboard init via `GET /api/auth/me/?include_profile=1`
+
+### Future: Using Feedback to Improve Scoring
+
+The feedback data enables several improvement paths:
+
+- **Category weight tuning** — Analyze which scoring categories are most correlated with positive/negative feedback to adjust the 25/15/15/10/10/10/5/5/5 weight distribution
+- **Threshold calibration** — If users consistently thumb-down "excellent" matches, the tier thresholds (75/55/35) may need adjustment
+- **Synonym gap detection** — Bad-match feedback with reasons can reveal missing synonym groups (e.g., user says "we do this work" but the algorithm missed the terminology link)
+- **Per-user personalization** — Long-term, individual feedback patterns could enable personalized scoring adjustments
