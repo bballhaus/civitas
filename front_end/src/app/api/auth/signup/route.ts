@@ -5,6 +5,7 @@ import { getOrCreateProfile } from "@/lib/profile-storage";
 import { logSecurityEvent } from "@/lib/security-log";
 import { checkEmailUniqueness, registerEmail } from "@/lib/email-index";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { sendVerificationEmail } from "@/lib/email";
 
 // 5 signup attempts per 15 minutes per IP
 const SIGNUP_MAX_REQUESTS = 5;
@@ -99,13 +100,11 @@ export async function POST(request: Request) {
     // Sign JWT
     const token = await signJwt(username);
 
-    // Log verification URL in dev for convenience
+    // Send verification email (in dev without SES, falls back to console logging)
     if (!isDev && verificationToken) {
       const host = request.headers.get("host") || "localhost:3000";
-      const proto = request.headers.get("x-forwarded-proto") || "http";
-      console.log(
-        `[Email Verification] ${proto}://${host}/api/auth/verify-email?token=${verificationToken}&username=${encodeURIComponent(username)}`
-      );
+      const proto = request.headers.get("x-forwarded-proto") || "https";
+      await sendVerificationEmail(email, username, verificationToken, host, proto);
     }
 
     logSecurityEvent({ type: "signup", username, ip: request.headers.get("x-forwarded-for") || undefined });

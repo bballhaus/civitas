@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Proxy: rate limiting for auth and extraction endpoints.
+ * Proxy: nonce-based CSP + rate limiting.
  *
- * Runs at the edge before API route handlers. Protects against
- * brute-force login/signup attempts and abuse of expensive
- * LLM-powered extraction endpoints.
+ * Runs at the edge before all route handlers.
+ * - Generates a per-request nonce for Content-Security-Policy (prevents XSS)
+ * - Rate limits auth and extraction endpoints (prevents brute-force/abuse)
  */
 
 interface RateLimitEntry {
@@ -61,10 +61,35 @@ function cleanupStore() {
   }
 }
 
+// ── CSP nonce generation ──
+
+function buildCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}'`,
+    // style-src still needs 'unsafe-inline' — Tailwind v4 injects <style> tags at runtime
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https://*.s3.*.amazonaws.com",
+    "font-src 'self' data:",
+    "connect-src 'self' https://*.s3.*.amazonaws.com https://api.groq.com",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; ");
+}
+
+function addCspHeaders(response: NextResponse, nonce: string): void {
+  response.headers.set("Content-Security-Policy", buildCsp(nonce));
+  response.headers.set("x-nonce", nonce);
+}
+
 export function proxy(request: NextRequest) {
   cleanupStore();
 
   const { pathname } = request.nextUrl;
+
+  // Generate nonce for every request
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
   // Rate limit auth endpoints
   if (pathname.startsWith("/api/auth/")) {
@@ -86,6 +111,7 @@ export function proxy(request: NextRequest) {
     }
     const response = NextResponse.next();
     response.headers.set("X-RateLimit-Remaining", String(remaining));
+    addCspHeaders(response, nonce);
     return response;
   }
 
@@ -106,12 +132,17 @@ export function proxy(request: NextRequest) {
     }
     const response = NextResponse.next();
     response.headers.set("X-RateLimit-Remaining", String(remaining));
+    addCspHeaders(response, nonce);
     return response;
   }
 
-  return NextResponse.next();
+  // All other routes — add CSP nonce
+  const response = NextResponse.next();
+  addCspHeaders(response, nonce);
+  return response;
 }
 
 export const config = {
-  matcher: ["/api/auth/:path*", "/api/profile/extract"],
+  // Match all routes except static assets
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.png).*)"],
 };

@@ -3,6 +3,7 @@ import { getUserData, saveUserData } from "@/lib/user-data";
 import { checkEmailUniqueness } from "@/lib/email-index";
 import { logSecurityEvent } from "@/lib/security-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { sendPasswordResetEmail } from "@/lib/email";
 
 // 3 reset requests per 15 minutes per IP
 const RESET_MAX = 3;
@@ -45,11 +46,10 @@ export async function POST(request: Request) {
     data.password_reset_expires = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     await saveUserData(username, data);
 
-    // In dev, log the reset URL; in prod, you'd send an email via SES
+    // Send password reset email via SES (falls back to console logging if CIVITAS_FROM_EMAIL not set)
     const host = request.headers.get("host") || "localhost:3000";
-    const proto = request.headers.get("x-forwarded-proto") || "http";
-    const resetUrl = `${proto}://${host}/reset-password?token=${resetToken}&username=${encodeURIComponent(username)}`;
-    console.log(`[Password Reset] ${resetUrl}`);
+    const proto = request.headers.get("x-forwarded-proto") || "https";
+    await sendPasswordResetEmail(data.email!, username, resetToken, host, proto);
 
     logSecurityEvent({ type: "password_reset_request", username, ip });
 

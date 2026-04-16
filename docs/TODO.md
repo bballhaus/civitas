@@ -15,13 +15,13 @@
 - [x] **Token revocation** — JWT expiry reduced to 24h; logout clears HttpOnly cookie server-side
 - [x] **Input sanitization audit** — File upload magic byte validation, RFP ID format validation, LLM prompt injection mitigation (system/user message separation)
 - [x] **Security headers** — CSP (removed `unsafe-eval`), HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-Permitted-Cross-Domain-Policies all configured in `next.config.ts`
-- [ ] **Dependency audit** — Run `npm audit` and address vulnerabilities
+- [x] **Dependency audit** — `npm audit fix` applied; Next.js upgraded to 16.2.4 (6 CVEs fixed); 0 remaining vulnerabilities
 - [x] **Security event logging** — Structured JSON logging for login/signup/password events
 - [x] **SSRF protection** — URL validation on PDF downloads in scraper pipeline (blocks private IPs, metadata endpoints)
 - [x] **Docker non-root user** — Lambda container runs as non-root `scraper` user
 - [x] **S3 default credentials** — Switched from hardcoded keys to default credential provider chain
 - [ ] **IAM permissions** — CodeBuild/CloudWatch policies use `Resource: "*"` — scope to specific resources before production (kept for dev flexibility)
-- [ ] **Nonce-based CSP** — Remove `'unsafe-inline'` from script-src via nonce-based CSP (larger change, deferred)
+- [x] **Nonce-based CSP** — Per-request nonce generated in `proxy.ts`; `'unsafe-inline'` removed from script-src (style-src still needs it for Tailwind v4)
 - [ ] **AWS Secrets Manager** — Move API keys from Lambda env vars to Secrets Manager
 
 ## LLM
@@ -48,9 +48,9 @@
 
 - [x] **Email uniqueness check** — S3-based email index (`system/email-index.json`) prevents duplicate registrations
 - [x] **Password reset flow** — Forgot-password + reset-password with token-based verification
-- [x] **Email verification** — Auto-verified in `NODE_ENV=development`; token-based verification in production (verification URL logged to console until SES integration)
+- [x] **Email verification** — Auto-verified in dev; token-based in production via SES
 - [ ] **Profile completeness indicator** — Help users understand what profile data improves match quality
-- [ ] **Email delivery (SES)** — Integrate AWS SES for email verification and password reset emails in production
+- [x] **Email delivery (SES)** — AWS SES integrated for verification + password reset emails; sandbox mode (set `CIVITAS_FROM_EMAIL` to verified sender); request production access when ready
 
 ## Testing
 
