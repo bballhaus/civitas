@@ -398,7 +398,7 @@ class CalEprocureScraper(BaseScraper):
                             tmp_path = await download.path()
 
                             if tmp_path:
-                                # Extract text with pdfplumber
+                                # Extract text with PyMuPDF
                                 from webscraping.v2.pipeline.enrich import extract_text_from_pdf
                                 text = extract_text_from_pdf(str(tmp_path))
                                 if text:
