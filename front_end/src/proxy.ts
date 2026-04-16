@@ -63,10 +63,18 @@ function cleanupStore() {
 
 // ── CSP nonce generation ──
 
+const isDev = process.env.NODE_ENV === "development";
+
 function buildCsp(nonce: string): string {
+  // React requires 'unsafe-eval' in dev mode for debugging (callstack reconstruction).
+  // It is never used in production.
+  const scriptSrc = isDev
+    ? `script-src 'self' 'nonce-${nonce}' 'unsafe-eval'`
+    : `script-src 'self' 'nonce-${nonce}'`;
+
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}'`,
+    scriptSrc,
     // style-src still needs 'unsafe-inline' — Tailwind v4 injects <style> tags at runtime
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.s3.*.amazonaws.com",
