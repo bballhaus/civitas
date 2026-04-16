@@ -38,6 +38,14 @@
 - [x] **PlanetBids infinite scroll** — Scroll table container to load all rows (was capped at 30)
 - [x] **Lambda batched chaining** — Sites run in batches of 3 per invocation, chained via async self-invocation
 
+## Matching Algorithm
+
+- [x] **User feedback loop** — Thumbs up/down on RFP cards with optional reason, stored in S3 with score/tier snapshots
+- [ ] **Feedback-driven weight tuning** — Analyze collected feedback to adjust category weight distribution (25/15/15/10/10/10/5/5/5)
+- [ ] **Tier threshold calibration** — Use feedback data to validate or adjust tier thresholds (75/55/35)
+- [ ] **Synonym gap detection** — Mine bad-match feedback reasons to discover missing synonym groups
+- [ ] **Feedback analytics dashboard** — Build an admin view to analyze feedback patterns across users
+
 ## Features
 
 - [ ] **Email uniqueness check** — Signup currently only checks username uniqueness, not email (across all users would require an email index in S3)
