@@ -265,19 +265,38 @@ def enrich_event(
     cookies: dict | None = None,
 ) -> Optional[AttachmentExtraction]:
     """
-    Download, extract, and LLM-process all qualifying attachments for an event.
+    LLM-process attachments for an event.
+
+    If the scraper already downloaded and extracted text (stored in
+    raw_metadata["attachment_texts"]), use that directly. Otherwise,
+    fall back to downloading PDFs via requests (works for public URLs only).
+
     Returns AttachmentExtraction or None if no text could be extracted.
     """
-    if not event.attachment_urls:
+    pre_extracted = event.raw_metadata.get("attachment_texts", {})
+    has_pre_extracted = any(text for text in pre_extracted.values() if text)
+
+    if not has_pre_extracted and not event.attachment_urls:
         return None
 
     # Classify and sort by priority
     attachments = []
-    for url in event.attachment_urls:
-        filename = url.split("/")[-1].split("?")[0] or "unknown.pdf"
-        priority = classify_pdf(filename)
-        if priority != "skip":
-            attachments.append((url, filename, priority))
+
+    if has_pre_extracted:
+        # Use text already extracted during scraping (session-bound downloads)
+        for filename, text in pre_extracted.items():
+            if not text:
+                continue
+            priority = classify_pdf(filename)
+            if priority != "skip":
+                attachments.append((filename, text, priority))
+    else:
+        # Fall back to downloading via requests (public URLs only)
+        for url in event.attachment_urls:
+            filename = url.split("/")[-1].split("?")[0] or "unknown.pdf"
+            priority = classify_pdf(filename)
+            if priority != "skip":
+                attachments.append((url, filename, priority))
 
     # Sort: high priority first
     order = {"high": 0, "medium": 1}
@@ -289,30 +308,48 @@ def enrich_event(
     extractions = []
     all_text_parts = []
 
-    for url, filename, priority in attachments:
-        tmp_path = None
-        try:
-            tmp_path = download_pdf(url, cookies=cookies)
-            text = extract_text_from_pdf(tmp_path)
-            if not text:
-                logger.debug(f"No text from {filename}")
-                continue
+    for item in attachments:
+        if has_pre_extracted:
+            # Pre-extracted text: item = (filename, text, priority)
+            filename, text, priority = item
+            try:
+                if len(text) > MAX_TEXT_CHARS:
+                    text = text[:MAX_TEXT_CHARS] + "\n\n[... document truncated ...]"
 
-            if len(text) > MAX_TEXT_CHARS:
-                text = text[:MAX_TEXT_CHARS] + "\n\n[... document truncated ...]"
+                logger.info(f"  {filename}: {len(text)} chars (pre-extracted)")
+                all_text_parts.append(f"=== {filename} ===\n{text}")
 
-            logger.info(f"  {filename}: {len(text)} chars")
-            all_text_parts.append(f"=== {filename} ===\n{text}")
+                result = call_groq(text)
+                extractions.append(result)
+                time.sleep(GROQ_SLEEP_SECONDS)
+            except Exception as e:
+                logger.warning(f"Failed LLM processing {filename}: {e}")
+        else:
+            # Download via requests: item = (url, filename, priority)
+            url, filename, priority = item
+            tmp_path = None
+            try:
+                tmp_path = download_pdf(url, cookies=cookies)
+                text = extract_text_from_pdf(tmp_path)
+                if not text:
+                    logger.debug(f"No text from {filename}")
+                    continue
 
-            result = call_groq(text)
-            extractions.append(result)
-            time.sleep(GROQ_SLEEP_SECONDS)
+                if len(text) > MAX_TEXT_CHARS:
+                    text = text[:MAX_TEXT_CHARS] + "\n\n[... document truncated ...]"
 
-        except Exception as e:
-            logger.warning(f"Failed processing {filename}: {e}")
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+                logger.info(f"  {filename}: {len(text)} chars")
+                all_text_parts.append(f"=== {filename} ===\n{text}")
+
+                result = call_groq(text)
+                extractions.append(result)
+                time.sleep(GROQ_SLEEP_SECONDS)
+
+            except Exception as e:
+                logger.warning(f"Failed processing {filename}: {e}")
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
 
     if not extractions:
         return None

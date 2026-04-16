@@ -261,9 +261,13 @@ class CalEprocureScraper(BaseScraper):
             if event_data.title:
                 logger.info(f"[{index + 1}/{total}] {event_data.title[:60]}")
 
-            # Download attachment URLs (not the PDFs themselves)
-            attachment_urls = await self._get_attachment_urls(page)
-            event_data.attachment_urls = attachment_urls
+            # Download attachments inline (session-bound URLs expire after browser closes)
+            attachments = await self._download_attachments(page)
+            event_data.attachment_urls = [a["url"] for a in attachments if a.get("url")]
+            if attachments:
+                event_data.raw_metadata["attachment_texts"] = {
+                    a["filename"]: a["text"] for a in attachments if a.get("text")
+                }
 
             return event_data
 
@@ -330,15 +334,20 @@ class CalEprocureScraper(BaseScraper):
             },
         )
 
-    async def _get_attachment_urls(self, page: Page) -> list[str]:
-        """Click 'View Event Package' and extract attachment download URLs."""
-        urls = []
+    async def _download_attachments(self, page: Page) -> list[dict]:
+        """Click 'View Event Package', download PDFs via Playwright, and extract text.
+
+        Cal eProcure download URLs are session-bound tokens that expire when the
+        browser closes, so we must download within the same Playwright session.
+        Returns a list of dicts: [{"filename": str, "url": str, "text": str}, ...]
+        """
+        results = []
         try:
             view_pkg = await page.wait_for_selector(
                 '[data-if-label="viewPackage"]', timeout=5000
             )
             if not view_pkg:
-                return urls
+                return results
             await view_pkg.click()
             await page.wait_for_timeout(4000)
 
@@ -370,10 +379,41 @@ class CalEprocureScraper(BaseScraper):
                     await page.wait_for_timeout(2000)
 
                     download_btn = await page.wait_for_selector("#downloadButton", timeout=5000)
-                    if download_btn:
-                        pdf_url = await download_btn.get_attribute("href")
-                        if pdf_url:
-                            urls.append(pdf_url)
+                    if not download_btn:
+                        continue
+
+                    pdf_url = await download_btn.get_attribute("href") or ""
+                    filename = pdf_url.split("/")[-1].split("?")[0] if pdf_url else f"attachment_{i}.pdf"
+
+                    # Skip non-PDF files and drawings/maps
+                    from webscraping.v2.pipeline.enrich import classify_pdf
+                    if classify_pdf(filename) == "skip":
+                        logger.debug(f"  Skipping {filename} (classified as skip)")
+                    elif pdf_url:
+                        # Download via Playwright (uses browser session cookies)
+                        try:
+                            async with page.expect_download(timeout=30000) as download_info:
+                                await download_btn.click()
+                            download = await download_info.value
+                            tmp_path = await download.path()
+
+                            if tmp_path:
+                                # Extract text with pdfplumber
+                                from webscraping.v2.pipeline.enrich import extract_text_from_pdf
+                                text = extract_text_from_pdf(str(tmp_path))
+                                if text:
+                                    logger.info(f"  PDF: {filename} ({len(text)} chars)")
+                                    results.append({
+                                        "filename": filename,
+                                        "url": pdf_url,
+                                        "text": text,
+                                    })
+                                else:
+                                    logger.debug(f"  No text from {filename}")
+                                    results.append({"filename": filename, "url": pdf_url, "text": ""})
+                        except Exception as e:
+                            logger.warning(f"  Download failed for {filename}: {e}")
+                            results.append({"filename": filename, "url": pdf_url, "text": ""})
 
                     # Close modal
                     close_btn = await page.query_selector(
@@ -398,7 +438,7 @@ class CalEprocureScraper(BaseScraper):
         except Exception as e:
             logger.debug(f"No attachments or error: {e}")
 
-        return urls
+        return results
 
 
 # ---------------------------------------------------------------------------
