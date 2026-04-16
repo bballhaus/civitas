@@ -29,6 +29,11 @@ WORKDIR /app
 COPY webscraping/__init__.py /app/webscraping/__init__.py
 COPY webscraping/v2/ /app/webscraping/v2/
 
+# Run as non-root user for security
+RUN useradd -m -u 1000 -s /bin/bash scraper && \
+    chown -R scraper:scraper /app /opt/playwright
+USER scraper
+
 # Lambda RIC entry point
 ENTRYPOINT ["python", "-m", "awslambdaric"]
 CMD ["webscraping.v2.deploy.lambda_handler.handler"]

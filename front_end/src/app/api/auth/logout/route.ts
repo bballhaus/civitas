@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import { clearAuthCookie } from "@/lib/auth";
 
 export async function POST() {
-  // With JWT auth, logout is client-side (discard token).
-  // Server-side is a no-op returning 204.
-  return new NextResponse(null, { status: 204 });
+  const response = new NextResponse(null, { status: 204 });
+  clearAuthCookie(response);
+  return response;
 }

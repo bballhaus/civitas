@@ -17,6 +17,20 @@ function getFileExtension(name: string): string {
   return idx >= 0 ? name.slice(idx).toLowerCase() : "";
 }
 
+// Magic bytes for file type validation
+const FILE_SIGNATURES: Record<string, Buffer> = {
+  ".pdf": Buffer.from([0x25, 0x50, 0x44, 0x46]),  // %PDF
+  ".docx": Buffer.from([0x50, 0x4b, 0x03, 0x04]), // PK (ZIP)
+  ".doc": Buffer.from([0xd0, 0xcf, 0x11, 0xe0]),  // OLE compound
+};
+
+function validateFileMagicBytes(buffer: Buffer, ext: string): boolean {
+  const sig = FILE_SIGNATURES[ext];
+  if (!sig) return true; // .txt has no magic bytes
+  if (buffer.length < sig.length) return false;
+  return buffer.subarray(0, sig.length).equals(sig);
+}
+
 export async function GET(request: Request) {
   const user = await getAuthenticatedUser(request);
   if (!user) {
@@ -95,6 +109,14 @@ export async function POST(request: Request) {
       fileBuffer = Buffer.from(arrayBuffer);
       fileName = file.name;
       contentType = file.type || "application/pdf";
+
+      // Validate file content matches extension (magic byte check)
+      if (!validateFileMagicBytes(fileBuffer, ext)) {
+        return NextResponse.json(
+          { error: `File content does not match its extension (${ext}). The file may be corrupted or misnamed.` },
+          { status: 400 }
+        );
+      }
 
       // Extract metadata from document if requested
       if (shouldExtract) {

@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { setCachedUser, setAuthToken, clearCachedUser } from "@/lib/api";
+import { setCachedUser, clearCachedUser } from "@/lib/api";
 import { clearCachedEvents } from "@/lib/events-cache";
 import { MeshBackground } from "@/components/MeshBackground";
 
@@ -53,7 +53,7 @@ export default function SignupPage() {
         return;
       }
 
-      if (data?.token) setAuthToken(data.token);
+      // Auth cookie is set by the server (HttpOnly) — no client-side token handling needed
       clearCachedUser();
       clearCachedEvents();
       if (data?.username) {

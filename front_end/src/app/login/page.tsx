@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { setCachedUser, setAuthToken, clearCachedUser } from "@/lib/api";
+import { setCachedUser, clearCachedUser } from "@/lib/api";
 import { clearCachedEvents } from "@/lib/events-cache";
 import { MeshBackground } from "@/components/MeshBackground";
 
@@ -46,7 +46,7 @@ export default function LoginPage() {
         return;
       }
 
-      if (data?.token) setAuthToken(data.token);
+      // Auth cookie is set by the server (HttpOnly) — no client-side token handling needed
       clearCachedUser();
       clearCachedEvents();
       setCachedUser({
@@ -139,7 +139,16 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <p className="mt-6 text-center text-sm text-slate-500">
+          <p className="mt-4 text-center text-sm">
+            <Link
+              href="/forgot-password"
+              className="text-slate-500 hover:text-[#3C89C6] hover:underline"
+            >
+              Forgot your password?
+            </Link>
+          </p>
+
+          <p className="mt-3 text-center text-sm text-slate-500">
             Don&apos;t have an account?{" "}
             <Link
               href="/signup"

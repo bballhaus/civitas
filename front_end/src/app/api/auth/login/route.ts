@@ -4,10 +4,27 @@ import {
   verifyDjangoPbkdf2,
   hashPassword,
   signJwt,
+  setAuthCookie,
 } from "@/lib/auth";
+import { logSecurityEvent } from "@/lib/security-log";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { getUserData, saveUserData } from "@/lib/user-data";
 
+// 5 login attempts per 15 minutes per IP
+const AUTH_MAX_REQUESTS = 5;
+const AUTH_WINDOW_MS = 15 * 60 * 1000;
+
 export async function POST(request: Request) {
+  // Rate limiting
+  const ip = getClientIp(request);
+  const rl = checkRateLimit(ip, AUTH_MAX_REQUESTS, AUTH_WINDOW_MS);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many login attempts. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
+    );
+  }
+
   try {
     const body = await request.json();
     const username = (body.username || "").trim();
@@ -47,6 +64,7 @@ export async function POST(request: Request) {
     }
 
     if (!authenticated) {
+      logSecurityEvent({ type: "login_failure", username, ip: request.headers.get("x-forwarded-for") || undefined });
       return NextResponse.json(
         { error: "Invalid credentials" },
         { status: 401 }
@@ -54,10 +72,13 @@ export async function POST(request: Request) {
     }
 
     const token = await signJwt(username);
-    return NextResponse.json(
-      { username, token },
+    const response = NextResponse.json(
+      { username },
       { headers: { "Cache-Control": "no-store" } }
     );
+    setAuthCookie(response, token);
+    logSecurityEvent({ type: "login_success", username, ip: request.headers.get("x-forwarded-for") || undefined });
+    return response;
   } catch (err) {
     console.error("Login error:", err);
     return NextResponse.json(
