@@ -257,7 +257,15 @@ class PlanetBidsScraper(BaseScraper):
     async def scrape(self) -> AsyncIterator[RawScrapedEvent]:
         """Scrape open bids from a PlanetBids portal."""
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                ],
+            )
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent=(
