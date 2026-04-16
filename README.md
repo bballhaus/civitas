@@ -2,6 +2,16 @@
 
 Civitas reduces the time it takes small and medium government contractors to find compatible RFPs. It aggregates procurement opportunities from 62 California government sites into a single searchable dashboard with AI-powered matching.
 
+## Documentation
+
+- [Frontend Architecture](docs/Frontend.md)
+- [Backend Architecture](docs/Backend.md)
+- [Key Features](docs/Key-Features.md)
+- [Matching Algorithm](docs/Matching-Algorithm.md)
+- [Security & Optimization](docs/Security.md)
+- [TODO](docs/TODO.md)
+- [Example Test Profiles](docs/Example-Test-Profiles.md)
+
 ## Architecture
 
 | Component | Technology | Deployment |

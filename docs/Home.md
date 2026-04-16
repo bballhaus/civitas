@@ -12,6 +12,9 @@
 - **[Key Features](Key-Features)** — End-to-end explanation of each major feature: RFP discovery, profile building, matching, proposal generation, status tracking, and web scraping pipeline
 - **[Matching Algorithm](Matching-Algorithm)** — Deep dive into the 3-stage scoring pipeline, 10 scoring categories, synonym expansion, canonicalization, and explanation generation
 
+### Security
+- **[Security & Optimization](Security)** — Full security audit results, all implemented controls (nonce CSP, HttpOnly cookies, rate limiting, SSRF protection, LLM safety, SES email), and remaining work
+
 ### Operations
 - **[TODO](TODO)** — Remaining work for market readiness
 
@@ -31,8 +34,9 @@
 |---|---|
 | Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 |
 | Backend | Next.js API Routes (same deployment) |
-| Auth | JWT (HS256, stateless, 30-day expiry) via jose + bcryptjs |
-| Storage | AWS S3 (JSON files, no database) |
+| Auth | JWT (HS256, HttpOnly cookies, 24h expiry) via jose + bcryptjs |
+| Storage | AWS S3 (JSON files, SSE-S3 encrypted, versioned) |
+| Email | AWS SES (sandbox) |
 | AI/LLM | Groq (llama-3.1-8b-instant) for extraction & generation |
-| Scraping | Selenium, BeautifulSoup, pdf-parse |
-| Deployment | Vercel (single deployment) |
+| Scraping | Playwright, Python, pdfplumber |
+| Deployment | Vercel (frontend), AWS Lambda (scraping) |
