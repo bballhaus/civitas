@@ -9,7 +9,7 @@ Supports three invocation modes:
 2. Multiple sites in one invocation, with optional chained continuation:
     {"sites": ["planetbids_san_diego", "planetbids_fresno"],
      "remaining_sites": ["planetbids_anaheim", ...],
-     "skip_enrich": true}
+     "skip_enrich": false}
 
 3. All sites (dispatches batched invocations):
     {"mode": "all"}
@@ -92,7 +92,7 @@ def _handle_single_site(site_id, event, context):
     """Scrape a single site with optional chained batching."""
     batch_offset = event.get("batch_offset", 0)
     batch_size = event.get("batch_size", 40)
-    skip_enrich = event.get("skip_enrich", True)
+    skip_enrich = event.get("skip_enrich", False)
 
     logger.info(
         f"Single-site: site={site_id}, offset={batch_offset}, "
@@ -167,7 +167,7 @@ def _handle_multi_site(sites, event, context):
     If `remaining_sites` is present in the event, the next batch is
     automatically dispatched after this batch completes.
     """
-    skip_enrich = event.get("skip_enrich", True)
+    skip_enrich = event.get("skip_enrich", False)
     remaining_sites = event.get("remaining_sites", [])
 
     logger.info(
@@ -246,7 +246,7 @@ def _handle_run_all(event, context):
 
     Individual bidsync_* sites are skipped since bidsync_all_ca covers them.
     """
-    skip_enrich = event.get("skip_enrich", True)
+    skip_enrich = event.get("skip_enrich", False)
     logger.info(f"Run-all mode, skip_enrich={skip_enrich}")
 
     from webscraping.v2.orchestrator.runner import SITE_REGISTRY
