@@ -94,7 +94,7 @@ def extract_location(title: str, description: str, agency: str) -> str:
 
 _INDUSTRY_RULES: list[tuple[str, str]] = [
     (r"\bwanted\s+to\s+lease\b|\blease\s+(office|warehouse|space|property)\b|\b(nusf|rentable\s+square|leasable)\b", "Real Estate & Leasing"),
-    (r"\b(software|saas|cloud|cyber|data\s*base|network|telecom|it\s+consult|electronic.*system|computer|digital)\b", "IT Services"),
+    (r"\b(software|saas|cloud|cyber\w*|data\s*base|network|telecom|it\s+consult|electronic.*system|computer|digital)\b", "IT Services"),
     (r"\b(janitorial|cleaning|custodial|sanitation|housekeeping)\b", "Facilities Maintenance"),
     (r"\b(hvac|heating|ventilation|cooling|plumbing|elevator|generator|preventive\s+maintenance|equipment\s+maintenance)\b", "Facilities Maintenance"),
     (r"\b(construction|building\s+construct|demolition|renovation|roofing|concrete|masonry|paving|asphalt|grading|excavation|siding)\b", "Construction"),

@@ -92,7 +92,7 @@ class CalEprocureScraper(BaseScraper):
 
                     tasks = [
                         self._scrape_event_by_url(
-                            context, url, start + sub_start + i, self.total_available
+                            context, url, self.batch_offset + sub_start + i, self.total_available
                         )
                         for i, url in enumerate(sub_urls)
                     ]

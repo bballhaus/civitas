@@ -16,15 +16,11 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import AsyncIterator
 
-import boto3
-
 from webscraping.v2.config import (
-    AWS_ACCESS_KEY_ID,
-    AWS_SECRET_ACCESS_KEY,
-    AWS_REGION,
     S3_BUCKET,
     S3_V2_PREFIX,
     DEFAULT_REQUEST_INTERVAL_MS,
+    get_s3_client,
 )
 from webscraping.v2.models import RawScrapedEvent, SiteConfig, SourceManifest, EnrichedEvent
 from webscraping.v2.utils import event_hash, make_event_id
@@ -46,12 +42,7 @@ class BaseScraper(ABC):
     def s3(self):
         """Lazy-init S3 client."""
         if self._s3 is None:
-            self._s3 = boto3.client(
-                "s3",
-                region_name=AWS_REGION,
-                aws_access_key_id=AWS_ACCESS_KEY_ID,
-                aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-            )
+            self._s3 = get_s3_client()
         return self._s3
 
     def throttle(self):

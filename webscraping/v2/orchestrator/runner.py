@@ -16,15 +16,11 @@ import json
 import logging
 from datetime import datetime
 
-import boto3
-
 from webscraping.v2.config import (
-    AWS_ACCESS_KEY_ID,
-    AWS_SECRET_ACCESS_KEY,
-    AWS_REGION,
     S3_BUCKET,
     S3_V2_PREFIX,
     S3_LEGACY_PREFIX,
+    get_s3_client,
 )
 from webscraping.v2.models import (
     RawScrapedEvent,
@@ -116,12 +112,7 @@ def get_scraper(site_config: SiteConfig) -> BaseScraper:
 # ---------------------------------------------------------------------------
 
 def get_s3():
-    return boto3.client(
-        "s3",
-        region_name=AWS_REGION,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    )
+    return get_s3_client()
 
 
 def load_existing_manifest(s3, source_id: str) -> dict[str, EnrichedEvent]:
