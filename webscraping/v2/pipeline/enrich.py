@@ -1,7 +1,7 @@
 """
 PDF attachment extraction and LLM enrichment pipeline.
 
-Downloads PDFs from attachment URLs, extracts text with pdfplumber,
+Downloads PDFs from attachment URLs, extracts text with PyMuPDF,
 sends to Groq for structured metadata extraction, and merges results.
 
 Ported from the original extract_attachments.py with the same logic.
@@ -20,7 +20,7 @@ import time
 from typing import Any, Optional
 from urllib.parse import urlparse
 
-import pdfplumber
+import fitz  # PyMuPDF
 import requests
 from groq import Groq
 
@@ -112,14 +112,15 @@ Return ONLY the JSON object, no other text."""
 # ---------------------------------------------------------------------------
 
 def extract_text_from_pdf(filepath: str) -> str:
-    """Extract text from a PDF using pdfplumber."""
+    """Extract text from a PDF using PyMuPDF (fitz)."""
     parts = []
     try:
-        with pdfplumber.open(filepath) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    parts.append(page_text)
+        doc = fitz.open(filepath)
+        for page in doc:
+            text = page.get_text()
+            if text.strip():
+                parts.append(text.strip())
+        doc.close()
     except Exception as e:
         raise RuntimeError(f"PDF text extraction failed: {e}") from e
     return "\n\n".join(parts).strip()

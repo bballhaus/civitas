@@ -8,7 +8,7 @@ requests>=2.32.0
 playwright>=1.40.0
 
 # PDF extraction
-pdfplumber>=0.10.0
+pymupdf>=1.24.0
 
 # LLM APIs
 groq>=0.4.0
