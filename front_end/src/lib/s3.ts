@@ -22,13 +22,9 @@ let _client: S3Client | null = null;
 
 function getClient(): S3Client {
   if (!_client) {
-    _client = new S3Client({
-      region: getRegionValue(),
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
-      },
-    });
+    // Use default credential provider chain (env vars, IAM roles, instance metadata).
+    // Works on Vercel (env vars) and Lambda (IAM role) without hardcoding credentials.
+    _client = new S3Client({ region: getRegionValue() });
   }
   return _client;
 }
@@ -133,4 +129,57 @@ export function getDocumentUrl(s3Key: string): string {
   const bucket = getBucketValue();
   if (!s3Key || !bucket) return "";
   return `https://${bucket}.s3.${getRegionValue()}.amazonaws.com/${s3Key}`;
+}
+
+// ── ETag-based optimistic locking ──
+
+export interface ObjectWithETag<T> {
+  data: T;
+  etag: string | null;
+}
+
+export async function getObjectJSONWithETag<T = Record<string, unknown>>(
+  key: string
+): Promise<ObjectWithETag<T> | null> {
+  try {
+    const resp = await getClient().send(
+      new GetObjectCommand({ Bucket: getBucketValue(), Key: key })
+    );
+    const body = await resp.Body?.transformToString("utf-8");
+    if (!body) return null;
+    return { data: JSON.parse(body) as T, etag: resp.ETag ?? null };
+  } catch (err: unknown) {
+    if (err instanceof Error && (err.name === "NoSuchKey" || err.name === "NotFound")) {
+      return null;
+    }
+    console.warn(`S3 getObjectJSONWithETag failed for key=${key}:`, err);
+    return null;
+  }
+}
+
+export async function putObjectJSONIfMatch(
+  key: string,
+  data: unknown,
+  etag: string | null
+): Promise<boolean> {
+  try {
+    const params: Record<string, unknown> = {
+      Bucket: getBucketValue(),
+      Key: key,
+      Body: JSON.stringify(data),
+      ContentType: "application/json",
+    };
+    if (etag) {
+      (params as Record<string, string>).IfMatch = etag;
+    }
+    await getClient().send(new PutObjectCommand(params as any));
+    return true;
+  } catch (err: unknown) {
+    if (err instanceof Error && (err.name === "PreconditionFailed" || err.name === "412")) {
+      console.warn(`S3 ETag conflict for key=${key} — data was modified by another request`);
+      return false;
+    }
+    console.warn(`S3 putObjectJSONIfMatch failed for key=${key}:`, err);
+    return false;
+  }
 }

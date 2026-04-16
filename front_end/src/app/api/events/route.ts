@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { S3Client, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
-import { normalizeCapability } from "@/lib/capabilities";
 
 interface ScrapedEvent {
   event_id: string;
@@ -34,13 +33,8 @@ interface AttachmentExtraction {
   total_pdfs_available?: number;
 }
 
-const s3 = new S3Client({
-  region: process.env.AWS_REGION || "us-east-1",
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
-  },
-});
+// Use default credential provider chain (env vars, IAM roles, instance metadata)
+const s3 = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
 const S3_BUCKET = process.env.AWS_S3_BUCKET || "civitas-ai";
 
 // ---------------------------------------------------------------------------

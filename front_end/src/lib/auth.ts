@@ -3,6 +3,7 @@
  * Replaces Django auth, token_storage.py, and validators.py.
  */
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
+import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { createHash, pbkdf2 as pbkdf2Callback } from "crypto";
 import { promisify } from "util";
@@ -11,15 +12,16 @@ const pbkdf2Async = promisify(pbkdf2Callback);
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
-  if (!secret || secret === "CHANGE_ME_IN_PRODUCTION") {
+  if (!secret || secret.length < 32 || secret === "CHANGE_ME_IN_PRODUCTION") {
     throw new Error(
-      "JWT_SECRET environment variable must be set to a strong random value."
+      "JWT_SECRET must be 32+ random characters. Generate with: openssl rand -base64 32"
     );
   }
   return new TextEncoder().encode(secret);
 }
 
-const JWT_EXPIRY_DAYS = 7;
+const JWT_EXPIRY_HOURS = 24;
+const AUTH_COOKIE_NAME = "civitas_session";
 
 // ── JWT ──
 
@@ -31,8 +33,32 @@ export async function signJwt(username: string): Promise<string> {
   return new SignJWT({ username } as AuthPayload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${JWT_EXPIRY_DAYS}d`)
+    .setExpirationTime(`${JWT_EXPIRY_HOURS}h`)
     .sign(getJwtSecret());
+}
+
+// ── Cookie helpers ──
+
+const isProduction = process.env.NODE_ENV === "production";
+
+export function setAuthCookie(response: NextResponse, token: string): void {
+  response.cookies.set(AUTH_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: "strict",
+    path: "/",
+    maxAge: JWT_EXPIRY_HOURS * 60 * 60,
+  });
+}
+
+export function clearAuthCookie(response: NextResponse): void {
+  response.cookies.set(AUTH_COOKIE_NAME, "", {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: "strict",
+    path: "/",
+    maxAge: 0,
+  });
 }
 
 export async function verifyJwt(token: string): Promise<AuthPayload | null> {
@@ -45,19 +71,33 @@ export async function verifyJwt(token: string): Promise<AuthPayload | null> {
 }
 
 /**
- * Extract and verify the Bearer token from a request's Authorization header.
- * Returns the username if valid, null otherwise.
+ * Extract and verify the JWT from the HttpOnly cookie or Bearer header.
+ * Checks cookie first (primary), then falls back to Bearer header (API compatibility).
  */
 export async function getAuthenticatedUser(
   request: Request
 ): Promise<{ username: string } | null> {
+  // 1. Check HttpOnly cookie (primary auth method)
+  const cookieHeader = request.headers.get("cookie") || "";
+  const cookieMatch = cookieHeader.match(
+    new RegExp(`(?:^|;\\s*)${AUTH_COOKIE_NAME}=([^;]+)`)
+  );
+  if (cookieMatch) {
+    const payload = await verifyJwt(cookieMatch[1]);
+    if (payload?.username) return { username: payload.username };
+  }
+
+  // 2. Fall back to Bearer header (API clients, backward compatibility)
   const authHeader = request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.slice(7).trim();
-  if (!token) return null;
-  const payload = await verifyJwt(token);
-  if (!payload?.username) return null;
-  return { username: payload.username };
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7).trim();
+    if (token) {
+      const payload = await verifyJwt(token);
+      if (payload?.username) return { username: payload.username };
+    }
+  }
+
+  return null;
 }
 
 // ── Passwords ──

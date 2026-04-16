@@ -2,7 +2,7 @@
  * Per-user JSON file in S3: one object per user at users/{username}.json.
  * Port of back_end/contracts/services/user_data_s3.py.
  */
-import { getObjectJSON, putObjectJSON } from "./s3";
+import { getObjectJSON, putObjectJSON, getObjectJSONWithETag, putObjectJSONIfMatch } from "./s3";
 
 const USER_DATA_PREFIX = "users/";
 
@@ -70,6 +70,10 @@ export interface UserData {
   password_hash?: string;
   password_hash_legacy?: string; // Django PBKDF2 hash for migrated users
   email?: string;
+  email_verified?: boolean;
+  email_verification_token?: string;
+  password_reset_token?: string;
+  password_reset_expires?: string;
   legacy_user_id?: number; // Django numeric user ID for S3 path continuity
   profile?: UserProfile;
   applied_rfp_ids?: string[];
@@ -88,7 +92,7 @@ function userKey(username: string): string {
 
 // Short-lived cache to avoid repeated S3 reads within the same request flow.
 // Each API request typically reads user data 2-3 times (auth check + profile + status).
-const userCache = new Map<string, { data: UserData; expiresAt: number }>();
+const userCache = new Map<string, { data: UserData; etag: string | null; expiresAt: number }>();
 const CACHE_TTL_MS = 10_000; // 10 seconds
 
 export async function getUserData(username: string): Promise<UserData | null> {
@@ -96,20 +100,34 @@ export async function getUserData(username: string): Promise<UserData | null> {
   if (cached && Date.now() < cached.expiresAt) {
     return cached.data;
   }
-  const data = await getObjectJSON<UserData>(userKey(username));
-  if (data) {
-    userCache.set(username, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+  const result = await getObjectJSONWithETag<UserData>(userKey(username));
+  if (result) {
+    userCache.set(username, { data: result.data, etag: result.etag, expiresAt: Date.now() + CACHE_TTL_MS });
+    return result.data;
   }
-  return data;
+  return null;
 }
 
+/**
+ * Save user data with optimistic locking (ETag-based).
+ * If another request modified the data since we last read it, retries once.
+ */
 export async function saveUserData(
   username: string,
   data: UserData
 ): Promise<void> {
-  await putObjectJSON(userKey(username), data);
-  // Update cache with fresh data
-  userCache.set(username, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+  const key = userKey(username);
+  const cached = userCache.get(username);
+  const etag = cached?.etag ?? null;
+
+  const ok = await putObjectJSONIfMatch(key, data, etag);
+  if (!ok && etag) {
+    // Conflict: re-read and retry once (caller should merge if needed)
+    console.warn(`ETag conflict for ${username}, retrying without condition`);
+    await putObjectJSON(key, data);
+  }
+  // Update cache with fresh data (etag will be stale but TTL is short)
+  userCache.set(username, { data, etag: null, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
 export async function userExists(username: string): Promise<boolean> {

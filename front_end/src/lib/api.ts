@@ -1,6 +1,7 @@
 /**
  * Frontend API client.
- * All API calls go to same-origin /api/... routes (no Django proxy, no CSRF).
+ * Auth is handled via HttpOnly cookies (set by server).
+ * All API calls go to same-origin /api/... routes — cookies are sent automatically.
  */
 
 import type { MatchFeedback } from "./user-data";
@@ -165,44 +166,19 @@ export function getEmptyCompanyProfile(): CompanyProfileFromApi {
 }
 
 const CACHED_USER_KEY = "civitas_current_user";
-const AUTH_TOKEN_KEY = "civitas_auth_token";
 
 const LOG_PREFIX = "[Civitas]";
 
+// Auth tokens are now stored in HttpOnly cookies (set by server).
+// These legacy functions are kept for backward compatibility but are no-ops.
+/** @deprecated Auth is now cookie-based. This always returns null. */
 export function getAuthToken(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return localStorage.getItem(AUTH_TOKEN_KEY);
-  } catch {
-    return null;
-  }
+  return null;
 }
-
-export function setAuthToken(token: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(AUTH_TOKEN_KEY, token);
-    console.log(`${LOG_PREFIX} Auth token stored`);
-  } catch {
-    // ignore
-  }
-}
-
-export function clearAuthToken(): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.removeItem(AUTH_TOKEN_KEY);
-    console.log(`${LOG_PREFIX} Auth token cleared`);
-  } catch {
-    // ignore
-  }
-}
-
-function authHeaders(): Record<string, string> {
-  const token = getAuthToken();
-  if (token) return { Authorization: `Bearer ${token}` };
-  return {};
-}
+/** @deprecated Auth is now cookie-based. This is a no-op. */
+export function setAuthToken(_token: string): void {}
+/** @deprecated Auth is now cookie-based. This is a no-op. */
+export function clearAuthToken(): void {}
 
 export function getCachedUser(): { user_id: number; username: string; email?: string } | null {
   if (typeof window === "undefined") return null;
@@ -284,7 +260,7 @@ export function clearProfileCache(): void {
  */
 export async function getCurrentUser(includeProfile = false): Promise<CurrentUser | null> {
   const url = includeProfile ? "/api/auth/me/?include_profile=1" : "/api/auth/me/";
-  const res = await fetch(url, { headers: authHeaders() });
+  const res = await fetch(url);
   if (!res.ok) return null;
   return res.json();
 }
@@ -293,7 +269,7 @@ export async function getCurrentUser(includeProfile = false): Promise<CurrentUse
  * Fetch profile from backend (S3).
  */
 export async function getProfileFromBackend(): Promise<AuthMeProfile> {
-  const res = await fetch("/api/profile/", { headers: authHeaders() });
+  const res = await fetch("/api/profile/");
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || err.error || "Failed to load profile");
@@ -310,8 +286,7 @@ export interface UserRfpStatusResponse {
 
 export async function getGeneratedPoe(rfpId: string): Promise<string | null> {
   const res = await fetch(
-    `/api/user/generated-poe/?rfp_id=${encodeURIComponent(rfpId)}`,
-    { headers: authHeaders() }
+    `/api/user/generated-poe/?rfp_id=${encodeURIComponent(rfpId)}`
   );
   if (!res.ok) return null;
   const data = (await res.json()) as { plan_of_execution?: string | null };
@@ -320,8 +295,7 @@ export async function getGeneratedPoe(rfpId: string): Promise<string | null> {
 
 export async function getGeneratedProposal(rfpId: string): Promise<string | null> {
   const res = await fetch(
-    `/api/user/generated-proposal/?rfp_id=${encodeURIComponent(rfpId)}`,
-    { headers: authHeaders() }
+    `/api/user/generated-proposal/?rfp_id=${encodeURIComponent(rfpId)}`
   );
   if (!res.ok) return null;
   const data = (await res.json()) as { proposal?: string | null };
@@ -340,7 +314,7 @@ export async function updateUserRfpStatus(payload: {
 }): Promise<UserRfpStatusResponse> {
   const res = await fetch("/api/user/rfp-status/", {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -371,7 +345,7 @@ export interface ProfilePatchPayload {
 export async function saveProfileToBackend(payload: ProfilePatchPayload): Promise<AuthMeProfile> {
   const res = await fetch("/api/profile/", {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -386,9 +360,7 @@ export async function saveProfileToBackend(payload: ProfilePatchPayload): Promis
 }
 
 export async function listContracts(): Promise<Array<{ id: string; title: string; document: string }>> {
-  const res = await fetch("/api/contracts/", {
-    headers: authHeaders(),
-  });
+  const res = await fetch("/api/contracts/");
   if (!res.ok) return [];
   const data = await res.json();
   return Array.isArray(data) ? data : [];
@@ -404,7 +376,6 @@ export async function uploadContractDocument(
 
   const res = await fetch("/api/contracts/", {
     method: "POST",
-    headers: authHeaders(),
     body: formData,
   });
   if (!res.ok) {
@@ -423,7 +394,6 @@ export async function uploadContractDocument(
 export async function deleteContractDocument(contractId: string): Promise<void> {
   const res = await fetch(`/api/contracts/${encodeURIComponent(contractId)}/`, {
     method: "DELETE",
-    headers: authHeaders(),
   });
   if (!res.ok && res.status !== 204) {
     const err = await res.json().catch(() => ({}));
@@ -435,7 +405,7 @@ export async function deleteContractDocument(contractId: string): Promise<void> 
 export async function updateUser(data: { email?: string }): Promise<CurrentUser> {
   const res = await fetch("/api/auth/me/", {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
   if (!res.ok) {
@@ -448,7 +418,7 @@ export async function updateUser(data: { email?: string }): Promise<CurrentUser>
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   const res = await fetch("/api/auth/change-password/", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       current_password: currentPassword,
       new_password: newPassword,
@@ -464,12 +434,11 @@ export async function logout(router: { push: (path: string) => void }) {
   try {
     await fetch("/api/auth/logout/", {
       method: "POST",
-      headers: authHeaders(),
     });
   } catch {
     // Still redirect
   }
-  clearAuthToken();
+  // Cookie is cleared server-side; clear local caches
   clearCachedUser();
   router.push("/login");
 }
