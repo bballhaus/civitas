@@ -61,17 +61,19 @@ def handler(event, context):
 
 
 def _cleanup_tmp():
-    """Remove Playwright temp dirs from /tmp to prevent ENOSPC."""
-    for d in glob.glob("/tmp/playwright-*"):
-        try:
-            shutil.rmtree(d, ignore_errors=True)
-        except Exception:
-            pass
-    for d in glob.glob("/tmp/chromium-*"):
-        try:
-            shutil.rmtree(d, ignore_errors=True)
-        except Exception:
-            pass
+    """Remove Playwright/Chromium temp dirs from /tmp to prevent ENOSPC."""
+    patterns = [
+        "/tmp/playwright-*",
+        "/tmp/playwright_*",
+        "/tmp/chromium-*",
+        "/tmp/chromium_*",
+    ]
+    for pattern in patterns:
+        for d in glob.glob(pattern):
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+            except Exception:
+                pass
 
 
 def _invoke_async(context, payload: dict):
