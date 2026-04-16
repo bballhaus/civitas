@@ -24,12 +24,17 @@ S3_BUCKET = os.environ.get("AWS_STORAGE_BUCKET_NAME", "civitas-ai")
 
 
 def get_s3_client():
-    """Create an S3 client that works on both Lambda (IAM role) and local dev (.env creds)."""
-    kwargs = {"region_name": AWS_REGION}
-    if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
-        kwargs["aws_access_key_id"] = AWS_ACCESS_KEY_ID
-        kwargs["aws_secret_access_key"] = AWS_SECRET_ACCESS_KEY
-    return boto3.client("s3", **kwargs)
+    """Create an S3 client that works on both Lambda (IAM role) and local dev (.env creds).
+
+    On Lambda: boto3 automatically uses the IAM role's temporary credentials
+    (access key + secret + session token) from the environment.
+    On local dev: dotenv loads long-term credentials from .env, which boto3
+    picks up from the environment automatically.
+
+    We never pass credentials explicitly — boto3's default credential chain
+    handles both cases correctly.
+    """
+    return boto3.client("s3", region_name=AWS_REGION)
 
 # S3 prefixes
 S3_V2_PREFIX = "scrapes/v2/"
