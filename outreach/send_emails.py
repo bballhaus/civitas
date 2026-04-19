@@ -59,7 +59,9 @@ Thank you so much for your time. Your perspective would genuinely shape what I b
 
 Best,
 Brooke Ballhaus
-Stanford University | B.S. + M.S. Computer Science, Class of 2026
+Stanford University | Class of 2026
+B.S. Candidate | Computer Science
+M.S. Candidate | Computer Science
 """
 
 
