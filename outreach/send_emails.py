@@ -44,26 +44,22 @@ OUTREACH_DIR = Path(__file__).resolve().parent
 # Template
 # ──────────────────────────────────────────────────────────────────────────────
 
-SUBJECT_TEMPLATE = "Quick Question About Your Bidding Process, {contact_name}"
+SUBJECT_TEMPLATE = "Stanford research on {company}'s RFP process -- 15 min?"
 
 BODY_TEMPLATE = """\
 Hi {contact_name},
 
-I came across {company} while researching government contractors in California, and your work really caught my eye.
+I'm Brooke Ballhaus, a CS master's student at Stanford. I'm researching how small and mid-sized government contractors like {company} navigate the RFP discovery process, and I came across your work through California procurement portals.
 
-I'm Brooke, a computer science master's student at Stanford, and I'm building Civitas -- a tool designed to help contractors like you spend less time hunting for the right RFPs and more time actually winning them. We're focused on making it dramatically easier for small and mid-sized firms to discover compatible bid opportunities across the dozens of procurement sites out there.
+As part of my research at Stanford, I'm building Civitas -- a tool to help contractors spend less time hunting across dozens of procurement sites and more time winning bids. Before I build further, I want to hear directly from the people doing this work every day.
 
-I'd love to hear about your experience with the bidding process -- what's working, what's frustrating, and what would make your life easier. Your perspective would be incredibly valuable in shaping what we build.
+Would you be open to a 15-minute call at 11am PST on Monday, Tuesday, Wednesday, or Friday this week? Just reply with whichever day works best and I'll send a calendar invite.
 
-Would you be open to a quick 15-minute call sometime in the next couple of weeks? Happy to work around your schedule.
-
-Thanks so much for considering it -- I really appreciate your time.
+Thank you so much for your time -- your perspective would genuinely shape what I build.
 
 Best,
 Brooke Ballhaus
-Stanford University | Class of 2026
-B.S. Candidate | Computer Science
-M.S. Candidate | Computer Science
+Stanford University | B.S. + M.S. Computer Science, Class of 2026
 """
 
 
