@@ -51,11 +51,11 @@ Hi {contact_name},
 
 I'm Brooke Ballhaus, a CS master's student at Stanford. I'm researching how small and mid-sized government contractors like {company} navigate the RFP discovery process, and I came across your work through California procurement portals.
 
-As part of my research at Stanford, I'm building Civitas -- a tool to help contractors spend less time hunting across dozens of procurement sites and more time winning bids. Before I build further, I want to hear directly from the people doing this work every day.
+As part of my research at Stanford, I'm building Civitas, a tool to help contractors spend less time hunting across dozens of procurement sites and more time winning bids. Before I build further, I want to hear directly from the people doing this work every day.
 
 Would you be open to a 15-minute call at 11am PST on Monday, Tuesday, Wednesday, or Friday this week? Just reply with whichever day works best and I'll send a calendar invite.
 
-Thank you so much for your time -- your perspective would genuinely shape what I build.
+Thank you so much for your time. Your perspective would genuinely shape what I build.
 
 Best,
 Brooke Ballhaus
