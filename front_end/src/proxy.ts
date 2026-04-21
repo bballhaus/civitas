@@ -65,7 +65,7 @@ function cleanupStore() {
 function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
     // style-src still needs 'unsafe-inline' — Tailwind v4 injects <style> tags at runtime
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.s3.*.amazonaws.com",
@@ -77,8 +77,16 @@ function buildCsp(nonce: string): string {
   ].join("; ");
 }
 
-function addCspHeaders(response: NextResponse, nonce: string): void {
-  response.headers.set("Content-Security-Policy", buildCsp(nonce));
+function buildRequestHeaders(request: NextRequest, nonce: string, csp: string): Headers {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+  // Next.js auto-nonces its inline framework scripts by reading the CSP on the forwarded request.
+  requestHeaders.set("Content-Security-Policy", csp);
+  return requestHeaders;
+}
+
+function addCspResponseHeaders(response: NextResponse, nonce: string, csp: string): void {
+  response.headers.set("Content-Security-Policy", csp);
   response.headers.set("x-nonce", nonce);
 }
 
@@ -89,6 +97,8 @@ export function proxy(request: NextRequest) {
 
   // Generate nonce for every request
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+  const csp = buildCsp(nonce);
+  const requestHeaders = buildRequestHeaders(request, nonce, csp);
 
   // Rate limit auth mutation endpoints (login, signup, change-password)
   // Skip /api/auth/me/ — it's a session check called on every page load
@@ -111,9 +121,9 @@ export function proxy(request: NextRequest) {
         }
       );
     }
-    const response = NextResponse.next();
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
     response.headers.set("X-RateLimit-Remaining", String(remaining));
-    addCspHeaders(response, nonce);
+    addCspResponseHeaders(response, nonce, csp);
     return response;
   }
 
@@ -132,15 +142,15 @@ export function proxy(request: NextRequest) {
         }
       );
     }
-    const response = NextResponse.next();
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
     response.headers.set("X-RateLimit-Remaining", String(remaining));
-    addCspHeaders(response, nonce);
+    addCspResponseHeaders(response, nonce, csp);
     return response;
   }
 
   // All other routes — add CSP nonce
-  const response = NextResponse.next();
-  addCspHeaders(response, nonce);
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  addCspResponseHeaders(response, nonce, csp);
   return response;
 }
 
