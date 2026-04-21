@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-// CSP is set dynamically in middleware.ts (nonce-based).
+// CSP is set dynamically in proxy.ts (nonce-based).
 // Only non-CSP security headers are set here.
 const securityHeaders = [
   { key: "X-DNS-Prefetch-Control", value: "on" },
