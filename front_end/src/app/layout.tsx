@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 import { PrefetchEvents } from "@/components/PrefetchEvents";
 
@@ -18,11 +19,15 @@ export const metadata: Metadata = {
   description: "Civitas AI",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Reading headers opts this layout into dynamic rendering, which is required
+  // for Next.js to apply the per-request nonce to its inline framework scripts.
+  await headers();
+
   return (
     <html lang="en">
       <body
