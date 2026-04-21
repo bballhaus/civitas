@@ -62,15 +62,18 @@ function cleanupStore() {
 
 // ── CSP nonce generation ──
 
+// CSP only allows a single leftmost wildcard, so build a concrete S3 origin from config.
+const s3Origin = `https://${appConfig.aws.s3Bucket}.s3.${appConfig.aws.region}.amazonaws.com`;
+
 function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
     // style-src still needs 'unsafe-inline' — Tailwind v4 injects <style> tags at runtime
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https://*.s3.*.amazonaws.com",
+    `img-src 'self' data: blob: ${s3Origin}`,
     "font-src 'self' data:",
-    "connect-src 'self' https://*.s3.*.amazonaws.com https://api.groq.com",
+    `connect-src 'self' ${s3Origin} https://api.groq.com`,
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
