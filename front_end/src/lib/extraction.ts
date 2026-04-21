@@ -87,10 +87,9 @@ const MAX_TEXT_CHARS = config.llm.extraction.maxChars;
 // ── Text extraction ──
 
 async function extractTextFromPdf(buffer: Buffer): Promise<string> {
-  const { PDFParse } = await import("pdf-parse");
+  const pdfParse = (await import("pdf-parse")).default as (b: Buffer) => Promise<{ text: string }>;
   try {
-    const parser = new PDFParse(new Uint8Array(buffer));
-    const result = await parser.getText();
+    const result = await pdfParse(buffer);
     const text = (result.text || "").trim();
     if (!text) throw new ExtractionError("No text could be extracted from the PDF");
     return text;
