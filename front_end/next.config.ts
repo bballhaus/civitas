@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  serverExternalPackages: ["pdf-parse"],
+  serverExternalPackages: ["mupdf"],
 };
 
 export default nextConfig;

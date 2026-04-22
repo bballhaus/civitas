@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { extractMetadataFromDocument, ExtractionError } from "@/lib/extraction";
 
+export const runtime = "nodejs"; // mupdf requires Node runtime (WASM)
 export const maxDuration = 60;
 
 export async function POST(request: Request) {

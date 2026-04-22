@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { extractMetadataFromDocument, ExtractionError } from "@/lib/extraction";
 import { config } from "@/lib/config";
 
+export const runtime = "nodejs"; // mupdf requires Node runtime (WASM)
 export const maxDuration = 60;
 
 const MAX_FILE_SIZE = config.upload.maxFileSize;

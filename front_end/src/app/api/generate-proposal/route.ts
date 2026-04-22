@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { chatCompletion } from "@/lib/llm";
+import { extractTextFromPdf } from "@/lib/extraction";
+
+export const runtime = "nodejs";
 
 const PROMPT_WITHOUT_STYLE = `You are an expert government contracting consultant helping a vendor write a professional proposal in response to an RFP (Request for Proposal).
 
@@ -65,10 +68,8 @@ async function extractTextFromUrl(url: string): Promise<string | null> {
 
     // Try PDF extraction
     if (url.toLowerCase().endsWith(".pdf") || response.headers.get("content-type")?.includes("pdf")) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const pdfParse = require("pdf-parse");
-      const data = await pdfParse(buffer);
-      return data.text?.trim() || null;
+      const text = await extractTextFromPdf(buffer);
+      return text?.trim() || null;
     }
 
     // Try plain text for other formats

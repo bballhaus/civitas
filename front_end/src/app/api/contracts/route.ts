@@ -8,6 +8,7 @@ import { extractMetadataFromDocument } from "@/lib/extraction";
 import { refreshProfileFromContracts } from "@/lib/profile-storage";
 import { config } from "@/lib/config";
 
+export const runtime = "nodejs"; // mupdf requires Node runtime (WASM)
 export const maxDuration = 60; // LLM extraction can take time
 
 const MAX_FILE_SIZE = config.upload.maxFileSize;
@@ -119,24 +120,29 @@ export async function POST(request: Request) {
         );
       }
 
-      // Extract metadata from document if requested
+      // Extract metadata from document if requested.
+      // A parse failure (e.g. corrupt PDF xref) should not block the upload —
+      // the file still gets saved with whatever metadata the caller provided.
       if (shouldExtract) {
-        const extracted = await extractMetadataFromDocument(fileBuffer, fileName);
-        // Flatten extraction result into metadata
-        metadata = {
-          ...metadata,
-          rfp_id: extracted.rfp_id || metadata.rfp_id,
-          issuing_agency: extracted.issuing_agency || metadata.issuing_agency,
-          contractor_name: extracted.contractor_name,
-          title: metadata.title || extracted.title || "",
-          jurisdiction_state: extracted.jurisdiction.state,
-          jurisdiction_county: extracted.jurisdiction.county || "",
-          jurisdiction_city: extracted.jurisdiction.city || "",
-          award_date: extracted.dates.award_date || "",
-          start_date: extracted.dates.start_date || "",
-          end_date: extracted.dates.end_date || "",
-          ...extracted.features,
-        };
+        try {
+          const extracted = await extractMetadataFromDocument(fileBuffer, fileName);
+          metadata = {
+            ...metadata,
+            rfp_id: extracted.rfp_id || metadata.rfp_id,
+            issuing_agency: extracted.issuing_agency || metadata.issuing_agency,
+            contractor_name: extracted.contractor_name,
+            title: metadata.title || extracted.title || "",
+            jurisdiction_state: extracted.jurisdiction.state,
+            jurisdiction_county: extracted.jurisdiction.county || "",
+            jurisdiction_city: extracted.jurisdiction.city || "",
+            award_date: extracted.dates.award_date || "",
+            start_date: extracted.dates.start_date || "",
+            end_date: extracted.dates.end_date || "",
+            ...extracted.features,
+          };
+        } catch (err) {
+          console.warn(`[contracts] Extraction failed for ${fileName}, saving without metadata:`, err);
+        }
       }
     }
 

@@ -86,11 +86,31 @@ const MAX_TEXT_CHARS = config.llm.extraction.maxChars;
 
 // ── Text extraction ──
 
-async function extractTextFromPdf(buffer: Buffer): Promise<string> {
-  const pdfParse = (await import("pdf-parse")).default;
+// Uses mupdf (WASM) rather than pdfjs-based parsers because MuPDF auto-repairs
+// broken xref tables — a common failure mode for government-issued RFP PDFs.
+export async function extractTextFromPdf(buffer: Buffer): Promise<string> {
+  const mupdf = await import("mupdf");
   try {
-    const result = await pdfParse(buffer);
-    const text = (result.text || "").trim();
+    const doc = mupdf.Document.openDocument(new Uint8Array(buffer), "application/pdf");
+    const pageCount = doc.countPages();
+    const parts: string[] = [];
+    for (let i = 0; i < pageCount; i++) {
+      const page = doc.loadPage(i);
+      try {
+        const structured = JSON.parse(page.toStructuredText("preserve-whitespace").asJSON()) as {
+          blocks?: Array<{ lines?: Array<{ text?: string }> }>;
+        };
+        for (const block of structured.blocks ?? []) {
+          for (const line of block.lines ?? []) {
+            if (line.text) parts.push(line.text);
+          }
+        }
+      } finally {
+        page.destroy();
+      }
+    }
+    doc.destroy();
+    const text = parts.join("\n").trim();
     if (!text) throw new ExtractionError("No text could be extracted from the PDF");
     return text;
   } catch (err) {
