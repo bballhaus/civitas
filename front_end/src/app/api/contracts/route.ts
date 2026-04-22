@@ -8,6 +8,7 @@ import { extractMetadataFromDocument } from "@/lib/extraction";
 import { refreshProfileFromContracts } from "@/lib/profile-storage";
 import { config } from "@/lib/config";
 
+export const runtime = "nodejs"; // mupdf requires Node runtime (WASM)
 export const maxDuration = 60; // LLM extraction can take time
 
 const MAX_FILE_SIZE = config.upload.maxFileSize;
