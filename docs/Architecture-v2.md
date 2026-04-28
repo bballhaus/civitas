@@ -421,21 +421,33 @@ After onboarding, `embedding_updated_at` triggers a background job to embed all 
 
 ## 6. Evidence flow (LLM extraction)
 
-### 6.1 Document types
+### 6.1 Document types and contract status
+
+Two orthogonal axes — `document_type` describes what the document IS, `contract_status` describes the win-state of the contract it relates to (when applicable).
 
 ```
-won_contract         — signed/awarded contract or successful proposal
-lost_bid             — submitted but didn't win
-capability_statement — marketing brochure describing what the company does
-rfp_response_draft   — in-progress proposal not yet submitted
-license_doc          — license certificate, registration, or formal credential
-other                — anything else; user is asked to confirm
+document_type:
+  proposal              # contractor's pitch document
+  executed_contract     # signed agreement after award
+  capability_statement  # marketing brochure / company profile / about-us material
+  license_doc           # license certificate, registration, or credential
+  rfp_solicitation      # the AGENCY's RFP itself; not contractor evidence (guardrail)
+  other                 # fallback; user is asked to confirm
+
+contract_status (relevant only for `proposal` and `executed_contract`):
+  won | lost | in_progress | unknown
 ```
+
+Splitting status from type lets us treat an executed contract as "won implicitly" while letting proposals carry explicit status. This replaces the old `won_contract` / `lost_bid` / `rfp_response_draft` triad.
+
+The `rfp_solicitation` type is a guardrail. It catches the silent-failure mode where a user accidentally uploads an agency's RFP (the document the agency wrote requesting work) instead of the contractor's own proposal. Without this category, the LLM would extract the RFP's requirements *as if they applied to the user* — "RFP requires Class A license" silently becomes a claim that the user holds Class A. The doc isn't extracted; the UI redirects.
 
 ### 6.2 Two-stage extraction
 
 ```
-upload → text extract (mupdf) → PII redact → classify → extract per type → claims → review screen → accept/reject
+upload → text extract (mupdf) → PII redact → classify
+   ├── rfp_solicitation → redirect to proposal-generation flow (no extraction)
+   └── everything else → extract per type → claims → review screen → accept/reject
 ```
 
 ### 6.3 Stage 1: Classifier
@@ -445,94 +457,136 @@ upload → text extract (mupdf) → PII redact → classify → extract per type
 **Prompt** (cached system message):
 
 ```
-You classify procurement documents. Given the first ~3000 characters of a
-document, return its type and confidence.
+You classify procurement documents uploaded by a contractor about their own
+company. Given the first ~3000 characters, return document_type, contract_status
+(when applicable), and confidence.
 
-Categories:
-- won_contract:         a signed/awarded contract or a successful proposal that
-                        was accepted by the agency
-- lost_bid:             a proposal that was submitted but did not win
-- capability_statement: marketing material describing what the company does;
-                        no specific contract being executed
-- rfp_response_draft:   an in-progress proposal not yet submitted
-- license_doc:          a license certificate, registration, or formal credential
-- other:                anything else (resumes, brochures, financial statements)
+document_type values:
+- proposal:             a pitch the contractor wrote in response to an RFP
+- executed_contract:    a signed/awarded agreement (post-award document)
+- capability_statement: marketing material describing what the company does
+                        (brochures, "about us" docs, company profiles, capability
+                        statements)
+- license_doc:          a license certificate, registration, or credential
+- rfp_solicitation:     the AGENCY's RFP itself, not the contractor's response
+- other:                anything else (resumes, financial statements, etc.)
+
+How to distinguish proposal vs. rfp_solicitation:
+  RFP markers (point of view = agency requesting work):
+    "vendor shall", "the contractor must", "minimum qualifications",
+    "submission requirements", "evaluation criteria", "scope of work"
+    written in third person about a hypothetical bidder
+  Proposal markers (point of view = contractor pitching):
+    "we propose", "our team", "our approach", "we offer",
+    written in first person from the contractor's side
+
+contract_status (only for proposal or executed_contract):
+- won:          contract was awarded to the contractor (look for award letter,
+                signed agreement, references to performance)
+- lost:         submitted but not awarded
+- in_progress:  draft, not yet submitted, or awaiting decision
+- unknown:      can't tell from the document
+For executed_contract, contract_status is always "won".
 
 Return JSON only:
-{ "type": "<category>", "confidence": <0-1>, "reasoning": "<one sentence>" }
+{
+  "document_type": "<type>",
+  "contract_status": "<status or null>",
+  "confidence": <0-1>,
+  "reasoning": "<one sentence>"
+}
 ```
 
-If `confidence < 0.7`, surface the choice to the user before extraction.
+If `confidence < 0.7`, surface the classification to the user before extraction so they can correct it.
 
 ### 6.4 Stage 2: Targeted extractors
 
 **Model**: Claude Sonnet 4.6 (`claude-sonnet-4-6`), temperature 0.1, prompt caching on the system message.
 
-Each extractor outputs a **claims array**, not a flat object. Every fact gets its own claim row:
+Each extractor outputs a **claims array**. Every fact gets its own row with snippet + confidence.
+
+#### `rfp_solicitation` — no extraction (guardrail)
+
+Skip extraction. UI shows:
+
+> *"This looks like an RFP solicitation, not a document about your company.*
+> - *Use it to generate a proposal draft (proposal-generation flow)*
+> - *I uploaded the wrong file (discard)"*
+
+#### `proposal` — single extractor parameterized by `contract_status`
+
+Extract: `contractor_name`, `role` (prime/sub), `agency`, `contract_value`, `duration`, `start_date`, `end_date`, `license_classes`, `certifications_held`, `specialties` (1–3 from the scope), `capabilities` (broader from scope), `naics_codes`, `work_locations`, `scope_summary`.
+
+Status-specific behavior:
+- `won`: full extraction; `agency_relationships.role` claim is `'prime'` or `'sub'` from the doc
+- `lost`: same fields, but `agency_relationships.role` is tagged `'sub_or_interest'` (pursued but didn't win); skip contract_value claim (the bid amount is aspirational, not delivered)
+- `in_progress`: same as `won` shape; mark `contract_status='in_progress'` in claim metadata
+- `unknown`: extract everything; mark `contract_status='unknown'` so downstream can flag
+
+#### `executed_contract` — separate extractor
+
+Same fields as `proposal`, but the document is post-award and the scope is fixed. Higher base confidence (see multipliers below).
+
+#### `capability_statement` — extractor
+
+Extract: `company_name`, `year_founded`, `employee_count`, `primary_specialties`, `capabilities`, `licenses`, `certifications`, `work_areas`, `agency_history` (named past clients).
+
+No contract value, agency, or dates expected.
+
+#### `license_doc` — extractor (Haiku is sufficient)
+
+Extract: `license_class`, `license_number`, `expires_on`, `holder_name`. Single short JSON; no claims wrapping.
+
+#### Source-type confidence multiplier
+
+Each claim's stored `confidence` is `(LLM confidence) × (source-type weight)`:
+
+| Source | Status | Multiplier | Rationale |
+|---|---|:-:|---|
+| `executed_contract` | (implicit won) | 1.0 | Agreed scope, factual |
+| `proposal` | `won` | 0.9 | Aspirational, but delivered |
+| `proposal` | `lost` | 0.7 | Aspirational, never tested |
+| `proposal` | `in_progress` | 0.7 | Aspirational, not yet submitted |
+| `proposal` | `unknown` | 0.75 | Status unclear |
+| `capability_statement` | n/a | 0.75 | Broad marketing claims |
+| `license_doc` | n/a | 1.0 | Factual credential |
+| `other` | n/a | 0.5 | User-confirmed but low trust |
+
+#### Example claims output
 
 ```json
 {
+  "document_type": "proposal",
+  "contract_status": "won",
   "claims": [
     {
       "field_path": "specialties.value",
       "value": "concrete flatwork installation",
       "snippet": "Acme Concrete will perform sidewalk and curb ramp installation including concrete flatwork...",
-      "confidence": 0.94
+      "confidence": 0.85    // 0.94 LLM × 0.9 proposal-won multiplier
     },
     {
       "field_path": "licenses.class",
       "value": "A",
       "snippet": "Class A General Engineering Contractor License #1234567",
-      "confidence": 0.99
-    },
-    {
-      "field_path": "agency_relationships.agency",
-      "value": "California Department of Transportation",
-      "snippet": "This contract is awarded by the California Department of Transportation (Caltrans)...",
-      "confidence": 0.98
-    },
-    {
-      "field_path": "agency_relationships.role",
-      "value": "prime",
-      "snippet": "Acme Concrete shall serve as the prime contractor for...",
-      "confidence": 0.91
+      "confidence": 0.89    // 0.99 × 0.9
     }
   ]
 }
 ```
-
-#### Won-contract extractor
-
-Extract any of: `contractor_name`, `role` (prime/sub), `agency`, `contract_value`, `duration`, `award_date`, `start_date`, `end_date`, `license_classes`, `certifications_held`, `specialties` (1–3 from the scope), `capabilities` (broader from scope), `naics_codes`, `work_locations`, `scope_summary`.
-
-#### Capability-statement extractor
-
-Extract: `company_name`, `year_founded`, `employee_count`, `primary_specialties`, `capabilities`, `licenses`, `certifications`, `work_areas`, `agency_history` (named past clients).
-
-No contract value or dates expected.
-
-#### Lost-bid extractor
-
-Same shape as won-contract, but: tag `agency_relationships.role` as `'sub_or_interest'` instead of `'prime'`. Don't claim a value.
-
-#### License-doc extractor (Haiku is sufficient)
-
-Extract: `license_class`, `license_number`, `expires_on`, `holder_name`. Single short JSON; no claims wrapping.
-
-#### RFP-response-draft extractor
-
-Same as won-contract minus dates; mark all confidence × 0.7 since this is what they pitched, not what was awarded.
 
 ### 6.5 Review screen (mandatory before profile changes)
 
 After extraction:
 
 1. Group claims by `field_path`
-2. Show snippet next to each claim
+2. Show snippet next to each claim, plus the source-type label and confidence multiplier ("Proposal · won · ×0.9") so the user understands why a claim is graded the way it is
 3. User actions per claim: **Accept**, **Edit**, **Reject**
 4. Bulk: "Accept all from this document"
 5. On accept: write to the corresponding profile table; flip `claims.status = 'accepted'`
 6. On reject: keep the row (`status = 'rejected'`) for extractor tuning later
+
+If `document_type = rfp_solicitation`: no review screen; the redirect UI from §6.4 fires instead.
 
 ---
 
