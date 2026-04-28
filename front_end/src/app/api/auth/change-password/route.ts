@@ -1,3 +1,5 @@
+// Change password — Postgres-backed (Architecture-v2 § 11).
+
 import { NextResponse } from "next/server";
 import {
   getAuthenticatedUser,
@@ -5,16 +7,13 @@ import {
   validatePassword,
   hashPassword,
 } from "@/lib/auth";
-import { getUserData, saveUserData } from "@/lib/user-data";
+import { getUserById, updatePasswordHash } from "@/db/queries/users";
 import { logSecurityEvent } from "@/lib/security-log";
 
 export async function POST(request: Request) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return NextResponse.json(
-      { error: "Authentication required" },
-      { status: 401 }
-    );
+  const auth = await getAuthenticatedUser(request);
+  if (!auth) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   try {
@@ -25,23 +24,20 @@ export async function POST(request: Request) {
     if (!currentPassword || !newPassword) {
       return NextResponse.json(
         { error: "Current password and new password are required." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    const data = await getUserData(user.username);
-    if (!data?.password_hash) {
-      return NextResponse.json(
-        { error: "User data not found" },
-        { status: 404 }
-      );
+    const user = await getUserById(auth.userId);
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const valid = await verifyPassword(currentPassword, data.password_hash);
+    const valid = await verifyPassword(currentPassword, user.passwordHash);
     if (!valid) {
       return NextResponse.json(
         { error: "Current password is incorrect." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -50,17 +46,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: passwordError }, { status: 400 });
     }
 
-    data.password_hash = await hashPassword(newPassword);
-    await saveUserData(user.username, data);
+    await updatePasswordHash(user.id, await hashPassword(newPassword));
 
-    logSecurityEvent({ type: "password_change", username: user.username, ip: request.headers.get("x-forwarded-for") || undefined });
+    logSecurityEvent({
+      type: "password_change",
+      username: user.username,
+      ip: request.headers.get("x-forwarded-for") || undefined,
+    });
 
     return NextResponse.json({ message: "Password changed successfully." });
   } catch (err) {
     console.error("Change password error:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

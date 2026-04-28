@@ -28,12 +28,14 @@ const AUTH_COOKIE_NAME = "civitas_session";
 // ── JWT ──
 
 export interface AuthPayload extends JWTPayload {
+  sub: string; // user_id (UUID); standard JWT subject claim
   username: string;
 }
 
-export async function signJwt(username: string): Promise<string> {
+export async function signJwt(userId: string, username: string): Promise<string> {
   return new SignJWT({ username } as AuthPayload)
     .setProtectedHeader({ alg: "HS256" })
+    .setSubject(userId)
     .setIssuedAt()
     .setExpirationTime(`${JWT_EXPIRY_HOURS}h`)
     .sign(getJwtSecret());
@@ -72,30 +74,44 @@ export async function verifyJwt(token: string): Promise<AuthPayload | null> {
   }
 }
 
+export interface AuthenticatedUser {
+  userId: string;
+  username: string;
+}
+
 /**
  * Extract and verify the JWT from the HttpOnly cookie or Bearer header.
  * Checks cookie first (primary), then falls back to Bearer header (API compatibility).
+ *
+ * Returns both userId (the stable Postgres UUID) and username (for display
+ * and legacy S3-backed routes that still key on username). New code should
+ * prefer userId.
  */
 export async function getAuthenticatedUser(
-  request: Request
-): Promise<{ username: string } | null> {
+  request: Request,
+): Promise<AuthenticatedUser | null> {
+  const extract = (payload: AuthPayload | null): AuthenticatedUser | null => {
+    if (!payload?.sub || !payload.username) return null;
+    return { userId: payload.sub, username: payload.username };
+  };
+
   // 1. Check HttpOnly cookie (primary auth method)
   const cookieHeader = request.headers.get("cookie") || "";
   const cookieMatch = cookieHeader.match(
-    new RegExp(`(?:^|;\\s*)${AUTH_COOKIE_NAME}=([^;]+)`)
+    new RegExp(`(?:^|;\\s*)${AUTH_COOKIE_NAME}=([^;]+)`),
   );
   if (cookieMatch) {
-    const payload = await verifyJwt(cookieMatch[1]);
-    if (payload?.username) return { username: payload.username };
+    const user = extract(await verifyJwt(cookieMatch[1]));
+    if (user) return user;
   }
 
-  // 2. Fall back to Bearer header (API clients, backward compatibility)
+  // 2. Fall back to Bearer header (API clients)
   const authHeader = request.headers.get("Authorization");
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice(7).trim();
     if (token) {
-      const payload = await verifyJwt(token);
-      if (payload?.username) return { username: payload.username };
+      const user = extract(await verifyJwt(token));
+      if (user) return user;
     }
   }
 
