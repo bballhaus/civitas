@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getOrCreateProfile, getProfile, saveProfile } from "@/lib/profile-storage";
+import { recordEvent } from "@/lib/event-log";
 
 export async function GET(request: Request) {
   const user = await getAuthenticatedUser(request);
@@ -26,6 +27,7 @@ export async function PATCH(request: Request) {
     const merged = { ...existing, ...updates, updated_at: new Date().toISOString() };
 
     await saveProfile(user.username, merged);
+    void recordEvent(user.username, "profile_updated");
     return NextResponse.json(merged);
   } catch (err) {
     console.error("Profile update error:", err);

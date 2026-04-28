@@ -26,5 +26,12 @@
   "upload": {
     "maxFileSize": 26214400,
     "maxFiles": 10
+  },
+  "kpi": {
+    "eventsTable": "civitas-kpi-events",
+    "usersTable": "civitas-kpi-users",
+    "eventTtlDays": 90,
+    "rateLimit": { "limit": 60, "windowMs": 60000 },
+    "maxBatchSize": 50
   }
 }

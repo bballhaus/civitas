@@ -30,6 +30,7 @@ import {
   listContracts,
 } from "@/lib/api";
 import { getCachedEvents, setCachedEvents, clearCachedEvents } from "@/lib/events-cache";
+import { trackEvent } from "@/lib/event-tracker";
 import {
   type RFP as RFPType,
   type RFPMatch as RFPMatchType,
@@ -216,7 +217,6 @@ const FALLBACK_RFPS: RFP[] = [
 ];
 
 const STORAGE_KEYS = {
-  SAVED: "civitas_saved_rfps",
   NOT_INTERESTED: "civitas_not_interested_rfps",
   EXPRESSED_INTEREST: "civitas_expressed_interest_rfps",
 };
@@ -651,35 +651,32 @@ export default function DashboardPage() {
   const [summaryCache, setSummaryCache] = useState<Record<string, string>>({});
   const [matchFeedback, setMatchFeedback] = useState<Record<string, { rating: "good" | "bad"; reason?: string }>>({});
 
-  // Load RFP lists from localStorage after mount to avoid hydration mismatch (server has no localStorage)
+  // Saved RFPs come from the backend (loaded with currentUser).
+  // Not-interested and expressed-interest stay in localStorage — they're transient
+  // UI hints, not satisfaction signals.
   useEffect(() => {
-    setSavedRfpIds(loadSet(STORAGE_KEYS.SAVED));
     setNotInterestedRfpIds(loadSet(STORAGE_KEYS.NOT_INTERESTED));
     setExpressedInterestRfpIds(loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
+    trackEvent("page_viewed", { pagePath: "/dashboard" });
   }, []);
 
-  // Keep saved/not-interested/expressed in sync with current RFP list so we don't show counts for stale IDs
+  // Keep not-interested/expressed in sync with current RFP list so we don't show counts for stale IDs
   const currentRfpIds = React.useMemo(
     () => (rfps.length > 0 ? new Set(rfps.map((r) => r.id)) : null),
     [rfps]
   );
   useEffect(() => {
     if (!currentRfpIds || currentRfpIds.size === 0) return;
-    const saved = loadSet(STORAGE_KEYS.SAVED);
     const notInt = loadSet(STORAGE_KEYS.NOT_INTERESTED);
     const expressed = loadSet(STORAGE_KEYS.EXPRESSED_INTEREST);
-    const savedFiltered = new Set([...saved].filter((id) => currentRfpIds.has(id)));
     const notIntFiltered = new Set([...notInt].filter((id) => currentRfpIds.has(id)));
     const expressedFiltered = new Set([...expressed].filter((id) => currentRfpIds.has(id)));
     if (
-      savedFiltered.size !== saved.size ||
       notIntFiltered.size !== notInt.size ||
       expressedFiltered.size !== expressed.size
     ) {
-      saveSet(STORAGE_KEYS.SAVED, savedFiltered);
       saveSet(STORAGE_KEYS.NOT_INTERESTED, notIntFiltered);
       saveSet(STORAGE_KEYS.EXPRESSED_INTEREST, expressedFiltered);
-      setSavedRfpIds(savedFiltered);
       setNotInterestedRfpIds(notIntFiltered);
       setExpressedInterestRfpIds(expressedFiltered);
     }
@@ -694,16 +691,20 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 2500);
   };
 
-  const handleSaveRfp = (rfpId: string) => {
+  // Saved RFPs are session-only until the Postgres-backed persistence ships
+  // (see project memory: project_saved_rfps_postgres_migration).
+  // KPI signal still fires.
+  const handleSaveRfp = useCallback((rfpId: string) => {
+    const currentlySaved = savedRfpIds.has(rfpId);
     setSavedRfpIds((prev) => {
       const next = new Set(prev);
-      if (next.has(rfpId)) next.delete(rfpId);
+      if (currentlySaved) next.delete(rfpId);
       else next.add(rfpId);
-      saveSet(STORAGE_KEYS.SAVED, next);
-      showToast(next.has(rfpId) ? "Saved to your list" : "Removed from saved");
       return next;
     });
-  };
+    trackEvent(currentlySaved ? "rfp_unsaved" : "rfp_saved", { rfpId });
+    showToast(currentlySaved ? "Removed from saved" : "Saved to your list");
+  }, [savedRfpIds]);
 
   const handleNotInterested = (rfpId: string) => {
     setNotInterestedRfpIds((prev) => {
@@ -821,6 +822,12 @@ export default function DashboardPage() {
   const [minScore, setMinScore] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
+  // Track search submissions: fire when deferredSearchQuery stabilizes (effective debounce)
+  useEffect(() => {
+    const q = deferredSearchQuery.trim();
+    if (q.length === 0) return;
+    trackEvent("search_submitted", { queryLength: q.length });
+  }, [deferredSearchQuery]);
   const [sortBy, setSortBy] = useState<"score" | "deadline" | "value">("score");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
@@ -1176,6 +1183,7 @@ export default function DashboardPage() {
                 onSortChange={(by, dir) => {
                   setSortBy(by);
                   setSortDirection(dir);
+                  trackEvent("sort_changed", { sortKey: by, direction: dir });
                 }}
                 isOpen={sortDropdownOpen}
                 onClose={() => setSortDropdownOpen(false)}
@@ -1211,7 +1219,12 @@ export default function DashboardPage() {
                   <FilterPanel
                     filterOptions={dynamicFilterOptions}
                     filters={filters}
-                    onFiltersChange={setFilters}
+                    onFiltersChange={(next: RFPFilters) => {
+                      setFilters(next);
+                      trackEvent("filter_applied", {
+                        activeFilterCount: countActiveFilters(next),
+                      });
+                    }}
                     onClose={() => setFilterPanelOpen(false)}
                     expandedSections={expandedFilterSections}
                     onToggleSection={toggleFilterSection}

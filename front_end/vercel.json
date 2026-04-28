@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/admin/aggregate-kpis",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}

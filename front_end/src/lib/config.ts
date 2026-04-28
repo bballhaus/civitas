@@ -20,6 +20,13 @@ interface CivitasConfig {
   };
   cache: { userDataTtlMs: number; s3TtlMs: number };
   upload: { maxFileSize: number; maxFiles: number };
+  kpi?: {
+    eventsTable: string;
+    usersTable: string;
+    eventTtlDays: number;
+    rateLimit: { limit: number; windowMs: number };
+    maxBatchSize: number;
+  };
 }
 
 function loadConfigFile(): CivitasConfig {
@@ -51,6 +58,13 @@ function loadConfigFile(): CivitasConfig {
     },
     cache: { userDataTtlMs: 10000, s3TtlMs: 300000 },
     upload: { maxFileSize: 26214400, maxFiles: 10 },
+    kpi: {
+      eventsTable: "civitas-kpi-events",
+      usersTable: "civitas-kpi-users",
+      eventTtlDays: 90,
+      rateLimit: { limit: 60, windowMs: 60000 },
+      maxBatchSize: 50,
+    },
   };
 }
 
@@ -76,4 +90,11 @@ export const config = {
   rateLimit: file.rateLimit,
   cache: file.cache,
   upload: file.upload,
+  kpi: file.kpi ?? {
+    eventsTable: "civitas-kpi-events",
+    usersTable: "civitas-kpi-users",
+    eventTtlDays: 90,
+    rateLimit: { limit: 60, windowMs: 60000 },
+    maxBatchSize: 50,
+  },
 } as const;

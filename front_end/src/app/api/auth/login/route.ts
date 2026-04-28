@@ -7,6 +7,7 @@ import {
   setAuthCookie,
 } from "@/lib/auth";
 import { logSecurityEvent } from "@/lib/security-log";
+import { recordEvent } from "@/lib/event-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { getUserData, saveUserData } from "@/lib/user-data";
 
@@ -65,6 +66,7 @@ export async function POST(request: Request) {
 
     if (!authenticated) {
       logSecurityEvent({ type: "login_failure", username, ip: request.headers.get("x-forwarded-for") || undefined });
+      void recordEvent(username, "login_failure");
       return NextResponse.json(
         { error: "Invalid credentials" },
         { status: 401 }
@@ -78,6 +80,7 @@ export async function POST(request: Request) {
     );
     setAuthCookie(response, token);
     logSecurityEvent({ type: "login_success", username, ip: request.headers.get("x-forwarded-for") || undefined });
+    void recordEvent(username, "login");
     return response;
   } catch (err) {
     console.error("Login error:", err);

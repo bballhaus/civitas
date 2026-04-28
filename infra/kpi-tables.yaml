@@ -1,0 +1,87 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Civitas KPI tracking — DynamoDB tables for raw user-event log and
+  per-user aggregated KPI summary. Internal-only; no public access.
+
+Parameters:
+  EnvSuffix:
+    Type: String
+    Default: ""
+    Description: Optional suffix for table names (e.g. "-staging"). Empty for prod.
+
+Resources:
+
+  KpiEventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "civitas-kpi-events${EnvSuffix}"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: byEventType
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  KpiUsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "civitas-kpi-users${EnvSuffix}"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: byCohort
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+Outputs:
+  KpiEventsTableName:
+    Value: !Ref KpiEventsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-events-table"
+  KpiUsersTableName:
+    Value: !Ref KpiUsersTable
+    Export:
+      Name: !Sub "${AWS::StackName}-users-table"

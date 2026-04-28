@@ -3,6 +3,7 @@ import { hashPassword, validatePassword, signJwt, setAuthCookie } from "@/lib/au
 import { getUserData, saveUserData, userExists, type UserData } from "@/lib/user-data";
 import { getOrCreateProfile } from "@/lib/profile-storage";
 import { logSecurityEvent } from "@/lib/security-log";
+import { recordEvent } from "@/lib/event-log";
 import { checkEmailUniqueness, registerEmail } from "@/lib/email-index";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { sendVerificationEmail } from "@/lib/email";
@@ -108,6 +109,7 @@ export async function POST(request: Request) {
     }
 
     logSecurityEvent({ type: "signup", username, ip: request.headers.get("x-forwarded-for") || undefined });
+    void recordEvent(username, "signup", { emailVerified });
 
     const response = NextResponse.json(
       { username, email_verified: emailVerified },

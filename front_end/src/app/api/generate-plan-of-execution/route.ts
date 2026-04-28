@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { chatCompletion } from "@/lib/llm";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { recordEvent } from "@/lib/event-log";
 
 const PROMPT = `You are an expert government contracting consultant creating an INTERNAL planning document for a vendor considering pursuing an RFP. This document is for internal use only—it is NOT a proposal to submit. It helps the user plan and decide whether to bid.
 
@@ -112,6 +114,16 @@ ${profile ? JSON.stringify(profile, null, 2) : "No user profile provided. Create
     const plan =
       result.content?.trim() ??
       "Unable to generate plan of execution.";
+
+    const user = await getAuthenticatedUser(req);
+    if (user?.username) {
+      const rfpId = typeof rfp.id === "string" ? rfp.id : undefined;
+      void recordEvent(
+        user.username,
+        isRefinement ? "poe_regenerated" : "poe_generated",
+        rfpId ? { rfpId } : {}
+      );
+    }
 
     return NextResponse.json({ plan });
   } catch (err) {

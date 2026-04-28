@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 import { PrefetchEvents } from "@/components/PrefetchEvents";
+import { KpiInit } from "@/components/KpiInit";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -34,6 +35,7 @@ export default async function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <PrefetchEvents />
+        <KpiInit />
         {children}
       </body>
     </html>

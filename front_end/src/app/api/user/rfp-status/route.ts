@@ -11,8 +11,9 @@ import {
   saveMatchFeedback,
   removeMatchFeedback,
 } from "@/lib/rfp-status";
+import { recordEvent } from "@/lib/event-log";
+import type { ServerEventType } from "@/lib/events";
 
-// Validate RFP ID format: alphanumeric, dashes, dots, colons, underscores; max 200 chars
 const RFP_ID_PATTERN = /^[\w\-.:]{1,200}$/;
 function isValidRfpId(id: string): boolean {
   return RFP_ID_PATTERN.test(id);
@@ -59,20 +60,22 @@ export async function PATCH(request: Request) {
     const username = user.username;
     let result = await getRfpStatus(username);
 
-    // Validate and process each RFP ID field
-    for (const [field, action] of [
-      [remove_applied, removeAppliedRfp],
-      [mark_applied, addAppliedRfp],
-      [remove_in_progress, removeInProgressRfp],
-      [mark_in_progress, addInProgressRfp],
-    ] as const) {
+    const ops: Array<readonly [unknown, (u: string, id: string) => Promise<typeof result>, ServerEventType]> = [
+      [remove_applied, removeAppliedRfp, "rfp_unapplied"],
+      [mark_applied, addAppliedRfp, "rfp_applied"],
+      [remove_in_progress, removeInProgressRfp, "rfp_in_progress_removed"],
+      [mark_in_progress, addInProgressRfp, "rfp_in_progress"],
+    ];
+
+    for (const [field, action, eventType] of ops) {
       if (field) {
         const id = String(field).trim();
         if (id) {
           if (!isValidRfpId(id)) {
             return NextResponse.json({ error: "Invalid RFP ID format" }, { status: 400 });
           }
-          result = await (action as (u: string, id: string) => Promise<typeof result>)(username, id);
+          result = await action(username, id);
+          void recordEvent(username, eventType, { rfpId: id });
         }
       }
     }
@@ -102,18 +105,28 @@ export async function PATCH(request: Request) {
     if (submit_match_feedback && typeof submit_match_feedback === "object") {
       const { rfp_id, rating, reason, match_score, match_tier } = submit_match_feedback;
       if (rfp_id && (rating === "good" || rating === "bad") && typeof match_score === "number" && typeof match_tier === "string") {
-        result = await saveMatchFeedback(username, String(rfp_id).trim(), {
+        const id = String(rfp_id).trim();
+        result = await saveMatchFeedback(username, id, {
           rating,
           reason: typeof reason === "string" ? reason : undefined,
           match_score,
           match_tier,
           created_at: new Date().toISOString(),
         });
+        void recordEvent(username, "match_feedback_submitted", {
+          rfpId: id,
+          rating,
+          matchScore: match_score,
+          matchTier: match_tier,
+        });
       }
     }
     if (remove_match_feedback) {
       const id = String(remove_match_feedback).trim();
-      if (id) result = await removeMatchFeedback(username, id);
+      if (id) {
+        result = await removeMatchFeedback(username, id);
+        void recordEvent(username, "match_feedback_removed", { rfpId: id });
+      }
     }
 
     return NextResponse.json(result);

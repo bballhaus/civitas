@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { extractMetadataFromDocument, ExtractionError } from "@/lib/extraction";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { recordEvent } from "@/lib/event-log";
 import { config } from "@/lib/config";
 
 export const runtime = "nodejs"; // mupdf requires Node runtime (WASM)
@@ -140,6 +142,14 @@ export async function POST(request: Request) {
       total_contract_value: String(totalValue),
       contract_count: results.length,
     };
+
+    const user = await getAuthenticatedUser(request);
+    if (user?.username) {
+      void recordEvent(user.username, "profile_extracted", {
+        processed: results.length,
+        errorCount: errors.length,
+      });
+    }
 
     return NextResponse.json({
       profile,

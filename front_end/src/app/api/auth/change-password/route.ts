@@ -7,6 +7,7 @@ import {
 } from "@/lib/auth";
 import { getUserData, saveUserData } from "@/lib/user-data";
 import { logSecurityEvent } from "@/lib/security-log";
+import { recordEvent } from "@/lib/event-log";
 
 export async function POST(request: Request) {
   const user = await getAuthenticatedUser(request);
@@ -54,6 +55,7 @@ export async function POST(request: Request) {
     await saveUserData(user.username, data);
 
     logSecurityEvent({ type: "password_change", username: user.username, ip: request.headers.get("x-forwarded-for") || undefined });
+    void recordEvent(user.username, "password_change");
 
     return NextResponse.json({ message: "Password changed successfully." });
   } catch (err) {

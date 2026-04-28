@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { chatCompletion } from "@/lib/llm";
 import { extractTextFromPdf } from "@/lib/extraction";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { recordEvent } from "@/lib/event-log";
 
 export const runtime = "nodejs";
 
@@ -199,6 +201,17 @@ ${pastProposalText}`;
     );
 
     const proposal = result.content?.trim() ?? "Unable to generate proposal.";
+
+    // KPI: record (or skip silently if unauthenticated)
+    const user = await getAuthenticatedUser(req);
+    if (user?.username) {
+      const rfpId = typeof rfp.id === "string" ? rfp.id : undefined;
+      void recordEvent(
+        user.username,
+        isRefinement ? "proposal_regenerated" : "proposal_generated",
+        rfpId ? { rfpId } : {}
+      );
+    }
 
     return NextResponse.json({ proposal });
   } catch (err) {

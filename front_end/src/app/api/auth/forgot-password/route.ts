@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getUserData, saveUserData } from "@/lib/user-data";
 import { checkEmailUniqueness } from "@/lib/email-index";
 import { logSecurityEvent } from "@/lib/security-log";
+import { recordEvent } from "@/lib/event-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { sendPasswordResetEmail } from "@/lib/email";
 
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
     await sendPasswordResetEmail(data.email!, username, resetToken, host, proto);
 
     logSecurityEvent({ type: "password_reset_request", username, ip });
+    void recordEvent(username, "password_reset_request");
 
     return NextResponse.json({ message: successMsg });
   } catch (err) {
