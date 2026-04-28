@@ -62,6 +62,11 @@ class RawScrapedEvent(BaseModel):
     raw_metadata: dict = Field(default_factory=dict, description="Source-specific extra fields")
     scraped_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
+    # Market intel — populated by sources that expose it (PlanetBids today)
+    prospective_bidders: list["ProspectiveBidder"] = Field(default_factory=list)
+    bid_results: list["BidResult"] = Field(default_factory=list)
+    award: Optional["Award"] = None
+
 
 # ---------------------------------------------------------------------------
 # Attachment extraction — LLM-derived metadata from PDFs
@@ -70,7 +75,22 @@ class RawScrapedEvent(BaseModel):
 class AttachmentExtraction(BaseModel):
     """Structured metadata extracted from RFP attachment PDFs via LLM."""
     naics_codes: list[str] = Field(default_factory=list)
-    certifications_required: list[str] = Field(default_factory=list)
+    certifications_required: list[str] = Field(
+        default_factory=list,
+        description="Programs / status certs / registrations (DBE, MBE, WBE, SBE, DIR, SOC2, ISO). NOT trade licenses."
+    )
+    licenses_required: list[str] = Field(
+        default_factory=list,
+        description="Trade/professional licenses (CSLB Class A, C-10 Electrical, PE License, Architect License)."
+    )
+    incumbent_vendor: Optional[str] = Field(
+        default=None,
+        description="Current contractor named in the RFP, if mentioned."
+    )
+    incumbent_contract_end: Optional[str] = Field(
+        default=None,
+        description="Date the incumbent's current contract expires, if mentioned."
+    )
     clearances_required: list[str] = Field(default_factory=list)
     set_aside_types: list[str] = Field(default_factory=list)
     capabilities_required: list[str] = Field(default_factory=list)
@@ -84,6 +104,77 @@ class AttachmentExtraction(BaseModel):
     attachment_text_rollup: str = ""
     pdfs_processed: list[str] = Field(default_factory=list)
     total_pdfs_available: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Vendor / bid / award — market-intel data scraped from PlanetBids detail tabs
+# ---------------------------------------------------------------------------
+
+class Vendor(BaseModel):
+    """A bidder or potential bidder on an RFP.
+
+    Identity resolution (deduping the same company across events) is a
+    post-process pass that builds a vendors/index.json keyed by fingerprint.
+    `fingerprint` is computed at that time, not at scrape time.
+    """
+    name: str
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    contact_name: Optional[str] = None
+    phone: Optional[str] = None
+    email_redacted: Optional[str] = Field(
+        default=None,
+        description="PlanetBids partially redacts emails (e.g. 'k**********o@3h3h.net')"
+    )
+    certifications: list[str] = Field(
+        default_factory=list,
+        description="What the vendor holds: MBE, WBE, DBE, SDB, CADIR, Local, etc."
+    )
+    fingerprint: Optional[str] = Field(
+        default=None,
+        description="Stable cross-event dedup key, populated by the vendor index post-process"
+    )
+
+
+class ProspectiveBidder(BaseModel):
+    """A vendor that registered interest before the bid closed."""
+    vendor: Vendor
+    pre_bid_attendee: Optional[bool] = None
+    classification: Optional[str] = Field(
+        default=None,
+        description="'Bidder', 'Subcontractor', 'Plan Room', etc."
+    )
+
+
+class BidResult(BaseModel):
+    """A submitted bid on a closed event."""
+    vendor: Vendor
+    amount_cents: Optional[int] = Field(
+        default=None,
+        description="Bid amount in cents, e.g. 119065000 for $1,190,650.00. Cents avoids float rounding."
+    )
+    amount_display: Optional[str] = Field(
+        default=None,
+        description="As shown on the page, e.g. '$1,190,650.00'. Preserved for explainability."
+    )
+    responsive: Optional[bool] = Field(
+        default=None,
+        description="Whether the bid was deemed responsive to the solicitation requirements."
+    )
+
+
+class Award(BaseModel):
+    """The selected winning bid for an event."""
+    vendor: Optional[Vendor] = None
+    amount_cents: Optional[int] = None
+    amount_display: Optional[str] = None
+    awarded_date: Optional[str] = None
+    raw_text: Optional[str] = Field(
+        default=None,
+        description="Snippet from the Awards tab — preserved verbatim for explainability."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +213,14 @@ class EnrichedEvent(BaseModel):
     # Matching fields
     naics_codes: list[str] = Field(default_factory=list)
     capabilities: list[str] = Field(default_factory=list)
-    certifications: list[str] = Field(default_factory=list)
+    certifications: list[str] = Field(
+        default_factory=list,
+        description="Certs/programs the RFP requires of bidders (e.g. DBE, DIR registration). NOT trade licenses."
+    )
+    licenses_required: list[str] = Field(
+        default_factory=list,
+        description="Trade/professional licenses the RFP requires (e.g. CSLB Class A, C-10 Electrical)."
+    )
 
     # Contact
     contact: ContactInfo = Field(default_factory=ContactInfo)
@@ -141,6 +239,16 @@ class EnrichedEvent(BaseModel):
     # Metadata
     posted_date: Optional[str] = None
     scraped_at: str = ""
+
+    # Market intel (PlanetBids detail tabs — empty on sources that don't expose this)
+    prospective_bidders: list[ProspectiveBidder] = Field(default_factory=list)
+    bid_results: list[BidResult] = Field(default_factory=list)
+    award: Optional[Award] = None
+    incumbent_vendor: Optional[str] = Field(
+        default=None,
+        description="Current contractor named in the RFP description/PDFs (LLM-extracted, future)"
+    )
+    incumbent_contract_end: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

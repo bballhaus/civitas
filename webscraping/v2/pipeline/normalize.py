@@ -298,6 +298,9 @@ def normalize_event(
         naics_codes=extraction.naics_codes if extraction else [],
         capabilities=capabilities,
         certifications=extraction.certifications_required if extraction else [],
+        licenses_required=extraction.licenses_required if extraction else [],
+        incumbent_vendor=extraction.incumbent_vendor if extraction else None,
+        incumbent_contract_end=extraction.incumbent_contract_end if extraction else None,
         contact=raw.contact,
         attachment_urls=raw.attachment_urls,
         clearances_required=extraction.clearances_required if extraction else [],
@@ -308,4 +311,7 @@ def normalize_event(
         attachment_rollup=attachment_rollup,
         posted_date=raw.posted_date,
         scraped_at=raw.scraped_at,
+        prospective_bidders=raw.prospective_bidders,
+        bid_results=raw.bid_results,
+        award=raw.award,
     )
