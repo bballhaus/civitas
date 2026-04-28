@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import shutil
+import time
 import traceback
 
 import boto3
@@ -33,20 +34,20 @@ import boto3
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# How many sites to scrape per Lambda invocation before chaining.
-# include_awarded mode is much heavier (Bidding pass + Awarded pass +
-# per-detail tab clicks for market intel), so we shrink the batch to
-# stay under the 15min Lambda hard timeout.
-BATCH_SIZE = 3
-BATCH_SIZE_INCLUDE_AWARDED = 1
+# One portal per invocation. The new market-intel scraping clicks 3 extra
+# tabs per detail page; large portals (San Diego, Anaheim) push close to or
+# past the 15min Lambda timeout. Single-portal batches give each its own
+# full timeout budget.
+BATCH_SIZE = 1
+
+# Seconds the next chained invocation should sleep before starting work.
+# Combined with chain-first dispatch (chain fires BEFORE current scrape),
+# this serializes portals — invocation N+1 sleeps while N runs.
+CHAIN_STAGGER_SECONDS = 360  # 6 minutes
 
 
 def _batch_size_for(event: dict) -> int:
-    return (
-        BATCH_SIZE_INCLUDE_AWARDED
-        if event.get("include_awarded", False)
-        else BATCH_SIZE
-    )
+    return BATCH_SIZE
 
 
 def handler(event, context):
@@ -182,6 +183,14 @@ def _handle_multi_site(sites, event, context):
     skip_enrich = event.get("skip_enrich", False)
     include_awarded = event.get("include_awarded", False)
     remaining_sites = event.get("remaining_sites", [])
+    delay_before_start = event.get("delay_before_start", 0)
+
+    # Stagger: sleep before doing anything so concurrent invocations serialize.
+    # Combined with chain-first dispatch below, this means invocation N+1
+    # naps while N runs — preventing PlanetBids hammering at high concurrency.
+    if delay_before_start > 0:
+        logger.info(f"Staggered start: sleeping {delay_before_start}s")
+        time.sleep(delay_before_start)
 
     logger.info(
         f"Multi-site batch: {len(sites)} sites this batch, "
@@ -206,6 +215,33 @@ def _handle_multi_site(sites, event, context):
         except Exception as e:
             logger.error(f"Failed to launch Cal eProcure: {e}")
 
+    # CHAIN-FIRST: dispatch next batch BEFORE running the current scrape.
+    # Lambda timeouts SIGKILL the runtime, skipping any post-loop logic.
+    # Dispatching first ensures the chain advances even if the current
+    # invocation times out mid-portal. The next invocation sleeps via
+    # delay_before_start so we don't fan-out concurrent scrapes.
+    chain_error = None
+    if remaining_sites:
+        bsize = _batch_size_for(event)
+        next_batch = remaining_sites[:bsize]
+        still_remaining = remaining_sites[bsize:]
+        logger.info(
+            f"Chaining next batch (chain-first): {next_batch} "
+            f"({len(still_remaining)} remaining after, "
+            f"delay={CHAIN_STAGGER_SECONDS}s)"
+        )
+        try:
+            _invoke_async(context, {
+                "sites": next_batch,
+                "remaining_sites": still_remaining,
+                "skip_enrich": skip_enrich,
+                "include_awarded": include_awarded,
+                "delay_before_start": CHAIN_STAGGER_SECONDS,
+            })
+        except Exception as e:
+            chain_error = str(e)
+            logger.error(f"Failed to chain next batch: {e}")
+
     results = {}
     for site_id in sites:
         _cleanup_tmp()
@@ -223,27 +259,6 @@ def _handle_multi_site(sites, event, context):
         except Exception as e:
             logger.error(f"--- {site_id} FAILED: {e} ---")
             results[site_id] = {"events": 0, "status": "error", "error": str(e)}
-
-    # Chain: dispatch next batch if there are remaining sites
-    chain_error = None
-    if remaining_sites:
-        bsize = _batch_size_for(event)
-        next_batch = remaining_sites[:bsize]
-        still_remaining = remaining_sites[bsize:]
-        logger.info(
-            f"Chaining next batch: {next_batch} "
-            f"({len(still_remaining)} remaining after)"
-        )
-        try:
-            _invoke_async(context, {
-                "sites": next_batch,
-                "remaining_sites": still_remaining,
-                "skip_enrich": skip_enrich,
-                "include_awarded": include_awarded,
-            })
-        except Exception as e:
-            chain_error = str(e)
-            logger.error(f"Failed to chain next batch: {e}")
 
     return {
         "statusCode": 200,
@@ -317,9 +332,9 @@ def _handle_run_all(event, context):
         except Exception as e:
             logger.error(f"Failed to dispatch BidSync: {e}")
 
-    # Dispatch PlanetBids + agentic in batches (chained).
-    # include_awarded uses BATCH_SIZE_INCLUDE_AWARDED=1 (one portal per
-    # invocation) since the per-portal time grows ~3-4× with the Awarded pass.
+    # Dispatch PlanetBids + agentic in batches (chained, one portal per
+    # invocation). The chain is staggered via delay_before_start in
+    # _handle_multi_site so portals run sequentially rather than in parallel.
     if other_sites:
         first_batch = other_sites[:bsize]
         remaining = other_sites[bsize:]
