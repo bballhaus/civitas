@@ -86,7 +86,7 @@ def _build_site_registry() -> dict[str, SiteConfig]:
 SITE_REGISTRY = _build_site_registry()
 
 
-def get_scraper(site_config: SiteConfig) -> BaseScraper:
+def get_scraper(site_config: SiteConfig, include_awarded: bool = False) -> BaseScraper:
     """Factory: instantiate the right scraper for a site config."""
     if site_config.site_id == "caleprocure":
         from webscraping.v2.scrapers.caleprocure import CalEprocureScraper
@@ -98,7 +98,7 @@ def get_scraper(site_config: SiteConfig) -> BaseScraper:
 
     if site_config.scraper_type in (ScraperType.STRUCTURED, ScraperType.API):
         from webscraping.v2.scrapers.planetbids import PlanetBidsScraper
-        return PlanetBidsScraper(site_config)
+        return PlanetBidsScraper(site_config, include_awarded=include_awarded)
 
     if site_config.scraper_type == ScraperType.AGENTIC:
         from webscraping.v2.scrapers.agentic import AgenticScraper
@@ -153,6 +153,13 @@ def merge_events(
             updated.last_seen_at = now
             updated.status = EventStatus.OPEN
             updated.closed_at = None
+            # Preserve historical market intel if this run didn't capture it.
+            # bid_results / award are only visible on Awarded-status passes;
+            # a subsequent Bidding-only re-scrape would otherwise clobber them.
+            if not updated.bid_results and existing_event.bid_results:
+                updated.bid_results = existing_event.bid_results
+            if updated.award is None and existing_event.award is not None:
+                updated.award = existing_event.award
             merged[eid] = updated
         else:
             # No longer on the site — mark as closed
@@ -237,13 +244,18 @@ def upload_legacy_format(s3, events: list[EnrichedEvent], enrichments: dict):
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-async def run_site(site_id: str, skip_enrich: bool = False, skip_upload: bool = False):
+async def run_site(
+    site_id: str,
+    skip_enrich: bool = False,
+    skip_upload: bool = False,
+    include_awarded: bool = False,
+):
     """Run the full scrape + enrich + upload pipeline for a single site."""
     if site_id not in SITE_REGISTRY:
         raise ValueError(f"Unknown site: {site_id}. Available: {list(SITE_REGISTRY.keys())}")
 
     config = SITE_REGISTRY[site_id]
-    scraper = get_scraper(config)
+    scraper = get_scraper(config, include_awarded=include_awarded)
 
     # 1. Scrape
     logger.info(f"=== Scraping {config.name} ===")
@@ -326,6 +338,11 @@ async def run_site_batch(
     if site_id == "caleprocure":
         from webscraping.v2.scrapers.caleprocure import CalEprocureScraper
         scraper = CalEprocureScraper(config, batch_offset=batch_offset, batch_size=batch_size)
+    elif site_id.startswith("planetbids_"):
+        from webscraping.v2.scrapers.planetbids import PlanetBidsScraper
+        scraper = PlanetBidsScraper(
+            config, batch_offset=batch_offset, batch_size=batch_size
+        )
     else:
         scraper = get_scraper(config)
 
@@ -386,7 +403,11 @@ async def run_site_batch(
     return {"events_scraped": len(raw_events), "total_events": total_events}
 
 
-async def run_all(skip_enrich: bool = False, skip_upload: bool = False):
+async def run_all(
+    skip_enrich: bool = False,
+    skip_upload: bool = False,
+    include_awarded: bool = False,
+):
     """Run the pipeline for all enabled sites."""
     results = {}
     for site_id, config in SITE_REGISTRY.items():
@@ -394,7 +415,12 @@ async def run_all(skip_enrich: bool = False, skip_upload: bool = False):
             logger.info(f"Skipping disabled site: {site_id}")
             continue
         try:
-            events = await run_site(site_id, skip_enrich=skip_enrich, skip_upload=skip_upload)
+            events = await run_site(
+                site_id,
+                skip_enrich=skip_enrich,
+                skip_upload=skip_upload,
+                include_awarded=include_awarded,
+            )
             results[site_id] = len(events)
         except Exception as e:
             logger.error(f"Failed to process {site_id}: {e}")
@@ -418,6 +444,11 @@ def main():
     parser.add_argument("--list", action="store_true", help="List registered sites")
     parser.add_argument("--skip-enrich", action="store_true", help="Skip PDF enrichment")
     parser.add_argument("--skip-upload", action="store_true", help="Skip S3 upload")
+    parser.add_argument(
+        "--include-awarded",
+        action="store_true",
+        help="Also scrape Awarded-status events for historical contract data (PlanetBids only)",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -434,9 +465,22 @@ def main():
         return
 
     if args.site:
-        asyncio.run(run_site(args.site, skip_enrich=args.skip_enrich, skip_upload=args.skip_upload))
+        asyncio.run(
+            run_site(
+                args.site,
+                skip_enrich=args.skip_enrich,
+                skip_upload=args.skip_upload,
+                include_awarded=args.include_awarded,
+            )
+        )
     else:
-        asyncio.run(run_all(skip_enrich=args.skip_enrich, skip_upload=args.skip_upload))
+        asyncio.run(
+            run_all(
+                skip_enrich=args.skip_enrich,
+                skip_upload=args.skip_upload,
+                include_awarded=args.include_awarded,
+            )
+        )
 
 
 if __name__ == "__main__":

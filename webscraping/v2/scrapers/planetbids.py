@@ -13,12 +13,27 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 from playwright.async_api import async_playwright, Page
 
-from webscraping.v2.models import RawScrapedEvent, ContactInfo, SiteConfig
+from webscraping.v2.config import PLANETBIDS_SECRET_NAME, get_secret
+from webscraping.v2.models import (
+    Award,
+    BidResult,
+    ContactInfo,
+    ProspectiveBidder,
+    RawScrapedEvent,
+    SiteConfig,
+)
 from webscraping.v2.scrapers.base import BaseScraper
+from webscraping.v2.scrapers.planetbids_parsers import (
+    parse_certifications,
+    parse_currency,
+    parse_pre_bid_attendee,
+    parse_responsive,
+    parse_vendor_block,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -249,10 +264,35 @@ class PlanetBidsScraper(BaseScraper):
     across all portals. The portal_id in the URL is the only difference.
     """
 
-    def __init__(self, site_config: SiteConfig):
+    # PlanetBids status dropdown values (second select.select-field on bo-search)
+    STATUS_BIDDING = "3"
+    STATUS_AWARDED = "6"
+
+    def __init__(
+        self,
+        site_config: SiteConfig,
+        include_awarded: bool = False,
+        batch_offset: int = 0,
+        batch_size: Optional[int] = None,
+    ):
         super().__init__(site_config)
         self._portal_url = site_config.config.get("url", site_config.url)
         self._agency_name = site_config.config.get("name", site_config.name)
+        self._portal_id = site_config.config.get("portal_id")
+        self._authenticated = False
+        # Pagination — when set, scrape() yields events[batch_offset:batch_offset+batch_size]
+        # within a single status pass. Lets the Lambda handler chain batches of N events
+        # per invocation so large portals (San Diego, Anaheim) don't hit the 15-min timeout.
+        # Only meaningful in single-status mode.
+        self.batch_offset = batch_offset
+        self.batch_size = batch_size
+        # Populated after _scroll_to_load_all so the Lambda chain knows when to stop.
+        self.total_available: int = 0
+        # Status passes to run. Bidding is current opportunities; Awarded
+        # unlocks historical contract data (vendors, amounts, awards).
+        self._statuses: list[tuple[str, str]] = [(self.STATUS_BIDDING, "Bidding")]
+        if include_awarded:
+            self._statuses.append((self.STATUS_AWARDED, "Awarded"))
 
     async def scrape(self) -> AsyncIterator[RawScrapedEvent]:
         """Scrape open bids from a PlanetBids portal.
@@ -285,74 +325,230 @@ class PlanetBidsScraper(BaseScraper):
             page = await context.new_page()
 
             try:
-                logger.info(f"Loading PlanetBids portal: {self._agency_name}")
-                await page.goto(self._portal_url, wait_until="networkidle", timeout=60000)
-                await page.wait_for_timeout(5000)
+                # Optional vendor login — if creds are available, gives access
+                # to documents marked with `*` (vendor-login-required).
+                await self._login(page)
 
-                # Filter to "Bidding" status only (open bids)
-                # The status dropdown is the second <select class="select-field">
-                # Values: 0=All, 2=Planning, 3=Bidding, 4=Closed, 5=Award Pending, etc.
-                await self._apply_bidding_filter(page)
+                # One pass per status (Bidding always; Awarded if --include-awarded).
+                # Each pass: load search page → filter → scroll → extract → enrich.
+                for status_code, status_label in self._statuses:
+                    logger.info(
+                        f"=== {self._agency_name}: scraping status={status_label} ==="
+                    )
+                    await page.goto(
+                        self._portal_url, wait_until="networkidle", timeout=60000
+                    )
+                    await page.wait_for_timeout(5000)
+                    await self._hide_overlays(page)
 
-                # Scroll the table container to load all rows (infinite scroll)
-                await self._scroll_to_load_all(page)
+                    await self._apply_status_filter(page, status_code, status_label)
+                    await self._scroll_to_load_all(page)
 
-                # Extract all loaded rows (basic data from search table)
-                rows = await page.query_selector_all("table tbody tr")
-                logger.info(f"Total rows loaded: {len(rows)}")
+                    rows = await page.query_selector_all("table tbody tr")
+                    logger.info(f"Status={status_label}: {len(rows)} rows loaded")
 
-                events = []
-                for row in rows:
-                    try:
-                        event = await self._extract_row(page, row)
-                        if event:
-                            events.append(event)
-                    except Exception as e:
-                        logger.debug(f"Failed to extract row: {e}")
+                    events: list[RawScrapedEvent] = []
+                    for row in rows:
+                        try:
+                            extracted = await self._extract_row(page, row)
+                            if extracted:
+                                events.append(extracted)
+                        except Exception as e:
+                            logger.debug(f"Failed to extract row: {e}")
 
-                # Visit each detail page for description, contact, categories, and addenda
-                for i, event in enumerate(events):
-                    try:
-                        self.throttle()
-                        await self._enrich_from_detail(page, event, i + 1, len(events))
-                    except Exception as e:
-                        logger.debug(f"Failed to scrape detail for {event.source_event_id}: {e}")
-                    yield event
+                    self.total_available = len(events)
+
+                    # Pagination: only enrich events in this batch's window.
+                    # Single-status mode only; multi-status (--include-awarded)
+                    # ignores pagination and does the full pass.
+                    enrich_targets = events
+                    if self.batch_size is not None and len(self._statuses) == 1:
+                        end = self.batch_offset + self.batch_size
+                        enrich_targets = events[self.batch_offset:end]
+                        logger.info(
+                            f"Pagination: enriching events "
+                            f"[{self.batch_offset}:{min(end, len(events))}] of {len(events)}"
+                        )
+
+                    for i, event in enumerate(enrich_targets):
+                        try:
+                            self.throttle()
+                            await self._enrich_from_detail(
+                                page, event, i + 1, len(enrich_targets)
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                f"Failed to scrape detail for {event.source_event_id}: {e}"
+                            )
+                        yield event
 
             finally:
                 await browser.close()
 
-    async def _apply_bidding_filter(self, page: Page):
-        """Select 'Bidding' status filter and click Search."""
+    async def _login(self, page: Page) -> bool:
+        """Log in to PlanetBids as a vendor.
+
+        Returns True on success, False on any failure (no creds, network
+        error, wrong selector, bad password). On failure the scraper
+        continues without auth — public bid listings still work, but
+        vendor-login-required documents (marked with *) won't be reachable.
+
+        PlanetBids vendor accounts are domain-scoped to vendors.planetbids.com,
+        so one login provides cross-portal access within this browser context.
+        """
+        if not self._portal_id:
+            logger.debug("No portal_id configured; skipping login")
+            return False
+
+        try:
+            creds = get_secret(PLANETBIDS_SECRET_NAME)
+        except Exception as e:
+            logger.info(f"PlanetBids creds unavailable ({type(e).__name__}); scraping public-only")
+            return False
+
+        username = creds.get("username")
+        password = creds.get("password")
+        if not username or not password:
+            logger.warning("PlanetBids secret missing username/password fields")
+            return False
+
+        login_url = f"https://vendors.planetbids.com/portal/{self._portal_id}/login"
+        try:
+            await page.goto(login_url, wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(2000)
+
+            # Selectors are unknown (Ember SPA); try several common patterns.
+            user_selectors = [
+                'input[type="email"]',
+                'input[name="username"]',
+                'input[name="email"]',
+                'input[id*="email" i]',
+                'input[id*="username" i]',
+            ]
+            user_field = None
+            for sel in user_selectors:
+                user_field = await page.query_selector(sel)
+                if user_field:
+                    break
+            if not user_field:
+                logger.warning(f"PlanetBids login: username field not found at {login_url}")
+                return False
+
+            pass_field = await page.query_selector('input[type="password"]')
+            if not pass_field:
+                logger.warning("PlanetBids login: password field not found")
+                return False
+
+            await user_field.fill(username)
+            await pass_field.fill(password)
+
+            submit_selectors = [
+                'button[type="submit"]',
+                'button:has-text("Sign In")',
+                'button:has-text("Sign in")',
+                'button:has-text("Login")',
+                'button:has-text("Log In")',
+                'input[type="submit"]',
+            ]
+            submit_btn = None
+            for sel in submit_selectors:
+                submit_btn = await page.query_selector(sel)
+                if submit_btn:
+                    break
+            if not submit_btn:
+                logger.warning("PlanetBids login: submit button not found")
+                return False
+
+            await submit_btn.click()
+            # Login is an XHR; wait for redirect away from /login.
+            try:
+                await page.wait_for_url(
+                    lambda url: "/login" not in url, timeout=15000
+                )
+            except Exception:
+                pass
+            await page.wait_for_timeout(2000)
+
+            # Verify: URL no longer on /login, and no visible error message.
+            current_url = page.url
+            if "/login" in current_url:
+                # Check for an error message near the form
+                err_text = await page.evaluate("""() => {
+                    const body = document.body.innerText.toLowerCase();
+                    const errs = ['invalid', 'incorrect', 'failed', 'try again'];
+                    return errs.find(e => body.includes(e)) || '';
+                }""")
+                logger.warning(f"PlanetBids login appears to have failed (still on /login, hint: '{err_text}')")
+                return False
+
+            self._authenticated = True
+            logger.info(f"PlanetBids login OK as {username}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"PlanetBids login error: {e}")
+            return False
+
+    @staticmethod
+    async def _hide_overlays(page: Page):
+        """Remove third-party overlays that intercept pointer events.
+
+        Authenticated PlanetBids sessions get a ProductFruits onboarding
+        overlay that overlays the page and silently swallows clicks. Removing
+        the container is harmless to scraping.
+        """
+        try:
+            await page.evaluate(
+                """() => {
+                    const sels = [
+                        '.productfruits--container',
+                        '[id^="productfruits"]',
+                        '.intercom-lightweight-app',
+                    ];
+                    for (const sel of sels) {
+                        document.querySelectorAll(sel).forEach(el => el.remove());
+                    }
+                }"""
+            )
+        except Exception:
+            pass
+
+    async def _apply_status_filter(self, page: Page, status_code: str, status_label: str):
+        """Select a status (Bidding/Awarded/etc.) on the dropdown and click Search.
+
+        Status dropdown values (second select.select-field):
+            0=All, 2=Planning, 3=Bidding, 4=Closed,
+            5=Award Pending, 6=Awarded, 7=Canceled, 8=Rejected
+        """
         try:
             selects = await page.query_selector_all("select.select-field")
-            if len(selects) >= 2:
-                # Second select is the status dropdown; "3" = Bidding
-                await selects[1].select_option("3")
-                await page.wait_for_timeout(500)
-                logger.info("Selected 'Bidding' status filter")
+            if len(selects) < 2:
+                logger.warning("Could not find status filter dropdown")
+                return
+            await selects[1].select_option(status_code)
+            await page.wait_for_timeout(500)
+            logger.info(f"Selected '{status_label}' status filter")
 
-                # Click the Search button to apply
-                search_btn = await page.query_selector(
-                    'button:has-text("Search"), input[type="submit"], '
-                    'button[type="submit"]'
-                )
-                if search_btn:
-                    await search_btn.click()
-                    await page.wait_for_timeout(3000)
-                    logger.info("Clicked Search to apply filter")
+            await self._hide_overlays(page)
 
-                # Log the filtered count
-                count = await page.evaluate("""() => {
+            search_btn = await page.query_selector(
+                'button:has-text("Search"), input[type="submit"], '
+                'button[type="submit"]'
+            )
+            if search_btn:
+                await search_btn.click()
+                await page.wait_for_timeout(3000)
+
+            count = await page.evaluate(
+                """() => {
                     const m = document.body.innerText.match(/Found\\s+(\\d+)\\s+bids/i);
                     return m ? parseInt(m[1]) : -1;
-                }""")
-                if count >= 0:
-                    logger.info(f"Found {count} open bids after filtering")
-            else:
-                logger.warning("Could not find status filter dropdown")
+                }"""
+            )
+            if count >= 0:
+                logger.info(f"Found {count} {status_label} bids after filtering")
         except Exception as e:
-            logger.warning(f"Failed to apply status filter: {e}")
+            logger.warning(f"Failed to apply status filter ({status_label}): {e}")
 
     async def _scroll_to_load_all(self, page: Page, max_scrolls: int = 50):
         """Scroll the table container to trigger infinite scroll loading."""
@@ -393,6 +589,7 @@ class PlanetBidsScraper(BaseScraper):
         try:
             await page.goto(event.source_url, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(2000)
+            await self._hide_overlays(page)
 
             # Extract description, contact, and categories from detail page
             detail = await page.evaluate("""() => {
@@ -466,7 +663,17 @@ class PlanetBidsScraper(BaseScraper):
                     event.raw_metadata["public_documents"] = doc_info
                     logger.debug(f"  Found {len(doc_info)} public documents")
 
-            logger.info(f"[{index}/{total}] Detail: {event.title[:50]} | {len(detail.get('categories', []))} categories")
+            # Market intel — Prospective Bidders / Bid Results / Awards
+            # Requires the basic vendor login (NOT per-agency registration)
+            await self._scrape_market_intel(page, event)
+
+            logger.info(
+                f"[{index}/{total}] Detail: {event.title[:50]} | "
+                f"{len(detail.get('categories', []))} cats, "
+                f"{len(event.prospective_bidders)} prospective bidders, "
+                f"{len(event.bid_results)} bid results, "
+                f"award={'yes' if event.award else 'no'}"
+            )
 
         except Exception as e:
             logger.debug(f"Detail page failed for {event.source_event_id}: {e}")
@@ -482,6 +689,202 @@ class PlanetBidsScraper(BaseScraper):
                 await page.wait_for_timeout(2000)
         except Exception:
             pass
+
+    async def _scrape_market_intel(self, page: Page, event: RawScrapedEvent):
+        """Click Prospective Bidders / Bid Results / Awards tabs and parse rows.
+
+        These tabs require the basic vendor login (already done in `_login`)
+        but, unlike Documents, do NOT require per-agency vendor registration.
+        Empty tabs (e.g. Bid Results on a still-bidding RFP) are normal —
+        we just record empty lists.
+
+        Mutates `event.prospective_bidders`, `event.bid_results`, `event.award`.
+        """
+        if not self._authenticated:
+            return
+
+        # Prospective Bidders
+        rows = await self._click_tab_and_get_rows(page, "Prospective Bidders")
+        event.prospective_bidders = self._parse_prospective_bidders(rows)
+
+        # Bid Results (closed/awarded only)
+        rows = await self._click_tab_and_get_rows(page, "Bid Results")
+        event.bid_results = self._parse_bid_results(rows)
+
+        # Awards (awarded only)
+        event.award = await self._scrape_award_tab(page)
+
+    async def _click_tab_and_get_rows(self, page: Page, tab_name: str) -> list[list[str]]:
+        """Click a detail-page tab and return its data table rows as cell-text lists.
+
+        Returns [] on any failure or if the tab redirects to a registration prompt
+        (which can happen for some tabs on some agency portals).
+        """
+        await self._hide_overlays(page)
+        el = await page.query_selector(
+            f'a:has-text("{tab_name}"), button:has-text("{tab_name}")'
+        )
+        if not el:
+            return []
+        try:
+            await el.click()
+        except Exception as e:
+            logger.debug(f"Tab '{tab_name}' click failed: {e}")
+            return []
+        await page.wait_for_timeout(2000)
+
+        # Detect redirect to a registration / pre-reg page
+        if "/vp-prereg" in page.url or "/vp/vp-prereg" in page.url:
+            logger.debug(f"Tab '{tab_name}' redirected to registration; skipping")
+            return []
+
+        try:
+            return await page.evaluate(
+                """() => {
+                    // Each row's cells, each cell as innerText (preserves newlines).
+                    const out = [];
+                    for (const tr of document.querySelectorAll('table tr')) {
+                        const cells = tr.querySelectorAll('td');
+                        if (!cells.length) continue;
+                        out.push([...cells].map(c => c.innerText));
+                    }
+                    return out;
+                }"""
+            )
+        except Exception:
+            return []
+
+    # Classification cell values seen on PlanetBids
+    _CLASSIFICATION_TOKENS = {"bidder", "subcontractor", "plan room", "subscriber"}
+
+    @staticmethod
+    def _classify_cell(text: str) -> str:
+        """Categorize an auxiliary cell by content pattern."""
+        t = (text or "").strip()
+        low = t.lower()
+        if not t:
+            return "empty"
+        if "$" in t:
+            return "amount"
+        if low in ("yes", "no"):
+            return "yesno"
+        if low in PlanetBidsScraper._CLASSIFICATION_TOKENS:
+            return "type"
+        # Comma-separated short tokens → certs
+        if "," in t and not re.search(r"\d{3,}", t):
+            return "certs"
+        return "other"
+
+    def _parse_prospective_bidders(self, rows: list[list[str]]) -> list[ProspectiveBidder]:
+        out: list[ProspectiveBidder] = []
+        for cells in rows:
+            if not cells:
+                continue
+            vendor = parse_vendor_block(cells[0])
+            if not vendor:
+                continue
+            classification = None
+            attendee_text = None
+            for c in cells[1:]:
+                kind = self._classify_cell(c)
+                if kind == "certs":
+                    vendor.certifications = parse_certifications(c)
+                elif kind == "type" and not classification:
+                    classification = c.strip()
+                elif kind == "yesno" and not attendee_text:
+                    attendee_text = c
+            out.append(
+                ProspectiveBidder(
+                    vendor=vendor,
+                    classification=classification,
+                    pre_bid_attendee=parse_pre_bid_attendee(attendee_text),
+                )
+            )
+        return out
+
+    def _parse_bid_results(self, rows: list[list[str]]) -> list[BidResult]:
+        out: list[BidResult] = []
+        for cells in rows:
+            if not cells:
+                continue
+            vendor = parse_vendor_block(cells[0])
+            if not vendor:
+                continue
+            amount_cell = None
+            responsive_cell = None
+            for c in cells[1:]:
+                kind = self._classify_cell(c)
+                if kind == "certs":
+                    vendor.certifications = parse_certifications(c)
+                elif kind == "amount" and not amount_cell:
+                    amount_cell = c
+                elif kind == "yesno" and not responsive_cell:
+                    responsive_cell = c
+            out.append(
+                BidResult(
+                    vendor=vendor,
+                    amount_cents=parse_currency(amount_cell),
+                    amount_display=amount_cell.strip() if amount_cell else None,
+                    responsive=parse_responsive(responsive_cell),
+                )
+            )
+        return out
+
+    async def _scrape_award_tab(self, page: Page) -> Optional[Award]:
+        """Click Awards tab; return an Award if there's content, else None.
+
+        The Awards tab format varies more than the table tabs — sometimes a
+        free-text summary, sometimes a table. We capture the raw text for
+        explainability and best-effort-extract a dollar amount; deeper
+        parsing (vendor identity, date) is a follow-up enrichment.
+        """
+        await self._hide_overlays(page)
+        el = await page.query_selector('a:has-text("Awards"), button:has-text("Awards")')
+        if not el:
+            return None
+        try:
+            await el.click()
+        except Exception:
+            return None
+        await page.wait_for_timeout(2000)
+        if "/vp-prereg" in page.url:
+            return None
+
+        try:
+            text = await page.evaluate(
+                """() => {
+                    // Awards tab content is rendered into the active tabpanel
+                    const panel = document.querySelector('[role="tabpanel"]');
+                    const t = (panel || document.body).innerText || '';
+                    return t.length > 4000 ? t.slice(0, 4000) : t;
+                }"""
+            )
+        except Exception:
+            return None
+
+        if not text:
+            return None
+        # PlanetBids' standard sentinels for unfinalized awards
+        lowered = text.lower()
+        if any(s in lowered for s in (
+            "has not been made public",
+            "no award",
+            "no information",
+            "not yet awarded",
+        )):
+            return None
+        # Strip Awards-tab heading boilerplate if that's all there is
+        if text.strip().lower() == "awards":
+            return None
+
+        amount_match = re.search(r"\$\s?[\d,]+(?:\.\d{2})?", text)
+        amount_display = amount_match.group(0).strip() if amount_match else None
+
+        return Award(
+            amount_cents=parse_currency(text),
+            amount_display=amount_display,
+            raw_text=text[:2000],
+        )
 
     async def _extract_row(self, page: Page, row) -> RawScrapedEvent | None:
         """Extract a single bid from a table row."""

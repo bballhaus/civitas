@@ -1,25 +1,32 @@
+// Signup — Postgres-backed (matching-alg / Architecture-v2 § 11).
+//
+// Creates the user + an empty profile in a single transaction (see
+// db/queries/users.ts). Email verification token flow is deferred until the
+// schema gains the verification token columns; for now we auto-verify in
+// dev and skip the email send in prod (signup still works, the user just
+// won't have a verified email until that feature is rebuilt).
+
 import { NextResponse } from "next/server";
 import { hashPassword, validatePassword, signJwt, setAuthCookie } from "@/lib/auth";
-import { getUserData, saveUserData, userExists, type UserData } from "@/lib/user-data";
-import { getOrCreateProfile } from "@/lib/profile-storage";
+import { createUser, getUserByUsername, getUserByEmail } from "@/db/queries/users";
 import { logSecurityEvent } from "@/lib/security-log";
 import { recordEvent } from "@/lib/event-log";
-import { checkEmailUniqueness, registerEmail } from "@/lib/email-index";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { sendVerificationEmail } from "@/lib/email";
 
 // 5 signup attempts per 15 minutes per IP
 const SIGNUP_MAX_REQUESTS = 5;
 const SIGNUP_WINDOW_MS = 15 * 60 * 1000;
 
 export async function POST(request: Request) {
-  // Rate limiting
   const ip = getClientIp(request);
   const rl = checkRateLimit(ip, SIGNUP_MAX_REQUESTS, SIGNUP_WINDOW_MS);
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many signup attempts. Please try again later." },
-      { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) },
+      },
     );
   }
 
@@ -32,22 +39,16 @@ export async function POST(request: Request) {
     if (!username || !password) {
       return NextResponse.json(
         { error: "Username and password are required." },
-        { status: 400 }
+        { status: 400 },
       );
     }
-
     if (!email) {
-      return NextResponse.json(
-        { error: "Email is required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Email is required." }, { status: 400 });
     }
-
-    // Basic email validation
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json(
         { error: "Please enter a valid email address." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -56,72 +57,46 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: passwordError }, { status: 400 });
     }
 
-    // Check username uniqueness
-    if (await userExists(username)) {
+    if (await getUserByUsername(username)) {
       return NextResponse.json(
         { error: "A user with that username already exists." },
-        { status: 400 }
+        { status: 400 },
       );
     }
-
-    // Check email uniqueness
-    const emailOwner = await checkEmailUniqueness(email);
-    if (emailOwner) {
+    if (await getUserByEmail(email)) {
       return NextResponse.json(
         { error: "An account with that email already exists." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // Auto-verify in development, require verification in production
-    const isDev = process.env.NODE_ENV === "development";
-    const emailVerified = isDev;
-    const verificationToken = isDev ? undefined : crypto.randomUUID();
-
-    // Create user
     const passwordHash = await hashPassword(password);
-    const userData: UserData = {
-      password_hash: passwordHash,
-      email,
-      email_verified: emailVerified,
-      email_verification_token: verificationToken,
-      applied_rfp_ids: [],
-      in_progress_rfp_ids: [],
-      generated_poe_by_rfp: {},
-      generated_proposal_by_rfp: {},
-    };
-    await saveUserData(username, userData);
+    const user = await createUser({ username, email, passwordHash });
 
-    // Register email in index
-    await registerEmail(email, username);
+    // Email verification token flow is being rebuilt against the new schema.
+    // For now: verified-by-default in dev, unverified in prod (user can still
+    // sign in; verified flag will be flipped via a separate flow once the
+    // token columns and email send paths land).
+    // TODO: add email_verification_token + email_verification_expires_at
+    // columns to the users table and re-enable token-based verification.
 
-    // Create default profile
-    await getOrCreateProfile(username);
+    const token = await signJwt(user.id, user.username);
 
-    // Sign JWT
-    const token = await signJwt(username);
-
-    // Send verification email (in dev without SES, falls back to console logging)
-    if (!isDev && verificationToken) {
-      const host = request.headers.get("host") || "localhost:3000";
-      const proto = request.headers.get("x-forwarded-proto") || "https";
-      await sendVerificationEmail(email, username, verificationToken, host, proto);
-    }
-
-    logSecurityEvent({ type: "signup", username, ip: request.headers.get("x-forwarded-for") || undefined });
-    void recordEvent(username, "signup", { emailVerified });
+    logSecurityEvent({
+      type: "signup",
+      username,
+      ip: request.headers.get("x-forwarded-for") || undefined,
+    });
+    void recordEvent(user.username, "signup", { emailVerified: user.emailVerified });
 
     const response = NextResponse.json(
-      { username, email_verified: emailVerified },
-      { status: 201, headers: { "Cache-Control": "no-store" } }
+      { username: user.username, email_verified: user.emailVerified },
+      { status: 201, headers: { "Cache-Control": "no-store" } },
     );
     setAuthCookie(response, token);
     return response;
   } catch (err) {
     console.error("Signup error:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
