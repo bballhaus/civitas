@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getUserData, saveUserData } from "@/lib/user-data";
 import { logSecurityEvent } from "@/lib/security-log";
+import { recordEvent } from "@/lib/event-log";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -30,6 +31,7 @@ export async function GET(request: Request) {
   await saveUserData(username, data);
 
   logSecurityEvent({ type: "email_verified", username });
+  void recordEvent(username, "email_verified");
 
   return NextResponse.redirect(new URL("/login?verified=1", request.url));
 }

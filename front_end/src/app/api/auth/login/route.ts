@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { verifyPassword, signJwt, setAuthCookie } from "@/lib/auth";
 import { getUserByUsername } from "@/db/queries/users";
 import { logSecurityEvent } from "@/lib/security-log";
+import { recordEvent } from "@/lib/event-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 // 5 login attempts per 15 minutes per IP
@@ -50,6 +51,7 @@ export async function POST(request: Request) {
         username,
         ip: request.headers.get("x-forwarded-for") || undefined,
       });
+      void recordEvent(username, "login_failure");
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
@@ -64,6 +66,7 @@ export async function POST(request: Request) {
       username,
       ip: request.headers.get("x-forwarded-for") || undefined,
     });
+    void recordEvent(username, "login");
     return response;
   } catch (err) {
     console.error("Login error:", err);

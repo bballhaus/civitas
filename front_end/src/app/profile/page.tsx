@@ -23,6 +23,7 @@ import {
   getEmptyCompanyProfile,
   type CurrentUser,
 } from "@/lib/api";
+import { trackEvent } from "@/lib/event-tracker";
 
 type SectionId = "company" | "certifications" | "naics" | "capabilities" | "contract" | null;
 
@@ -528,6 +529,7 @@ export default function ProfilePage() {
     if (!profile) return;
     setDupMessage("");
     setSectionSaving(true);
+    const sectionAtSave: SectionId = editingSection;
     let profileToSave = profile;
     try {
       if (editingSection === "contract") {
@@ -560,6 +562,9 @@ export default function ProfilePage() {
             alert(`The following files failed to upload:\n${failedFiles.join("\n")}\n\nPlease try again.`);
           }
 
+          if (sectionAtSave) {
+            trackEvent("profile_section_edited", { sectionName: sectionAtSave });
+          }
           setEditingSection(null);
           setSectionSaving(false);
           return;
@@ -623,6 +628,9 @@ export default function ProfilePage() {
         if (mapped) setCachedProfile(currentUser.user_id, mapped);
       } else {
         localStorage.setItem("companyProfile", JSON.stringify(profileToSave));
+      }
+      if (sectionAtSave) {
+        trackEvent("profile_section_edited", { sectionName: sectionAtSave });
       }
       setEditingSection(null);
     } catch (error) {

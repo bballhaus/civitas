@@ -7,10 +7,10 @@ import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
 import { getCurrentUser, getCachedUser, getCachedProfile } from "@/lib/api";
 import { setCachedEvents } from "@/lib/events-cache";
+import { trackEvent } from "@/lib/event-tracker";
 import type { RFP } from "@/lib/rfp-matching";
 
 const STORAGE_KEYS = {
-  SAVED: "civitas_saved_rfps",
   EXPRESSED_INTEREST: "civitas_expressed_interest_rfps",
 };
 const RFP_PRELOAD_KEY = "civitas_preload_rfp";
@@ -138,8 +138,8 @@ export default function HomePage() {
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
-    setSavedIds(loadSet(STORAGE_KEYS.SAVED));
     setExpressedIds(loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
+    trackEvent("page_viewed", { pagePath: "/home" });
   }, []);
 
   useEffect(() => {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { hashPassword, validatePassword } from "@/lib/auth";
 import { getUserData, saveUserData } from "@/lib/user-data";
 import { logSecurityEvent } from "@/lib/security-log";
+import { recordEvent } from "@/lib/event-log";
 
 export async function POST(request: Request) {
   try {
@@ -46,6 +47,7 @@ export async function POST(request: Request) {
       username,
       ip: request.headers.get("x-forwarded-for") || undefined,
     });
+    void recordEvent(username, "password_reset_complete");
 
     return NextResponse.json({ message: "Password has been reset. You can now log in." });
   } catch (err) {

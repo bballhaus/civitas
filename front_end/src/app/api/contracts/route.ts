@@ -6,6 +6,7 @@ import {
 } from "@/lib/contract-storage";
 import { extractMetadataFromDocument } from "@/lib/extraction";
 import { refreshProfileFromContracts } from "@/lib/profile-storage";
+import { recordEvent } from "@/lib/event-log";
 import { config } from "@/lib/config";
 
 export const runtime = "nodejs"; // mupdf requires Node runtime (WASM)
@@ -163,6 +164,11 @@ export async function POST(request: Request) {
 
     // Refresh profile after contract creation
     await refreshProfileFromContracts(user.username);
+
+    void recordEvent(user.username, "contract_uploaded", {
+      contractId: typeof contract.id === "string" ? contract.id : undefined,
+      hasExtraction: shouldExtract,
+    });
 
     return NextResponse.json(contract, { status: 201 });
   } catch (err) {

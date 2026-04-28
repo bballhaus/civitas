@@ -14,6 +14,7 @@ import {
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { getCurrentUser, getGeneratedPoe, updateUserRfpStatus, listContracts } from "@/lib/api";
 import { getCachedEvents } from "@/lib/events-cache";
+import { trackEvent } from "@/lib/event-tracker";
 
 type RFPWithMatch = RFP & { match: RFPMatch };
 
@@ -72,15 +73,24 @@ export default function RFPDetailPage() {
       }
     }
     setProfileLoaded(true);
-
-    // Load saved RFP IDs from localStorage
-    try {
-      const savedRaw = localStorage.getItem("civitas_saved_rfps");
-      if (savedRaw) setSavedRfpIds(new Set(JSON.parse(savedRaw)));
-    } catch {
-      // ignore
-    }
   }, []);
+
+  // Fire rfp_viewed once per RFP, with match info if available. Tracked via
+  // a ref so re-renders (e.g. when match recomputes) don't re-fire.
+  const rfpViewedRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (!id || rfpViewedRef.current === id) return;
+    if (!rfpData) return; // wait for RFP to load before firing
+    rfpViewedRef.current = id;
+    const matchScore = rfp?.match?.score;
+    const matchTier = rfp?.match?.tier;
+    trackEvent("rfp_viewed", {
+      rfpId: id,
+      pagePath: "/dashboard/rfp",
+      ...(typeof matchScore === "number" ? { matchScore } : {}),
+      ...(typeof matchTier === "string" ? { matchTier } : {}),
+    });
+  }, [id, rfpData, rfp]);
 
   useEffect(() => {
     getCurrentUser(true).then((full) => {
@@ -561,16 +571,19 @@ export default function RFPDetailPage() {
       : null,
   });
 
+  // Saved RFPs are session-only until the Postgres-backed persistence ships
+  // (see project memory: project_saved_rfps_postgres_migration).
   const handleToggleSave = useCallback(() => {
     if (!id) return;
+    const currentlySaved = savedRfpIds.has(id);
     setSavedRfpIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
+      if (currentlySaved) next.delete(id);
       else next.add(id);
-      localStorage.setItem("civitas_saved_rfps", JSON.stringify([...next]));
       return next;
     });
-  }, [id]);
+    trackEvent(currentlySaved ? "rfp_unsaved" : "rfp_saved", { rfpId: id });
+  }, [id, savedRfpIds]);
 
   const handleToggleApplied = useCallback(async () => {
     if (!id) return;

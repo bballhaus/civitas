@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { hashPassword, validatePassword, signJwt, setAuthCookie } from "@/lib/auth";
 import { createUser, getUserByUsername, getUserByEmail } from "@/db/queries/users";
 import { logSecurityEvent } from "@/lib/security-log";
+import { recordEvent } from "@/lib/event-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 // 5 signup attempts per 15 minutes per IP
@@ -86,6 +87,7 @@ export async function POST(request: Request) {
       username,
       ip: request.headers.get("x-forwarded-for") || undefined,
     });
+    void recordEvent(user.username, "signup", { emailVerified: user.emailVerified });
 
     const response = NextResponse.json(
       { username: user.username, email_verified: user.emailVerified },

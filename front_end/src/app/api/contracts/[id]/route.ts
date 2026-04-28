@@ -6,6 +6,7 @@ import {
   deleteContract,
 } from "@/lib/contract-storage";
 import { refreshProfileFromContracts } from "@/lib/profile-storage";
+import { recordEvent } from "@/lib/event-log";
 import { config } from "@/lib/config";
 
 const MAX_FILE_SIZE = config.upload.maxFileSize;
@@ -91,6 +92,7 @@ export async function PATCH(
     }
 
     await refreshProfileFromContracts(user.username);
+    void recordEvent(user.username, "contract_updated", { contractId: id });
     return NextResponse.json(updated);
   } catch (err) {
     console.error("Contract update error:", err);
@@ -121,5 +123,6 @@ export async function DELETE(
   }
 
   await refreshProfileFromContracts(user.username);
+  void recordEvent(user.username, "contract_deleted", { contractId: id });
   return new NextResponse(null, { status: 204 });
 }

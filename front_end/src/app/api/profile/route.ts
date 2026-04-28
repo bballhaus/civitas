@@ -14,6 +14,7 @@ import {
   updateProfileFields,
   refreshCompletenessScore,
 } from "@/db/queries/profile";
+import { recordEvent } from "@/lib/event-log";
 
 // Whitelist of profile fields the client is allowed to PATCH directly.
 // Anything else (createdAt, vendorFingerprint, etc.) is set server-side.
@@ -82,6 +83,7 @@ export async function PATCH(request: Request) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updated = await updateProfileFields(auth.userId, patch as any);
+    void recordEvent(auth.username, "profile_updated");
     return NextResponse.json(updated);
   } catch (err) {
     console.error("Profile PATCH error:", err);
