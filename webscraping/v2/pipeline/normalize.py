@@ -308,4 +308,7 @@ def normalize_event(
         attachment_rollup=attachment_rollup,
         posted_date=raw.posted_date,
         scraped_at=raw.scraped_at,
+        prospective_bidders=raw.prospective_bidders,
+        bid_results=raw.bid_results,
+        award=raw.award,
     )

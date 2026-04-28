@@ -405,5 +405,185 @@ class TestBidSyncAgencyMatching:
         assert "unknown" in site_id.lower()
 
 
+# ============================================================================
+# Market intel: parser helpers
+# ============================================================================
+
+class TestPlanetBidsParsers:
+    def test_parse_currency(self):
+        from webscraping.v2.scrapers.planetbids_parsers import parse_currency
+        assert parse_currency("$1,190,650.00") == 119065000
+        assert parse_currency("$0.00") == 0
+        assert parse_currency("$2.50") == 250
+        assert parse_currency("Total: $42,000") == 4200000  # no cents
+        assert parse_currency("") is None
+        assert parse_currency(None) is None
+        assert parse_currency("N/A") is None
+
+    def test_parse_responsive(self):
+        from webscraping.v2.scrapers.planetbids_parsers import parse_responsive
+        assert parse_responsive("Yes") is True
+        assert parse_responsive("yes") is True
+        assert parse_responsive("No") is False
+        assert parse_responsive("NO") is False
+        assert parse_responsive("Non-Responsive") is False
+        assert parse_responsive("") is None
+        assert parse_responsive(None) is None
+        assert parse_responsive("maybe") is None
+
+    def test_parse_certifications(self):
+        from webscraping.v2.scrapers.planetbids_parsers import parse_certifications
+        assert parse_certifications("MBE, WBE, DBE, CADIR") == ["MBE", "WBE", "DBE", "CADIR"]
+        assert parse_certifications("Local") == ["Local"]
+        assert parse_certifications("") == []
+        assert parse_certifications(None) == []
+        # Drops absurdly long tokens (probably not certs)
+        assert "verylongtokenherethatsnotacert" not in parse_certifications(
+            "MBE, verylongtokenherethatsnotacert, DBE"
+        )
+
+    def test_parse_vendor_block_full(self):
+        from webscraping.v2.scrapers.planetbids_parsers import parse_vendor_block
+        v = parse_vendor_block(
+            "Select Electric, Inc.\n"
+            "1700 E. Via Burton\n"
+            "Anaheim, California 92806\n"
+            "Contact: Landon Smith\n"
+            "Phone: 619-460-6060"
+        )
+        assert v.name == "Select Electric, Inc."
+        assert v.address == "1700 E. Via Burton"
+        assert v.city == "Anaheim"
+        assert v.state == "California"
+        assert v.zip_code == "92806"
+        assert v.contact_name == "Landon Smith"
+        assert v.phone == "619-460-6060"
+        # Certifications come from a separate cell, not the vendor block
+        assert v.certifications == []
+
+    def test_parse_vendor_block_skips_fax_keeps_email(self):
+        from webscraping.v2.scrapers.planetbids_parsers import parse_vendor_block
+        v = parse_vendor_block(
+            "AGC San Diego\n"
+            "10140 Riverford Rd. Plan Room\n"
+            "Lakeside, California 92040\n"
+            "Contact: Scherrise Judge\n"
+            "Phone: 858-558-7444\n"
+            "Fax: 858-558-8444\n"
+            "p******m@agcsd.org"
+        )
+        assert v.name == "AGC San Diego"
+        assert v.phone == "858-558-7444"  # not Fax
+        assert v.email_redacted == "p******m@agcsd.org"
+        assert v.zip_code == "92040"
+
+    def test_parse_vendor_block_empty(self):
+        from webscraping.v2.scrapers.planetbids_parsers import parse_vendor_block
+        assert parse_vendor_block("") is None
+        assert parse_vendor_block(None) is None
+        assert parse_vendor_block("   \n  ") is None
+
+
+# ============================================================================
+# Market intel: model round-trip
+# ============================================================================
+
+class TestMarketIntelModels:
+    def test_vendor_round_trip(self):
+        from webscraping.v2.models import Vendor
+        v = Vendor(
+            name="Select Electric, Inc.",
+            city="Anaheim",
+            state="California",
+            zip_code="92806",
+            certifications=["MBE", "CADIR"],
+        )
+        json_str = v.model_dump_json()
+        v2 = Vendor.model_validate_json(json_str)
+        assert v2.name == v.name
+        assert v2.certifications == v.certifications
+
+    def test_bid_result_round_trip(self):
+        from webscraping.v2.models import Vendor, BidResult
+        br = BidResult(
+            vendor=Vendor(name="HMS Construction"),
+            amount_cents=127500000,
+            amount_display="$1,275,000.00",
+            responsive=True,
+        )
+        br2 = BidResult.model_validate_json(br.model_dump_json())
+        assert br2.amount_cents == 127500000
+        assert br2.responsive is True
+        assert br2.vendor.name == "HMS Construction"
+
+    def test_enriched_event_with_market_intel(self):
+        from webscraping.v2.models import (
+            EnrichedEvent, Vendor, ProspectiveBidder, BidResult, Award,
+        )
+        v = Vendor(name="Acme Corp")
+        e = EnrichedEvent(
+            id="x",
+            source_id="planetbids_san_diego",
+            source_event_id="139554",
+            source_url="https://example.com",
+            title="Test",
+            prospective_bidders=[ProspectiveBidder(vendor=v, classification="Bidder")],
+            bid_results=[BidResult(vendor=v, amount_cents=100000)],
+            award=Award(vendor=v, amount_cents=100000),
+        )
+        # Round-trip through JSON preserves nested structure
+        e2 = EnrichedEvent.model_validate_json(e.model_dump_json())
+        assert len(e2.prospective_bidders) == 1
+        assert e2.prospective_bidders[0].vendor.name == "Acme Corp"
+        assert e2.bid_results[0].amount_cents == 100000
+        assert e2.award.amount_cents == 100000
+
+
+# ============================================================================
+# Merge: historical market-intel preservation
+# ============================================================================
+
+class TestMergePreservesMarketIntel:
+    def _enriched_with_intel(
+        self, eid: str, has_intel: bool = False
+    ) -> EnrichedEvent:
+        from webscraping.v2.models import Vendor, BidResult, Award
+        e = EnrichedEvent(
+            id=eid,
+            source_id="planetbids_san_diego",
+            source_event_id=eid,
+            source_url="https://example.com",
+            title="Test",
+            status=EventStatus.OPEN,
+        )
+        if has_intel:
+            v = Vendor(name="Past Bidder")
+            e.bid_results = [BidResult(vendor=v, amount_cents=42_000_00)]
+            e.award = Award(vendor=v, amount_cents=42_000_00)
+        return e
+
+    def test_existing_intel_preserved_when_fresh_lacks_it(self):
+        """A re-scrape that doesn't capture bid_results/award should not
+        clobber data captured by a previous --include-awarded run."""
+        existing = {"a": self._enriched_with_intel("a", has_intel=True)}
+        fresh = [self._enriched_with_intel("a", has_intel=False)]
+        merged = merge_events(existing, fresh)
+        assert len(merged) == 1
+        assert len(merged[0].bid_results) == 1
+        assert merged[0].bid_results[0].amount_cents == 4_200_000
+        assert merged[0].award is not None
+
+    def test_fresh_intel_overrides_existing(self):
+        from webscraping.v2.models import Vendor, BidResult
+        existing = {"a": self._enriched_with_intel("a", has_intel=True)}
+        fresh_event = self._enriched_with_intel("a", has_intel=False)
+        fresh_event.bid_results = [
+            BidResult(vendor=Vendor(name="New Bidder"), amount_cents=500_000_00)
+        ]
+        merged = merge_events(existing, [fresh_event])
+        assert merged[0].bid_results[0].vendor.name == "New Bidder"
+        assert merged[0].bid_results[0].amount_cents == 50_000_000
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

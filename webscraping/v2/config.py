@@ -3,7 +3,9 @@ Configuration for the Civitas v2 scraping system.
 Loads AWS credentials and API keys from environment / .env files.
 """
 
+import json
 import os
+from functools import lru_cache
 from pathlib import Path
 
 import boto3
@@ -39,6 +41,28 @@ def get_s3_client():
 # S3 prefixes
 S3_V2_PREFIX = "scrapes/v2/"
 S3_LEGACY_PREFIX = "scrapes/caleprocure/"
+
+# Secret names in AWS Secrets Manager
+PLANETBIDS_SECRET_NAME = "civitas/scraping/planetbids"
+
+
+@lru_cache(maxsize=8)
+def get_secret(secret_name: str) -> dict:
+    """Fetch a JSON secret from AWS Secrets Manager.
+
+    Local fallback: if PLANETBIDS_USERNAME/PLANETBIDS_PASSWORD env vars are
+    set and secret_name == PLANETBIDS_SECRET_NAME, return them without an
+    AWS call. Lets developers run scrapes locally without IAM access.
+    """
+    if secret_name == PLANETBIDS_SECRET_NAME:
+        env_user = os.environ.get("PLANETBIDS_USERNAME")
+        env_pass = os.environ.get("PLANETBIDS_PASSWORD")
+        if env_user and env_pass:
+            return {"username": env_user, "password": env_pass}
+
+    client = boto3.client("secretsmanager", region_name=AWS_REGION)
+    resp = client.get_secret_value(SecretId=secret_name)
+    return json.loads(resp["SecretString"])
 
 # LLM
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")

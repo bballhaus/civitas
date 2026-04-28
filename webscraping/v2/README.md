@@ -32,9 +32,33 @@ Lambda (civitas-rfp-scraper)  ──▶  {"mode": "all"}
 | Tier | Type | Sites | Data Collected |
 |------|------|-------|----------------|
 | Structured | **Cal eProcure** | 1 (state-level, ~642 events) | Title, description, contact, PDFs (downloaded + LLM-enriched), attachment URLs |
-| Structured | **PlanetBids** | 42 portals | Title, description, contact, categories (NAICS-like), public addenda |
+| Structured | **PlanetBids** | 42 portals | Title, description, contact, categories, market intel (prospective bidders / bid results / awards) |
 | Structured | **BidSync/Periscope** | 15 agencies (1 search) | Title, agency, due date (detail pages require login) |
 | Agentic | **Custom portals** | 2 (LA, SF) | Not yet working on Lambda (see TODO) |
+
+### Market intel (PlanetBids)
+
+When PlanetBids vendor credentials are available (AWS Secrets Manager:
+`civitas/scraping/planetbids`), the scraper logs in and additionally
+populates these fields per event:
+
+- `prospective_bidders[]` — vendors who registered interest. Includes name,
+  address, contact, phone, partial email, certifications (MBE/WBE/DBE/CADIR/etc),
+  classification (Bidder/Subcontractor), pre-bid meeting attendance.
+  Available on bids in any status.
+- `bid_results[]` — submitted bids with vendor identity, dollar amount
+  (cents + display string), and responsive Y/N. Available on closed/awarded
+  bids only.
+- `award` — winning bid summary including amount and raw text snippet for
+  explainability. Available on awarded bids only.
+
+The `--include-awarded` flag adds a second status pass that scrapes
+Awarded-status events for historical contract data (vendors / amounts /
+awards on past contracts). See **Usage** below.
+
+Login covers all 42 PlanetBids portals (single domain-scoped account).
+Document downloads (`*`-marked items) still require per-agency vendor
+registration, which is a separate decision not implemented here.
 
 ### Lambda Batching
 
@@ -109,9 +133,28 @@ python -m webscraping.v2.orchestrator.runner --site caleprocure --skip-enrich
 # Skip S3 upload (local testing)
 python -m webscraping.v2.orchestrator.runner --site planetbids_san_diego --skip-upload
 
+# Also scrape Awarded-status events (historical contract data, PlanetBids only)
+python -m webscraping.v2.orchestrator.runner --site planetbids_san_diego --include-awarded
+
 # Run all enabled sites
 python -m webscraping.v2.orchestrator.runner
 ```
+
+### PlanetBids credentials
+
+Market-intel scraping requires a logged-in vendor session. Credentials are
+stored in AWS Secrets Manager at `civitas/scraping/planetbids` as JSON
+`{"username": "...", "password": "..."}`. The Lambda role
+`civitas-scraper-lambda-role` has `secretsmanager:GetSecretValue` on this
+secret.
+
+For local dev without AWS access, set `PLANETBIDS_USERNAME` and
+`PLANETBIDS_PASSWORD` env vars (in `back_end/.env` or `webscraping/v2/.env`)
+— `get_secret()` falls back to env vars when the secret name matches.
+
+If no credentials are available, the scraper logs a warning and continues
+without auth — public bid metadata still works, market-intel fields stay
+empty.
 
 ### Running Tests
 
