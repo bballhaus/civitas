@@ -1,6 +1,6 @@
 # Civitas Architecture v2 — Detailed Spec
 
-Companion to [Matching-Values.md](Matching-Values.md). This is the working spec for the data ingestion + matching overhaul. Edit freely; nothing here is implemented yet.
+Companion to [Matching-Values.md](Matching-Values.md) and [webscraping/v2/COVERAGE.md](../webscraping/v2/COVERAGE.md). This is the working spec for the data ingestion + matching overhaul. Edit freely; nothing here is implemented yet.
 
 ---
 
@@ -12,23 +12,54 @@ Companion to [Matching-Values.md](Matching-Values.md). This is the working spec 
 4. **Hard signals are typed, soft signals are scored.** License class is binary, not partial credit. Set-aside lockouts disqualify. Specialty matching is semantic.
 5. **Match results carry citations.** Each scoring category cites the source phrase from the RFP and the source profile claim. Addresses the "why is this a fit" gap from the discovery interviews.
 6. **Two output tracks per RFP**: `prime_match` and `sub_match`. Prime gate failure routes to sub track instead of disqualifying.
+7. **Empty fields are unknown, not zero.** A missing requirement on an RFP means the source doesn't expose that data — not that the requirement is absent. The matcher must distinguish "we know this is open" from "we don't know."
 
 ---
 
-## 2. Storage architecture
+## 2. Source heterogeneity (read this first)
+
+The authoritative coverage spec is [webscraping/v2/COVERAGE.md](../webscraping/v2/COVERAGE.md). This section summarizes the implications for matching.
+
+RFPs from different sources have radically different completeness, and matching must account for that.
+
+| Source | Sites | PDF requirements | Description | Market intel | Incumbent signal |
+|---|---|:-:|:-:|:-:|:-:|
+| **Cal eProcure** | 1 (state, ~642 events) | ✓ rich (LLM-extracted) | ✓ full + PDF rollup | ✗ source has no tabs | ✓ `incumbent_vendor` LLM-extracted (live) |
+| **PlanetBids** | 42 portals | ✗ gated behind per-agency vendor login | ✓ from detail page | ✓ rich (`prospective_bidders`, `bid_results`, `award`) | ✓ from `award` history |
+| **BidSync / Periscope** | 15 agencies | ✗ login required | ✗ login required | ✗ none | ✗ none |
+| **Agentic** (LA City, SF City) | 2 | n/a | n/a | n/a | currently broken on Lambda |
+
+### Consequences for the matcher
+
+1. **Hard gates fire only on non-empty data.** A PlanetBids RFP with `licenses_required: []` does not mean the RFP has no license requirement — the PDFs are gated. Empty must be treated as unknown.
+2. **Incumbent signal is source-routed, not unified.** Different sources surface incumbency through different fields. See § 10 for the state machine.
+3. **Embedding quality varies by source.** BidSync gives us only the title; Cal eProcure gives title + description + attachment text. Semantic-only matches on thin sources should carry lower confidence.
+4. **Match output must include `data_quality`.** UI surfaces "limited data" vs. "full requirements available" so users know how to weight the score.
+5. **License-class hard gate is currently a Cal-eProcure-only mechanism.** Until PlanetBids documents are unblocked, license requirements on PlanetBids events are unknown — bonus signals at best, never disqualifiers.
+
+### Active blockers tracked in COVERAGE.md
+
+- PlanetBids document gating (per-agency vendor registration, legal/ops decision)
+- BidSync detail-page login (vendor account or skip in favor of agency-direct sources)
+- Agentic LA + SF on Lambda (Chromium / ENOSPC issues)
+- Vendor fingerprint dedup post-process (planned, not yet running)
+
+---
+
+## 3. Storage architecture
 
 **Postgres on RDS with `pgvector` extension.** Replaces the current S3-as-database pattern.
 
 - Profile, contracts, claims, match state → Postgres
 - Raw uploaded files → S3 (unchanged: `uploads/{user_id}/{contract_id}/...`)
 - Scraped RFPs → still S3 manifests (no change to webscraping pipeline); new `rfp_cache` table is a denormalized read cache for matching, refreshed from manifests
-- Awards data (incumbent tracking) → S3 manifests + `rfp_awards` table
+- Vendor index (cross-event dedup) → S3 manifest at `scrapes/v2/vendors/index.json` (produced by webscraping post-process), mirrored into `vendors` table for join queries
 
-**Why Postgres over DynamoDB**: relational shape (profile → contracts → claims), pgvector for embeddings in the same DB, full-text search for RFP descriptions, ACID for atomic claim acceptance, cleaner schema migrations, ~$15/mo on `db.t4g.micro`.
+**Why Postgres over DynamoDB**: relational shape (profile → contracts → claims, RFP → bidders), pgvector for embeddings in the same DB, full-text search for RFP descriptions, ACID for atomic claim acceptance, cleaner schema migrations, ~$15/mo on `db.t4g.micro`.
 
 ---
 
-## 3. Postgres schema
+## 4. Postgres schema
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -66,6 +97,9 @@ CREATE TABLE profiles (
     complexity_pref      TEXT,    -- 'simple_only' | 'any' | 'any_with_subs'
     prime_vs_sub         TEXT,    -- 'prime_only' | 'open_to_sub' | 'sub_only'
     gov_experience       TEXT,    -- 'none' | 'local' | 'state' | 'federal'
+    -- vendor identity (links to PlanetBids vendor data)
+    vendor_fingerprint   TEXT,    -- matches webscraping vendors index
+    vendor_resolved_at   TIMESTAMPTZ,
     -- meta
     completeness_score   REAL DEFAULT 0,
     onboarded_at         TIMESTAMPTZ,
@@ -73,6 +107,8 @@ CREATE TABLE profiles (
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX idx_profiles_vendor_fingerprint ON profiles(vendor_fingerprint);
 
 -- ---------------------------------------------------------------
 -- Specialties (the bread and butter — primary match dimension)
@@ -160,6 +196,7 @@ CREATE INDEX idx_work_areas_user ON work_areas(user_id);
 
 -- ---------------------------------------------------------------
 -- Agency relationships (strength + role + recency)
+-- Auto-populated from vendor fingerprint when available; manually editable.
 -- ---------------------------------------------------------------
 
 CREATE TABLE agency_relationships (
@@ -170,7 +207,8 @@ CREATE TABLE agency_relationships (
     role              TEXT NOT NULL,    -- 'prime' | 'sub'
     contract_count    INT NOT NULL DEFAULT 1,
     last_contract_at  DATE,
-    strength          SMALLINT NOT NULL DEFAULT 1,  -- 1-5, hand or heuristic
+    strength          SMALLINT NOT NULL DEFAULT 1,  -- 1-5
+    source            TEXT NOT NULL DEFAULT 'user', -- 'user' | 'vendor_fingerprint' | 'extraction'
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (user_id, agency_canonical, role)
 );
@@ -184,7 +222,7 @@ CREATE INDEX idx_agency_relationships_user ON agency_relationships(user_id);
 CREATE TABLE contracts (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    document_type       TEXT NOT NULL,    -- see § 5.1
+    document_type       TEXT NOT NULL,    -- see § 6.1
     s3_key              TEXT NOT NULL,
     original_filename   TEXT NOT NULL,
     title               TEXT,
@@ -217,7 +255,7 @@ CREATE TABLE claims (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     contract_id UUID REFERENCES contracts(id) ON DELETE CASCADE,
-    field_path  TEXT NOT NULL,     -- 'specialties.value' | 'licenses.class' | 'agency_relationships.agency'
+    field_path  TEXT NOT NULL,     -- 'specialties.value' | 'licenses.class' | ...
     value       TEXT NOT NULL,
     snippet     TEXT,              -- text from the doc that justifies this claim
     confidence  REAL,              -- 0-1 from the extractor
@@ -234,17 +272,18 @@ CREATE INDEX idx_claims_contract    ON claims(contract_id);
 -- ---------------------------------------------------------------
 
 CREATE TABLE match_state (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    rfp_id           TEXT NOT NULL,
-    status           TEXT,             -- 'saved' | 'applied' | 'in_progress'
-    match_score      REAL,
-    match_tier       TEXT,
-    win_probability  REAL,
-    feedback_rating  TEXT,             -- 'good' | 'bad'
-    feedback_reason  TEXT,
-    feedback_at      TIMESTAMPTZ,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rfp_id              TEXT NOT NULL,
+    status              TEXT,             -- 'saved' | 'applied' | 'in_progress'
+    match_score         REAL,
+    match_tier          TEXT,
+    win_probability     REAL,
+    incumbent_state     TEXT,             -- 'likely' | 'open_field' | 'unknown'
+    feedback_rating     TEXT,             -- 'good' | 'bad'
+    feedback_reason     TEXT,
+    feedback_at         TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (user_id, rfp_id)
 );
 
@@ -267,65 +306,96 @@ CREATE INDEX idx_generated_user_rfp ON generated_documents(user_id, rfp_id);
 
 -- ---------------------------------------------------------------
 -- RFP cache (denormalized read view of v2 manifests for matching)
+-- All fields are nullable / empty-able. Empty = unknown, not zero.
 -- ---------------------------------------------------------------
 
 CREATE TABLE rfp_cache (
     id                       TEXT PRIMARY KEY,
-    source_id                TEXT NOT NULL,
+    source_id                TEXT NOT NULL,         -- 'caleprocure' | 'planetbids_san_diego' | ...
     title                    TEXT NOT NULL,
     description              TEXT,
     agency                   TEXT,
     location                 TEXT,
     deadline                 TIMESTAMPTZ,
     estimated_value_usd      BIGINT,
-    -- enriched
+
+    -- LLM-extracted (Cal eProcure today; PlanetBids/BidSync empty)
     capabilities             TEXT[],
     naics_codes              TEXT[],
-    certifications_required  TEXT[],
+    certifications_required  TEXT[],   -- programs/status certs (DBE, MBE, DIR)
+    licenses_required        TEXT[],   -- trade licenses (CSLB Class A, C-10, PE) — separated per webscraping schema
     set_aside_lockout        TEXT[],
-    license_classes_required TEXT[],
+    deliverables             TEXT[],
     requires_past_gov_exp    BOOLEAN,
-    -- incumbent
-    incumbent_detected       BOOLEAN,
-    incumbent_confidence     REAL,
-    incumbent_phrases        TEXT[],
-    incumbent_named_vendor   TEXT,
-    -- semantic
+    incumbent_vendor         TEXT,     -- LLM-extracted from RFP text (Cal eProcure live)
+    incumbent_contract_end   DATE,
+
+    -- Market intel (PlanetBids today; Cal eProcure/BidSync empty)
+    prospective_bidder_count INT,
+    bid_count                INT,
+    bid_amounts_cents        BIGINT[], -- distribution; useful for pricing fit
+    winning_bid_cents        BIGINT,
+    winning_vendor_fingerprint TEXT,
+
+    -- Semantic embedding
     embedding                vector(1024),
-    -- raw
+
+    -- Raw payload from manifest
     raw                      JSONB,
     refreshed_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_rfp_cache_embedding ON rfp_cache USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX idx_rfp_cache_deadline  ON rfp_cache(deadline);
-CREATE INDEX idx_rfp_cache_agency    ON rfp_cache(agency);
+CREATE INDEX idx_rfp_cache_embedding         ON rfp_cache USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_rfp_cache_deadline          ON rfp_cache(deadline);
+CREATE INDEX idx_rfp_cache_agency            ON rfp_cache(agency);
+CREATE INDEX idx_rfp_cache_source            ON rfp_cache(source_id);
+CREATE INDEX idx_rfp_cache_winning_vendor    ON rfp_cache(winning_vendor_fingerprint);
 
 -- ---------------------------------------------------------------
--- RFP awards (incumbent tracking, populated by webscraping)
+-- RFP bidders (normalized fan-out of prospective_bidders + bid_results)
+-- Used for: vendor history queries, agency_relationships auto-populate,
+-- "you've competed against" signals.
 -- ---------------------------------------------------------------
 
-CREATE TABLE rfp_awards (
+CREATE TABLE rfp_bidders (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_id           TEXT NOT NULL,
-    rfp_id              TEXT,
-    agency              TEXT NOT NULL,
-    category            TEXT,    -- best-effort capability or NAICS prefix
-    awarded_to          TEXT,
-    awarded_at          DATE,
-    contract_value_usd  BIGINT,
-    duration_text       TEXT,
-    discovered_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (source_id, rfp_id, awarded_to)
+    rfp_id              TEXT NOT NULL REFERENCES rfp_cache(id) ON DELETE CASCADE,
+    vendor_fingerprint  TEXT,           -- nullable until vendor index resolves
+    vendor_name         TEXT NOT NULL,  -- always present; fingerprint is post-hoc
+    role                TEXT NOT NULL,  -- 'prospective' | 'bidder' | 'winner'
+    bid_amount_cents    BIGINT,
+    responsive          BOOLEAN,
+    classification      TEXT,           -- PlanetBids: 'Bidder' | 'Subcontractor' | 'Plan Room'
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_rfp_awards_agency_category ON rfp_awards(agency, category);
-CREATE INDEX idx_rfp_awards_vendor          ON rfp_awards(awarded_to);
+CREATE INDEX idx_rfp_bidders_rfp        ON rfp_bidders(rfp_id);
+CREATE INDEX idx_rfp_bidders_fingerprint ON rfp_bidders(vendor_fingerprint);
+CREATE INDEX idx_rfp_bidders_name        ON rfp_bidders USING gin (vendor_name gin_trgm_ops);
+
+-- ---------------------------------------------------------------
+-- Vendors (mirrors webscraping vendor index for join queries)
+-- ---------------------------------------------------------------
+
+CREATE TABLE vendors (
+    fingerprint    TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    state          TEXT,
+    city           TEXT,
+    certifications TEXT[],
+    first_seen_at  TIMESTAMPTZ,
+    last_seen_at   TIMESTAMPTZ,
+    bid_count      INT DEFAULT 0,
+    win_count      INT DEFAULT 0,
+    refreshed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_vendors_name ON vendors USING gin (name gin_trgm_ops);
 ```
 
 ---
 
-## 4. Onboarding flow
+## 5. Onboarding flow
 
 Nine screens, ~7 minutes total. Each step persists immediately; user can leave and return. Skip enabled on every step except identity.
 
@@ -345,11 +415,13 @@ After onboarding, `embedding_updated_at` triggers a background job to embed all 
 
 `completeness_score` is recomputed on every profile change: % of weighted fields populated.
 
+**Optional vendor identity resolution**: after onboarding, if the user's company name fuzzy-matches an entry in `vendors`, prompt them to claim that fingerprint. Confirms unlocks auto-population of `agency_relationships` from past bid history.
+
 ---
 
-## 5. Evidence flow (LLM extraction)
+## 6. Evidence flow (LLM extraction)
 
-### 5.1 Document types
+### 6.1 Document types
 
 ```
 won_contract         — signed/awarded contract or successful proposal
@@ -360,13 +432,13 @@ license_doc          — license certificate, registration, or formal credential
 other                — anything else; user is asked to confirm
 ```
 
-### 5.2 Two-stage extraction
+### 6.2 Two-stage extraction
 
 ```
 upload → text extract (mupdf) → PII redact → classify → extract per type → claims → review screen → accept/reject
 ```
 
-### 5.3 Stage 1: Classifier
+### 6.3 Stage 1: Classifier
 
 **Model**: Claude Haiku 4.5 (`claude-haiku-4-5-20251001`), temperature 0.
 
@@ -392,7 +464,7 @@ Return JSON only:
 
 If `confidence < 0.7`, surface the choice to the user before extraction.
 
-### 5.4 Stage 2: Targeted extractors
+### 6.4 Stage 2: Targeted extractors
 
 **Model**: Claude Sonnet 4.6 (`claude-sonnet-4-6`), temperature 0.1, prompt caching on the system message.
 
@@ -451,7 +523,7 @@ Extract: `license_class`, `license_number`, `expires_on`, `holder_name`. Single 
 
 Same as won-contract minus dates; mark all confidence × 0.7 since this is what they pitched, not what was awarded.
 
-### 5.5 Review screen (mandatory before profile changes)
+### 6.5 Review screen (mandatory before profile changes)
 
 After extraction:
 
@@ -464,7 +536,7 @@ After extraction:
 
 ---
 
-## 6. PII redaction
+## 7. PII redaction
 
 Pre-LLM regex pass on extracted text. Replace matches with typed placeholders to preserve text structure:
 
@@ -484,14 +556,14 @@ Run BEFORE the 50K-char truncation, so we don't redact only part of a redactable
 
 ---
 
-## 7. Embeddings
+## 8. Embeddings
 
 **Model**: Voyage-3-large (Anthropic-recommended). 1024 dimensions. English-tuned.
 
 **Generated for**:
 - Each `specialty.value` (one embedding per specialty)
 - Each `capability.value` (one embedding per capability)
-- Each RFP — concatenation of `title + description + capabilities.join(' ') + deliverables.join(' ') + attachment_rollup.summary`, truncated to 8K tokens
+- Each RFP — concatenation depends on source data quality (see § 9.4)
 
 **Storage**: pgvector `vector(1024)` columns with HNSW indexes.
 
@@ -501,40 +573,48 @@ Run BEFORE the 50K-char truncation, so we don't redact only part of a redactable
 
 **Cost estimate**: ~$0.18 per 1M tokens. A typical user has ~30 specialty+capability rows, ~150 tokens each = 4.5K tokens = $0.001 to embed a profile. RFPs ~2K tokens each, 1000 RFPs = 2M tokens = ~$0.36 to embed the full catalog. Negligible.
 
-**Matching usage**: see § 8.
-
 ---
 
-## 8. Matching algorithm v2
+## 9. Matching algorithm v2
 
 Replaces [rfp-matching.ts](../front_end/src/lib/rfp-matching.ts) entirely.
 
-### 8.1 Pipeline
+### 9.1 Pipeline
 
 ```
 match(profile, rfp) →
     1. Hard gates (any failure → not eligible as prime, route to sub track)
+       — gates fire ONLY on non-empty data
     2. Range matches (scope, duration, complexity)
     3. Semantic matches (specialty embedding, capability embedding)
-    4. Relationship signals (agency, soft certs)
-    5. Risk subtraction (incumbent confidence)
+       — confidence weighted by source data quality
+    4. Relationship signals (agency, soft certs, vendor history)
+    5. Risk subtraction (incumbent state machine — § 10)
     6. Sub-on-prime parallel track (always computed)
-    7. Aggregate → score, win_probability, breakdown, citations
+    7. Aggregate → score, win_probability, breakdown, citations, data_quality
 ```
 
-### 8.2 Stage 1 — Hard gates
+### 9.2 Stage 1 — Hard gates (empty = no gate fires)
 
-| Gate | Disqualifies if |
-|---|---|
-| License class | RFP requires C-12 and profile has only A; or RFP requires "any general contractor" and profile has no A or B |
-| Hard certifications | RFP lists hard cert; profile doesn't hold it (with expiration check) |
-| Set-aside lockout | RFP restricted to a category (e.g. DVBE-only); profile doesn't qualify |
-| Hard work area | User has any `is_hard=true` work area; RFP location not in any of them |
-| Past gov experience | RFP demands prior gov contracts; `profile.gov_experience = 'none'` |
+| Gate | Fires only when | Disqualifies if |
+|---|---|---|
+| License class | `rfp.licenses_required` is non-empty | profile licenses don't satisfy |
+| Hard certifications | `rfp.certifications_required` includes hard certs | profile doesn't hold (with expiration check) |
+| Set-aside lockout | `rfp.set_aside_lockout` is non-empty | profile doesn't qualify |
+| Hard work area | profile has any `is_hard=true` work area | RFP location not in any of them |
+| Past gov experience | `rfp.requires_past_gov_exp = true` | `profile.gov_experience = 'none'` |
 
-Failure routes to the sub track. The user sees: "Not eligible as prime: missing Class A license. Eligible as subcontractor — see sub track."
+**Critical rule**: if the field is empty/null on the RFP, we treat it as unknown and the gate does not fire. Per [COVERAGE.md](../webscraping/v2/COVERAGE.md): `licenses_required: []` on a PlanetBids RFP means "PDFs are gated, we don't know," not "no license required." Penalizing or disqualifying based on empty data would silently exclude ~40% of the catalog.
 
-### 8.3 Stage 2 — Range matches
+When a gate is "unknown" rather than "passed" or "failed," surface this in the breakdown:
+
+```
+license_class: { status: 'unknown', reason: 'source does not expose RFP requirements' }
+```
+
+Failure (when data is non-empty and doesn't match) routes to the sub track. UI shows: "Not eligible as prime: missing Class A license. Eligible as subcontractor — see sub track."
+
+### 9.3 Stage 2 — Range matches
 
 ```python
 def score_scope(rfp_value_usd, profile_min, profile_max):
@@ -567,7 +647,25 @@ def score_complexity(rfp_complexity_tier, pref):
     return ('partial', 0.7)  # 'any' default
 ```
 
-### 8.4 Stage 3 — Semantic matches
+### 9.4 Stage 3 — Semantic matches (source-aware)
+
+Embedding text construction depends on what the source actually provides:
+
+```python
+def rfp_embedding_text(rfp):
+    parts = [rfp.title]                                    # always present
+    if rfp.description:        parts.append(rfp.description)
+    if rfp.capabilities:       parts.append(' '.join(rfp.capabilities))
+    if rfp.deliverables:       parts.append(' '.join(rfp.deliverables))
+    if rfp.attachment_rollup:  parts.append(rfp.attachment_rollup.summary)
+    return ' '.join(parts)
+
+def semantic_confidence(rfp):
+    # How much do we trust the embedding match for this source?
+    if rfp.attachment_rollup or rfp.deliverables:  return 1.0    # Cal eProcure
+    if rfp.description:                            return 0.85   # PlanetBids
+    return 0.6                                                    # BidSync (title only)
+```
 
 ```python
 def score_specialty(profile, rfp):
@@ -575,21 +673,23 @@ def score_specialty(profile, rfp):
     sims = [(s, cosine(s.embedding, rfp.embedding)) for s in profile.specialties]
     best_sim = max(sim for _, sim in sims)
     matched = [(s.value, sim) for s, sim in sims if sim >= 0.5]
-    if best_sim >= 0.75:    return ('strong',  best_sim, matched)
-    if best_sim >= 0.55:    return ('partial', best_sim, matched)
-    if best_sim >= 0.35:    return ('weak',    best_sim, matched)
+    # Adjust threshold by source data quality
+    conf = semantic_confidence(rfp)
+    adjusted = best_sim * conf
+    if adjusted >= 0.75:    return ('strong',  best_sim, matched)
+    if adjusted >= 0.55:    return ('partial', best_sim, matched)
+    if adjusted >= 0.35:    return ('weak',    best_sim, matched)
     return ('missing', best_sim, [])
 
 def score_capability(profile, rfp):
-    # same shape, lower thresholds; capabilities are broader
+    # Same shape; thresholds slightly lower (capabilities are broader)
     ...
 ```
 
-### 8.5 Stage 4 — Relationship signals
+### 9.5 Stage 4 — Relationship signals
 
 ```python
 def score_agency(profile, rfp):
-    # match by agency_canonical
     rels = [r for r in profile.agency_relationships
             if matches(r.agency_canonical, rfp.agency)]
     if not rels: return ('neutral', None)
@@ -603,19 +703,21 @@ def soft_cert_bonus(profile, rfp):
     # +0.05 raw points per RFP-preferred cert the profile holds (cap 0.15)
     matches = [c for c in profile.soft_certs if c.canonical_id in rfp.preferred_certs]
     return min(0.15, 0.05 * len(matches))
+
+def vendor_history_bonus(profile, rfp):
+    # If the user is a known vendor, did they prospect/bid past RFPs from this agency?
+    if not profile.vendor_fingerprint: return None
+    past = count_past_rfps(profile.vendor_fingerprint, rfp.agency, lookback_years=3)
+    if past >= 3: return ('strong', 0.10)
+    if past >= 1: return ('partial', 0.05)
+    return None
 ```
 
-### 8.6 Stage 5 — Risk: incumbent
+### 9.6 Stage 5 — Risk: incumbent (see § 10)
 
-```python
-def confidence_multiplier(rfp):
-    if not rfp.incumbent_detected:                    return 1.0
-    if rfp.incumbent_confidence < 0.6:                return 1.0
-    # 60% conf → 0.7×, 90% conf → 0.55×
-    return 1.0 - 0.5 * rfp.incumbent_confidence
-```
+Replaces a continuous confidence multiplier with a ternary state.
 
-### 8.7 Stage 6 — Sub-on-prime track (always)
+### 9.7 Stage 6 — Sub-on-prime track (always)
 
 Run a parallel scoring track even when prime gates pass:
 
@@ -631,7 +733,7 @@ def score_as_sub(profile, rfp, prime_blockers):
     return SubMatch(score, eligible, breakdown)
 ```
 
-### 8.8 Aggregation & weights
+### 9.8 Aggregation, weights, and output
 
 ```python
 weights = {
@@ -642,18 +744,41 @@ weights = {
     'agency':       0.10,
     'location':     0.10,
     'duration':     0.05,
-    'description':  0.05,   # general semantic match as background
+    'description':  0.05,
 }
 
 raw = sum(weights[k] * v for k, v in scores.items() if v is not None)
 soft_bonus = soft_cert_bonus(profile, rfp)
 score = clamp(round((raw + soft_bonus) * 100), 0, 100)
-win_probability = score * confidence_multiplier(rfp)
+incumbent_state = compute_incumbent_state(rfp)         # § 10
+win_probability = score * incumbent_multiplier(incumbent_state)
 ```
 
-`win_probability` is surfaced separately from `score`. A 90-point match against an 80%-confidence incumbent shows as `Score 90 / Win likelihood 36`.
+The **match output** carries data quality alongside the score:
 
-### 8.9 Tiers
+```json
+{
+  "score": 78,
+  "win_probability": 31,
+  "tier": "strong",
+  "incumbent_state": "likely",
+  "incumbent_vendor": "Acme Corp",
+  "data_quality": {
+    "source_id": "planetbids_san_diego",
+    "has_pdf_extraction": false,
+    "has_market_intel": true,
+    "coverage": "market_intel_only"
+  },
+  "breakdown": [...],
+  "citations": [...]
+}
+```
+
+`win_probability` surfaced separately. A 78-score / 31-win-probability event reads as: "good fit, but likely renewal — not worth bidding."
+
+UI uses `data_quality` to show "limited data — bid carefully" badges on PlanetBids events with no PDF extraction.
+
+### 9.9 Tiers
 
 ```
 score >= 75 → 'excellent'
@@ -664,7 +789,7 @@ otherwise   → 'minimal'
 disqualified (prime gates failed, no sub option) → 'not_eligible'
 ```
 
-### 8.10 Citations
+### 9.10 Citations
 
 Every category in the breakdown includes:
 
@@ -683,85 +808,89 @@ Surfaced verbatim in the UI: *"Strong specialty match: RFP says 'sidewalk and cu
 
 ---
 
-## 9. Incumbent risk pipeline
+## 10. Incumbent state machine
 
-Lives in `webscraping/v2/`. Three phases.
+The matcher computes a ternary `incumbent_state ∈ {likely, open_field, unknown}` per RFP. Source-routed because each source surfaces incumbency through different fields.
 
-### 9.1 Phase 1 — RFP-text incumbent detection
-
-New module `webscraping/v2/pipeline/incumbent.py`. Run during normalization.
-
-Scan title + description + attachment rollup for incumbent-tell phrases:
+### 10.1 State machine
 
 ```python
-INCUMBENT_PHRASES = [
-    (r"current contract\s+(expires|expiring|ends|ending)", 0.9),
-    (r"incumbent\s+(vendor|contractor|provider)",          0.95),
-    (r"existing\s+(service|maintenance|support)\s+contract", 0.7),
-    (r"renewal\s+of\s+(services|contract|agreement)",      0.7),
-    (r"continuation\s+of\s+services",                       0.7),
-    (r"replace\s+existing",                                  0.5),
-    (r"transition\s+from\s+(current|existing)\s+(provider|vendor)", 0.85),
-    (r"extension\s+of\s+the\s+current\s+contract",          0.85),
-    (r"contract\s+#\s*\S+\s+expires",                       0.9),
-    (r"awarded\s+to\s+([A-Z][\w\s,.&]+)\s+in\s+\d{4}",      0.8),  # captures vendor
-]
+def compute_incumbent_state(rfp):
+    # 1. Cal eProcure: LLM-extracted incumbent_vendor from RFP text (LIVE)
+    if rfp.incumbent_vendor:
+        return IncumbentState(
+            state='likely', confidence=0.85,
+            source='text_extraction',
+            named_vendor=rfp.incumbent_vendor,
+            contract_end=rfp.incumbent_contract_end
+        )
+
+    # 2. PlanetBids: structured award history
+    history = lookup_award_history(rfp.agency, rfp.category, lookback_years=5)
+    if same_vendor_won_n_recent(history, n=2):
+        return IncumbentState(
+            state='likely', confidence=0.80,
+            source='award_history',
+            named_vendor=most_recent_winner(history)
+        )
+
+    # 3. PlanetBids: thin bid response on closed comparable
+    last_comparable = most_recent(history)
+    if last_comparable and len(last_comparable.bid_results) <= 2:
+        return IncumbentState(
+            state='likely', confidence=0.65,
+            source='thin_bid_response'
+        )
+
+    # 4. Open-field signal: ≥3 prior with distinct winners
+    if distinct_winners_in_history(history, n=3):
+        return IncumbentState(
+            state='open_field', confidence=0.75,
+            source='distinct_winners'
+        )
+
+    # 5. No signal available
+    return IncumbentState(state='unknown', confidence=None)
+
+
+def incumbent_multiplier(state):
+    if state.state == 'likely':
+        # 80% conf → 0.6×, 90% conf → 0.55×
+        return 1.0 - 0.5 * state.confidence
+    return 1.0
 ```
 
-Also: pattern-based — if RFP issued < 90 days before an extracted "expiration date" of an existing contract, set confidence to 0.85.
+### 10.2 Source coverage today
 
-Output written to `EnrichedEvent`:
+| Source | Detection path | Status |
+|---|---|---|
+| Cal eProcure | `rfp.incumbent_vendor` (LLM-extracted) | **Live** (commit `9118ea1`) |
+| PlanetBids (with history) | `award_history` lookup via `rfp_bidders` join | Available once vendor index resolves fingerprints; manifests already include `bid_results` and `award` |
+| PlanetBids (no history) | `thin_bid_response` on last comparable, otherwise `unknown` | Improves as `--include-awarded` accumulates data |
+| BidSync | none | `unknown` always |
+| Agentic (LA, SF) | none | broken; no events to score |
 
-```python
-incumbent_signal: {
-    detected: bool,
-    confidence: float,    # max of matched phrase confidences
-    phrases: list[str],
-    named_vendor: str | None,
-}
-```
+### 10.3 Surfacing in the product
 
-Catches roughly 30–40% of true incumbents based on a manual sample of 100 California RFPs. High precision when it fires.
+- RFP card chip: red "⚠ Incumbent likely: [vendor]" when `state='likely' AND confidence >= 0.6`
+- RFP card chip: green "✓ Open field" when `state='open_field'`
+- No chip when `state='unknown'` (don't fake precision)
+- Match breakdown: "Win probability adjusted: incumbent presence detected (Caltrans, contract ends 2026-06-30)"
+- Dashboard filter: "Hide likely incumbents" toggle
 
-### 9.2 Phase 2 — Award-history database
+### 10.4 Coordination with webscraping
 
-Add an awards crawler per scraper:
+Open items tracked between this spec and [COVERAGE.md](../webscraping/v2/COVERAGE.md):
 
-| Scraper | Award source |
-|---|---|
-| Cal eProcure | "Notice of Intent to Award" pages, linked from event detail pages |
-| PlanetBids | Award data exposed on each RFP page after close |
-| BidSync | Award data on each tabulation/award API endpoint |
-| Agentic | Auto-discover from the agency's awards page (recipe extension) |
-
-Schema: `rfp_awards` table (already in § 3). Manifests at `scrapes/v2/awards/{source_id}/awards.json`.
-
-Refresh on the existing 4-hour EventBridge schedule.
-
-**Use in incumbent detection**: when normalizing a new RFP, look up `(agency, category)` in `rfp_awards` ordered by date desc. If the same vendor won the most recent award in this `(agency, category)`, set:
-
-```python
-incumbent_signal.named_vendor = most_recent_winner
-incumbent_signal.confidence = max(current, 0.75)
-```
-
-If the same vendor won the last 2+ awards in this `(agency, category)`, bump confidence to 0.9.
-
-Database becomes useful after ~3–6 months of award scraping.
-
-### 9.3 Phase 3 — Council-meeting scraping (defer, research first)
-
-Marcus's Ontopical pattern. Spike for 1 week on three agencies (LA, SF, San Diego) to assess signal-to-noise. Ship only if precision > 60% on a 20-RFP sample.
-
-### 9.4 Surfacing in the product
-
-- RFP card: red "Incumbent likely" or "Renewal likely: [vendor]" chip when `confidence > 0.6`
-- Match breakdown: "Win probability adjusted: incumbent presence detected"
-- Filter on dashboard: "Hide likely renewals" toggle
+- Vendor fingerprint algorithm — when does `vendors/index.json` start being produced?
+- `rfp_bidders` table population: how often is the join refreshed?
+- Backfill depth — how far back does `--include-awarded` reach on PlanetBids?
+- PlanetBids document gating — affects whether `incumbent_vendor` text extraction can ever extend to PlanetBids
+- Agentic Lambda fix — affects whether LA/SF events ever reach the matcher
 
 ---
 
-## 10. API surface
+## 11. API surface
 
 Auth unchanged (JWT). New endpoints:
 
@@ -772,6 +901,8 @@ POST   /api/profile/specialties/         - add specialty
 DELETE /api/profile/specialties/{id}/    - remove specialty
 ... same pattern for capabilities, licenses, certifications, work_areas, agency_relationships
 
+POST   /api/profile/vendor/resolve/      - claim a vendor fingerprint by company-name match
+
 POST   /api/onboarding/step/{n}/         - save a single onboarding step
 GET    /api/onboarding/state/            - resume state
 
@@ -781,10 +912,10 @@ PATCH  /api/contracts/{id}/claims/{id}/  - accept | reject | edit
 DELETE /api/contracts/{id}/              - delete contract; cascade to claims; profile rows already-accepted are NOT removed
 
 GET    /api/match/                       - scored RFPs for current user
-GET    /api/match/{rfp_id}/              - single match with breakdown + citations
+GET    /api/match/{rfp_id}/              - single match with breakdown + citations + data_quality
 PATCH  /api/match/{rfp_id}/              - status, feedback
 
-GET    /api/events/                      - existing scraped RFPs (still S3-backed)
+GET    /api/events/                      - existing scraped RFPs (still S3-backed; populates rfp_cache on read)
 ```
 
 Drop:
@@ -796,21 +927,25 @@ POST   /api/profile/extract/             - replaced by per-doc /api/contracts/ f
 
 ---
 
-## 11. UI changes
+## 12. UI changes
 
 **Onboarding** (`/onboarding`): new, replaces upload-first as the primary signup path. Nine screens above.
 
-**Profile** (`/profile`): show provenance per field (e.g. "Cloud Services — from contract X"). Direct edit allowed. Mark hard work areas with a lock icon.
+**Profile** (`/profile`): show provenance per field (e.g. "Cloud Services — from contract X"). Direct edit allowed. Mark hard work areas with a lock icon. Vendor identity widget when fingerprint resolves.
 
 **Contracts** (`/contracts`, renamed from `/upload`): upload + review flow. Each upload spawns a review modal listing claims to accept/reject.
 
-**Dashboard** (`/dashboard`): show `score` and `win_probability` separately. Filter for "hide likely renewals."
+**Dashboard** (`/dashboard`):
+- show `score` and `win_probability` separately
+- `data_quality` badge per card ("full data" / "requirements only" / "market intel only" / "thin")
+- incumbent chips (red "⚠ Incumbent likely: [vendor]" / green "✓ Open field")
+- filter for "hide likely incumbents"
 
-**RFP detail**: prime track + sub track tabs. Each scoring category includes the citation (RFP phrase + profile claim source).
+**RFP detail**: prime track + sub track tabs. Each scoring category includes the citation (RFP phrase + profile claim source). `data_quality` summary shown at the top: "This RFP came from PlanetBids — bidder/award data available, but PDF requirements (NAICS, licenses, certifications) are not accessible. Requirements shown are inferred from the title and description only."
 
 ---
 
-## 12. Phased rollout
+## 13. Phased rollout
 
 | Phase | Duration | Output |
 |---|---|---|
@@ -819,18 +954,20 @@ POST   /api/profile/extract/             - replaced by per-doc /api/contracts/ f
 | 2 | 1 week | Onboarding flow shipped |
 | 3 | 1–2 weeks | Claude SDK migration, classifier, targeted extractors, review screen |
 | 4 | 2 days | PII redaction layer |
-| 5 | 2–3 weeks | Embeddings + matching v2 algorithm |
-| 6 | 1 week | Match UI rewrite (citations, prime/sub tracks) |
-| 7 (parallel, in webscraping) | 1–4 weeks | Incumbent Phase 1, then Phase 2 |
+| 5 | 2–3 weeks | Embeddings + matching v2 algorithm with source-aware scoring + incumbent state machine |
+| 6 | 1 week | Match UI rewrite (citations, prime/sub tracks, data_quality badges, incumbent chips) |
+| 7 (parallel, in webscraping) | ongoing | Vendor fingerprint dedup, `incumbent_vendor` extension to other sources, Lambda fixes |
 
-Total: ~8–10 weeks for one engineer working full-time.
+Total: ~8–10 weeks for one engineer on the matching/profile side, with webscraping parallel.
 
 ---
 
-## 13. Open questions
+## 14. Open questions
 
 - **Embedding provider lock-in**: Voyage-3-large is the recommended option but ties us to one vendor. OpenAI `text-embedding-3-large` is a fallback if Voyage availability becomes an issue. Both fit pgvector(1024).
 - **Specialty taxonomy seed list**: do we ship a hand-curated list of ~200 specialty terms for the onboarding picker, or let users free-text from day one and curate later? Recommend hand-curated for v1.
 - **License-class taxonomy completeness**: California CSLB has ~60 license classes. Need to enumerate all of them in the onboarding picker. Out-of-CA expansion is later.
-- **Sub-eligibility heuristics**: the sub track needs different gates than the prime track. The full set is sketched in § 8.7 but should be validated against discovery interviews before implementation.
+- **Sub-eligibility heuristics**: the sub track needs different gates than the prime track. The full set is sketched in § 9.7 but should be validated against discovery interviews before implementation.
 - **Match feedback loop**: the existing `feedback_rating` field is preserved; we should plan a regression test that takes a sample of bad matches, runs them through v2, and confirms they don't recur.
+- **RFP "category" definition**: incumbent state machine joins by `(agency, category)`. Today we have `naics_codes` and `capabilities` arrays. Picking one as the join key, vs. fuzzy matching on capability sets, is a calibration decision.
+- **PlanetBids document unblock**: vendor-registration-per-agency would dramatically improve coverage. Legal/ops decision; not engineering. Worth tracking as a product-strategy item.
