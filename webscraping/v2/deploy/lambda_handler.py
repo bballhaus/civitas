@@ -33,8 +33,20 @@ import boto3
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# How many sites to scrape per Lambda invocation before chaining
+# How many sites to scrape per Lambda invocation before chaining.
+# include_awarded mode is much heavier (Bidding pass + Awarded pass +
+# per-detail tab clicks for market intel), so we shrink the batch to
+# stay under the 15min Lambda hard timeout.
 BATCH_SIZE = 3
+BATCH_SIZE_INCLUDE_AWARDED = 1
+
+
+def _batch_size_for(event: dict) -> int:
+    return (
+        BATCH_SIZE_INCLUDE_AWARDED
+        if event.get("include_awarded", False)
+        else BATCH_SIZE
+    )
 
 
 def handler(event, context):
@@ -168,16 +180,19 @@ def _handle_multi_site(sites, event, context):
     automatically dispatched after this batch completes.
     """
     skip_enrich = event.get("skip_enrich", False)
+    include_awarded = event.get("include_awarded", False)
     remaining_sites = event.get("remaining_sites", [])
 
     logger.info(
         f"Multi-site batch: {len(sites)} sites this batch, "
-        f"{len(remaining_sites)} remaining after"
+        f"{len(remaining_sites)} remaining after, "
+        f"include_awarded={include_awarded}"
     )
 
     from webscraping.v2.orchestrator.runner import run_site
 
-    # Cal eProcure needs chained batching — kick it off separately
+    # Cal eProcure needs chained batching — kick it off separately.
+    # include_awarded is PlanetBids-only, so it's not propagated to Cal eProcure.
     if "caleprocure" in sites:
         sites = [s for s in sites if s != "caleprocure"]
         logger.info("Launching Cal eProcure as chained batch invocation")
@@ -197,7 +212,11 @@ def _handle_multi_site(sites, event, context):
         try:
             logger.info(f"--- Starting {site_id} ---")
             events = asyncio.get_event_loop().run_until_complete(
-                run_site(site_id, skip_enrich=skip_enrich)
+                run_site(
+                    site_id,
+                    skip_enrich=skip_enrich,
+                    include_awarded=include_awarded,
+                )
             )
             results[site_id] = {"events": len(events), "status": "ok"}
             logger.info(f"--- {site_id}: {len(events)} events ---")
@@ -208,8 +227,9 @@ def _handle_multi_site(sites, event, context):
     # Chain: dispatch next batch if there are remaining sites
     chain_error = None
     if remaining_sites:
-        next_batch = remaining_sites[:BATCH_SIZE]
-        still_remaining = remaining_sites[BATCH_SIZE:]
+        bsize = _batch_size_for(event)
+        next_batch = remaining_sites[:bsize]
+        still_remaining = remaining_sites[bsize:]
         logger.info(
             f"Chaining next batch: {next_batch} "
             f"({len(still_remaining)} remaining after)"
@@ -219,6 +239,7 @@ def _handle_multi_site(sites, event, context):
                 "sites": next_batch,
                 "remaining_sites": still_remaining,
                 "skip_enrich": skip_enrich,
+                "include_awarded": include_awarded,
             })
         except Exception as e:
             chain_error = str(e)
@@ -247,7 +268,12 @@ def _handle_run_all(event, context):
     Individual bidsync_* sites are skipped since bidsync_all_ca covers them.
     """
     skip_enrich = event.get("skip_enrich", False)
-    logger.info(f"Run-all mode, skip_enrich={skip_enrich}")
+    include_awarded = event.get("include_awarded", False)
+    bsize = _batch_size_for(event)
+    logger.info(
+        f"Run-all mode, skip_enrich={skip_enrich}, "
+        f"include_awarded={include_awarded}, batch_size={bsize}"
+    )
 
     from webscraping.v2.orchestrator.runner import SITE_REGISTRY
 
@@ -291,10 +317,12 @@ def _handle_run_all(event, context):
         except Exception as e:
             logger.error(f"Failed to dispatch BidSync: {e}")
 
-    # Dispatch PlanetBids + agentic in batches of BATCH_SIZE (chained)
+    # Dispatch PlanetBids + agentic in batches (chained).
+    # include_awarded uses BATCH_SIZE_INCLUDE_AWARDED=1 (one portal per
+    # invocation) since the per-portal time grows ~3-4× with the Awarded pass.
     if other_sites:
-        first_batch = other_sites[:BATCH_SIZE]
-        remaining = other_sites[BATCH_SIZE:]
+        first_batch = other_sites[:bsize]
+        remaining = other_sites[bsize:]
         logger.info(
             f"Dispatching {len(other_sites)} remaining sites: "
             f"first batch={first_batch}, {len(remaining)} queued"
@@ -304,6 +332,7 @@ def _handle_run_all(event, context):
                 "sites": first_batch,
                 "remaining_sites": remaining,
                 "skip_enrich": skip_enrich,
+                "include_awarded": include_awarded,
             })
             dispatched.extend(first_batch)
         except Exception as e:
@@ -315,7 +344,7 @@ def _handle_run_all(event, context):
             "mode": "run-all-dispatch",
             "dispatched": dispatched,
             "total_sites": len(all_sites),
-            "batches_queued": (len(other_sites) + BATCH_SIZE - 1) // BATCH_SIZE if other_sites else 0,
+            "batches_queued": (len(other_sites) + bsize - 1) // bsize if other_sites else 0,
             "note": "Sites dispatched as async invocations. Check CloudWatch logs for progress.",
         }),
     }
