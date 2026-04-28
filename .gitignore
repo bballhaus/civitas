@@ -22,10 +22,12 @@
 /front_end/out/
 /front_end/build/
 
-# env files
+# env files (but allow committed templates)
 /front_end/.env*
+!/front_end/.env.example
 /front_end/.vercel
 .env*
+!.env.example
 
 # debug logs
 /front_end/npm-debug.log*
