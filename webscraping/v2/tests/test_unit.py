@@ -170,6 +170,40 @@ class TestModels:
         assert e2.certifications == ["DBE"]
         assert e2.licenses_required == ["CSLB Class A General Contractor"]
 
+    def test_extraction_carries_incumbent_fields(self):
+        ext = AttachmentExtraction(
+            incumbent_vendor="ABC Cleaning Services Inc.",
+            incumbent_contract_end="2026-06-30",
+        )
+        assert ext.incumbent_vendor == "ABC Cleaning Services Inc."
+        assert ext.incumbent_contract_end == "2026-06-30"
+
+    def test_normalize_passes_incumbent_through(self):
+        ext = AttachmentExtraction(
+            incumbent_vendor="ABC Cleaning Services Inc.",
+            incumbent_contract_end="2026-06-30",
+        )
+        raw = RawScrapedEvent(
+            source_id="caleprocure",
+            source_event_id="3600/0000037948",
+            source_url="https://example.com",
+            title="Test",
+        )
+        enriched = normalize_event(raw, extraction=ext)
+        assert enriched.incumbent_vendor == "ABC Cleaning Services Inc."
+        assert enriched.incumbent_contract_end == "2026-06-30"
+
+    def test_normalize_incumbent_none_when_no_extraction(self):
+        raw = RawScrapedEvent(
+            source_id="planetbids_san_diego",
+            source_event_id="139554",
+            source_url="https://example.com",
+            title="Test",
+        )
+        enriched = normalize_event(raw, extraction=None)
+        assert enriched.incumbent_vendor is None
+        assert enriched.incumbent_contract_end is None
+
 
 # ============================================================================
 # Normalize pipeline tests

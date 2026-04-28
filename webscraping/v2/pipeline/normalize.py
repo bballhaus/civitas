@@ -299,6 +299,8 @@ def normalize_event(
         capabilities=capabilities,
         certifications=extraction.certifications_required if extraction else [],
         licenses_required=extraction.licenses_required if extraction else [],
+        incumbent_vendor=extraction.incumbent_vendor if extraction else None,
+        incumbent_contract_end=extraction.incumbent_contract_end if extraction else None,
         contact=raw.contact,
         attachment_urls=raw.attachment_urls,
         clearances_required=extraction.clearances_required if extraction else [],

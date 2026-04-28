@@ -83,6 +83,14 @@ class AttachmentExtraction(BaseModel):
         default_factory=list,
         description="Trade/professional licenses (CSLB Class A, C-10 Electrical, PE License, Architect License)."
     )
+    incumbent_vendor: Optional[str] = Field(
+        default=None,
+        description="Current contractor named in the RFP, if mentioned."
+    )
+    incumbent_contract_end: Optional[str] = Field(
+        default=None,
+        description="Date the incumbent's current contract expires, if mentioned."
+    )
     clearances_required: list[str] = Field(default_factory=list)
     set_aside_types: list[str] = Field(default_factory=list)
     capabilities_required: list[str] = Field(default_factory=list)
