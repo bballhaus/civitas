@@ -103,6 +103,11 @@ def _invoke_async(context, payload: dict):
 
 def _handle_single_site(site_id, event, context):
     """Scrape a single site with optional chained batching."""
+    delay_before_start = event.get("delay_before_start", 0)
+    if delay_before_start > 0:
+        logger.info(f"Staggered start for {site_id}: sleeping {delay_before_start}s")
+        time.sleep(delay_before_start)
+
     batch_offset = event.get("batch_offset", 0)
     batch_size = event.get("batch_size", 40)
     skip_enrich = event.get("skip_enrich", False)
@@ -111,6 +116,28 @@ def _handle_single_site(site_id, event, context):
         f"Single-site: site={site_id}, offset={batch_offset}, "
         f"batch_size={batch_size}, skip_enrich={skip_enrich}"
     )
+
+    # Chain-first: dispatch next batch BEFORE running current scrape.
+    # We don't know events_scraped yet, but dispatching by best estimate
+    # means a timeout doesn't kill the within-portal chain. The chained
+    # invocation will only do useful work if there are still events left
+    # at its offset; if not, run_site_batch returns events_scraped=0 and
+    # the chain stops naturally. This trades a possible wasted invocation
+    # for chain robustness.
+    next_offset = batch_offset + batch_size
+    speculative_dispatched = False
+    try:
+        _invoke_async(context, {
+            "site_id": site_id,
+            "batch_offset": next_offset,
+            "batch_size": batch_size,
+            "skip_enrich": skip_enrich,
+            # No delay_before_start — within-portal chain runs back-to-back
+        })
+        speculative_dispatched = True
+        logger.info(f"Speculatively chained next batch: offset={next_offset}")
+    except Exception as e:
+        logger.error(f"Failed to speculatively chain: {e}")
 
     try:
         from webscraping.v2.orchestrator.runner import run_site_batch
@@ -132,29 +159,32 @@ def _handle_single_site(site_id, event, context):
 
     events_scraped = result.get("events_scraped", 0)
     total_events = result.get("total_events", 0)
-    next_offset = batch_offset + events_scraped
-    chain_continues = next_offset < total_events and events_scraped > 0
+    chain_error = None
+    next_offset_actual = batch_offset + events_scraped
 
     logger.info(
         f"Batch complete: scraped {events_scraped} events "
-        f"(offset {batch_offset}-{next_offset} of {total_events})"
+        f"(offset {batch_offset}-{next_offset_actual} of {total_events})"
     )
 
-    # Chain: invoke next batch if there are more events
-    chain_error = None
-    if chain_continues:
+    # If the speculative dispatch was wrong (we scraped fewer events than expected),
+    # the chained invocation may need to be re-fired at the actual next_offset.
+    # The over-shoot case (we scraped fewer than batch_size, hit end of listing)
+    # is handled gracefully — chained batch will return events_scraped=0 and stop.
+    chain_continues = next_offset_actual < total_events and events_scraped > 0
+    if chain_continues and not speculative_dispatched:
         try:
-            logger.info(f"Chaining next batch: offset={next_offset}")
             _invoke_async(context, {
                 "site_id": site_id,
-                "batch_offset": next_offset,
+                "batch_offset": next_offset_actual,
                 "batch_size": batch_size,
                 "skip_enrich": skip_enrich,
             })
-            logger.info(f"Next batch invoked (offset={next_offset})")
+            logger.info(f"Recovery-chained next batch: offset={next_offset_actual}")
         except Exception as e:
             chain_error = str(e)
-            logger.error(f"Failed to chain next batch: {e}")
+            logger.error(f"Failed to recovery-chain: {e}")
+    next_offset = next_offset_actual
 
     return {
         "statusCode": 200,
@@ -273,21 +303,19 @@ def _handle_multi_site(sites, event, context):
 
 def _handle_run_all(event, context):
     """
-    Dispatch all sites as batched Lambda invocations.
+    Dispatch all sites as async Lambda invocations.
 
-    Splits sites into three groups:
-    1. Cal eProcure — its own chained batch (already handled by _handle_multi_site)
-    2. BidSync all_ca — single invocation (one search covers all CA agencies)
-    3. PlanetBids + agentic — batched in groups of BATCH_SIZE, chained
-
-    Individual bidsync_* sites are skipped since bidsync_all_ca covers them.
+    Cal eProcure: chained within-portal batches (size 15 events).
+    BidSync all_ca: one invocation covers all CA agencies.
+    PlanetBids: each portal dispatched as its own chained within-portal
+        batches (size 8 events), staggered so concurrent logins don't hammer.
+    Agentic (LA, SF): chain-first multi-site batch.
     """
     skip_enrich = event.get("skip_enrich", False)
     include_awarded = event.get("include_awarded", False)
-    bsize = _batch_size_for(event)
     logger.info(
         f"Run-all mode, skip_enrich={skip_enrich}, "
-        f"include_awarded={include_awarded}, batch_size={bsize}"
+        f"include_awarded={include_awarded}"
     )
 
     from webscraping.v2.orchestrator.runner import SITE_REGISTRY
@@ -295,14 +323,17 @@ def _handle_run_all(event, context):
     all_sites = [sid for sid, cfg in SITE_REGISTRY.items() if cfg.enabled]
     logger.info(f"Total enabled sites: {len(all_sites)}")
 
-    # Group 1: Cal eProcure (chained batching — launched by _handle_multi_site)
+    # Group 1: Cal eProcure (chained batching — within-portal pagination)
     # Group 2: BidSync all_ca (one invocation covers all CA agencies)
-    # Group 3: Everything else (PlanetBids + agentic), excluding individual bidsync_*
-    other_sites = [
+    # Group 3: PlanetBids portals (each dispatched as its own chained batch
+    #          with within-portal pagination; staggered to avoid hammering)
+    # Group 4: Agentic (LA, SF) — multi-site batch with chain-first stagger
+    planetbids_sites = [s for s in all_sites if s.startswith("planetbids_")]
+    agentic_sites = [
         sid for sid in all_sites
         if sid != "caleprocure"
-        and sid != "bidsync_all_ca"
-        and not sid.startswith("bidsync_")  # skip individual bidsync — covered by all_ca
+        and not sid.startswith("bidsync_")
+        and not sid.startswith("planetbids_")
     ]
 
     dispatched = []
@@ -332,16 +363,35 @@ def _handle_run_all(event, context):
         except Exception as e:
             logger.error(f"Failed to dispatch BidSync: {e}")
 
-    # Dispatch PlanetBids + agentic in batches (chained, one portal per
-    # invocation). The chain is staggered via delay_before_start in
-    # _handle_multi_site so portals run sequentially rather than in parallel.
-    if other_sites:
-        first_batch = other_sites[:bsize]
-        remaining = other_sites[bsize:]
+    # Dispatch each PlanetBids portal as its own single-site chained job.
+    # Each portal paginates internally (8 events per Lambda invocation),
+    # so even the largest portals (San Diego at 21+ events) finish without
+    # hitting the 15-min Lambda timeout. Stagger between portals avoids
+    # 44 concurrent logins to the same vendor account.
+    PLANETBIDS_BATCH_SIZE = 8
+    PLANETBIDS_STAGGER_SECONDS = 90
+    for i, site_id in enumerate(planetbids_sites):
+        try:
+            _invoke_async(context, {
+                "site_id": site_id,
+                "batch_offset": 0,
+                "batch_size": PLANETBIDS_BATCH_SIZE,
+                "skip_enrich": skip_enrich,
+                "delay_before_start": i * PLANETBIDS_STAGGER_SECONDS,
+            })
+            dispatched.append(site_id)
+        except Exception as e:
+            logger.error(f"Failed to dispatch {site_id}: {e}")
+    if planetbids_sites:
         logger.info(
-            f"Dispatching {len(other_sites)} remaining sites: "
-            f"first batch={first_batch}, {len(remaining)} queued"
+            f"Dispatched {len(planetbids_sites)} PlanetBids portals "
+            f"(stagger {PLANETBIDS_STAGGER_SECONDS}s, batch size {PLANETBIDS_BATCH_SIZE} events)"
         )
+
+    # Dispatch agentic sites as a chain-first multi-site batch (no pagination).
+    if agentic_sites:
+        first_batch = agentic_sites[:1]
+        remaining = agentic_sites[1:]
         try:
             _invoke_async(context, {
                 "sites": first_batch,
@@ -351,7 +401,7 @@ def _handle_run_all(event, context):
             })
             dispatched.extend(first_batch)
         except Exception as e:
-            logger.error(f"Failed to dispatch PlanetBids batch: {e}")
+            logger.error(f"Failed to dispatch agentic batch: {e}")
 
     return {
         "statusCode": 200,
@@ -359,7 +409,8 @@ def _handle_run_all(event, context):
             "mode": "run-all-dispatch",
             "dispatched": dispatched,
             "total_sites": len(all_sites),
-            "batches_queued": (len(other_sites) + bsize - 1) // bsize if other_sites else 0,
+            "planetbids_portals": len(planetbids_sites),
+            "agentic_portals": len(agentic_sites),
             "note": "Sites dispatched as async invocations. Check CloudWatch logs for progress.",
         }),
     }

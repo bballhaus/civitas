@@ -268,12 +268,26 @@ class PlanetBidsScraper(BaseScraper):
     STATUS_BIDDING = "3"
     STATUS_AWARDED = "6"
 
-    def __init__(self, site_config: SiteConfig, include_awarded: bool = False):
+    def __init__(
+        self,
+        site_config: SiteConfig,
+        include_awarded: bool = False,
+        batch_offset: int = 0,
+        batch_size: Optional[int] = None,
+    ):
         super().__init__(site_config)
         self._portal_url = site_config.config.get("url", site_config.url)
         self._agency_name = site_config.config.get("name", site_config.name)
         self._portal_id = site_config.config.get("portal_id")
         self._authenticated = False
+        # Pagination — when set, scrape() yields events[batch_offset:batch_offset+batch_size]
+        # within a single status pass. Lets the Lambda handler chain batches of N events
+        # per invocation so large portals (San Diego, Anaheim) don't hit the 15-min timeout.
+        # Only meaningful in single-status mode.
+        self.batch_offset = batch_offset
+        self.batch_size = batch_size
+        # Populated after _scroll_to_load_all so the Lambda chain knows when to stop.
+        self.total_available: int = 0
         # Status passes to run. Bidding is current opportunities; Awarded
         # unlocks historical contract data (vendors, amounts, awards).
         self._statuses: list[tuple[str, str]] = [(self.STATUS_BIDDING, "Bidding")]
@@ -342,11 +356,25 @@ class PlanetBidsScraper(BaseScraper):
                         except Exception as e:
                             logger.debug(f"Failed to extract row: {e}")
 
-                    for i, event in enumerate(events):
+                    self.total_available = len(events)
+
+                    # Pagination: only enrich events in this batch's window.
+                    # Single-status mode only; multi-status (--include-awarded)
+                    # ignores pagination and does the full pass.
+                    enrich_targets = events
+                    if self.batch_size is not None and len(self._statuses) == 1:
+                        end = self.batch_offset + self.batch_size
+                        enrich_targets = events[self.batch_offset:end]
+                        logger.info(
+                            f"Pagination: enriching events "
+                            f"[{self.batch_offset}:{min(end, len(events))}] of {len(events)}"
+                        )
+
+                    for i, event in enumerate(enrich_targets):
                         try:
                             self.throttle()
                             await self._enrich_from_detail(
-                                page, event, i + 1, len(events)
+                                page, event, i + 1, len(enrich_targets)
                             )
                         except Exception as e:
                             logger.debug(

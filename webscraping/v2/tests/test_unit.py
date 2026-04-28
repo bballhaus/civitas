@@ -642,5 +642,38 @@ class TestMergePreservesMarketIntel:
         assert merged[0].bid_results[0].amount_cents == 50_000_000
 
 
+# ============================================================================
+# PlanetBids pagination
+# ============================================================================
+
+class TestPlanetBidsPagination:
+    def test_default_no_pagination(self):
+        from webscraping.v2.scrapers.planetbids import PlanetBidsScraper, get_planetbids_site_configs
+        cfg = get_planetbids_site_configs()["planetbids_san_diego"]
+        s = PlanetBidsScraper(cfg)
+        assert s.batch_offset == 0
+        assert s.batch_size is None
+        assert s.total_available == 0
+
+    def test_paginated_init(self):
+        from webscraping.v2.scrapers.planetbids import PlanetBidsScraper, get_planetbids_site_configs
+        cfg = get_planetbids_site_configs()["planetbids_san_diego"]
+        s = PlanetBidsScraper(cfg, batch_offset=8, batch_size=8)
+        assert s.batch_offset == 8
+        assert s.batch_size == 8
+
+    def test_run_site_batch_routes_planetbids(self):
+        # Verifies the orchestrator factory branches PlanetBids through pagination
+        # without actually running a scrape. Uses inspect to confirm the constructor
+        # is called with batch params.
+        import inspect
+        from webscraping.v2.orchestrator import runner
+        src = inspect.getsource(runner.run_site_batch)
+        assert "planetbids_" in src
+        assert "PlanetBidsScraper" in src
+        assert "batch_offset=batch_offset" in src
+        assert "batch_size=batch_size" in src
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

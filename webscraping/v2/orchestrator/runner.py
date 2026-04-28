@@ -338,6 +338,11 @@ async def run_site_batch(
     if site_id == "caleprocure":
         from webscraping.v2.scrapers.caleprocure import CalEprocureScraper
         scraper = CalEprocureScraper(config, batch_offset=batch_offset, batch_size=batch_size)
+    elif site_id.startswith("planetbids_"):
+        from webscraping.v2.scrapers.planetbids import PlanetBidsScraper
+        scraper = PlanetBidsScraper(
+            config, batch_offset=batch_offset, batch_size=batch_size
+        )
     else:
         scraper = get_scraper(config)
 
