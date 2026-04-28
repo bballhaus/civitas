@@ -147,6 +147,29 @@ class TestModels:
         assert manifest.events == []
         assert manifest.updated_at  # auto-generated
 
+    def test_extraction_separates_certs_from_licenses(self):
+        ext = AttachmentExtraction(
+            certifications_required=["DBE", "DIR Registration"],
+            licenses_required=["CSLB Class A General Contractor", "C-10 Electrical"],
+        )
+        assert "DBE" in ext.certifications_required
+        assert "CSLB Class A General Contractor" in ext.licenses_required
+        # The two lists do not bleed into each other
+        assert "CSLB Class A General Contractor" not in ext.certifications_required
+        assert "DBE" not in ext.licenses_required
+
+    def test_enriched_event_has_licenses_field(self):
+        e = EnrichedEvent(
+            id="x", source_id="s", source_event_id="e",
+            source_url="https://x", title="t",
+            certifications=["DBE"],
+            licenses_required=["CSLB Class A General Contractor"],
+        )
+        # Round-trip preserves both
+        e2 = EnrichedEvent.model_validate_json(e.model_dump_json())
+        assert e2.certifications == ["DBE"]
+        assert e2.licenses_required == ["CSLB Class A General Contractor"]
+
 
 # ============================================================================
 # Normalize pipeline tests

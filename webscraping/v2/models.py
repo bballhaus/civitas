@@ -75,7 +75,14 @@ class RawScrapedEvent(BaseModel):
 class AttachmentExtraction(BaseModel):
     """Structured metadata extracted from RFP attachment PDFs via LLM."""
     naics_codes: list[str] = Field(default_factory=list)
-    certifications_required: list[str] = Field(default_factory=list)
+    certifications_required: list[str] = Field(
+        default_factory=list,
+        description="Programs / status certs / registrations (DBE, MBE, WBE, SBE, DIR, SOC2, ISO). NOT trade licenses."
+    )
+    licenses_required: list[str] = Field(
+        default_factory=list,
+        description="Trade/professional licenses (CSLB Class A, C-10 Electrical, PE License, Architect License)."
+    )
     clearances_required: list[str] = Field(default_factory=list)
     set_aside_types: list[str] = Field(default_factory=list)
     capabilities_required: list[str] = Field(default_factory=list)
@@ -198,7 +205,14 @@ class EnrichedEvent(BaseModel):
     # Matching fields
     naics_codes: list[str] = Field(default_factory=list)
     capabilities: list[str] = Field(default_factory=list)
-    certifications: list[str] = Field(default_factory=list)
+    certifications: list[str] = Field(
+        default_factory=list,
+        description="Certs/programs the RFP requires of bidders (e.g. DBE, DIR registration). NOT trade licenses."
+    )
+    licenses_required: list[str] = Field(
+        default_factory=list,
+        description="Trade/professional licenses the RFP requires (e.g. CSLB Class A, C-10 Electrical)."
+    )
 
     # Contact
     contact: ContactInfo = Field(default_factory=ContactInfo)

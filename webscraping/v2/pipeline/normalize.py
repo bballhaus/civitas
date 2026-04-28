@@ -298,6 +298,7 @@ def normalize_event(
         naics_codes=extraction.naics_codes if extraction else [],
         capabilities=capabilities,
         certifications=extraction.certifications_required if extraction else [],
+        licenses_required=extraction.licenses_required if extraction else [],
         contact=raw.contact,
         attachment_urls=raw.attachment_urls,
         clearances_required=extraction.clearances_required if extraction else [],

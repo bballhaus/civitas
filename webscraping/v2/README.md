@@ -72,7 +72,7 @@ The `mode: all` handler dispatches sites as parallel async Lambda invocations:
 
 1. **Scrape**: Each scraper produces `RawScrapedEvent` objects with title, description, contact, attachment URLs
 2. **Download** (Cal eProcure only): PDFs downloaded inline via Playwright (session-bound URLs), text extracted with `pdfplumber`
-3. **Enrich**: Pre-extracted PDF text sent to Groq LLM (`llama-3.1-8b-instant`) for structured metadata (NAICS codes, certifications, clearances, deliverables, evaluation criteria)
+3. **Enrich**: Pre-extracted PDF text sent to Groq LLM (`llama-3.1-8b-instant`) for structured metadata (NAICS codes, certifications, **licenses required**, clearances, deliverables, evaluation criteria). `certifications_required` and `licenses_required` are kept as separate fields — certs cover status/preference programs (DBE, MBE, DIR registration, ISO 27001) while licenses cover trade/professional licenses (CSLB Class A, C-10 Electrical, PE License).
 4. **Normalize**: Infer industry, location, and capabilities from text via regex rules
 5. **Merge**: New events merged with existing S3 data. Missing events marked `closed` (never deleted)
 6. **Upload**: Per-source manifests at `scrapes/v2/manifests/{source_id}/latest.json`

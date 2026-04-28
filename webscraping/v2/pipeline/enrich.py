@@ -69,6 +69,7 @@ def classify_pdf(filename: str) -> str:
 EXTRACTION_SCHEMA = {
     "naics_codes": ["string"],
     "certifications_required": ["string"],
+    "licenses_required": ["string"],
     "clearances_required": ["string"],
     "set_aside_types": ["string"],
     "capabilities_required": ["string"],
@@ -90,10 +91,11 @@ Expected schema:
 
 Rules:
 - naics_codes: NAICS codes mentioned (e.g. "561720", "236220"). Include the code numbers only.
-- certifications_required: Required certifications (e.g. "Small Business (SB)", "DVBE", "DIR Registration")
-- clearances_required: Security clearances needed (e.g. "Live Scan", "Background Check")
-- set_aside_types: Set-aside categories (e.g. "Small Business", "DVBE", "8(a)")
-- capabilities_required: Specific skills required (e.g. "HVAC maintenance", "software development")
+- certifications_required: Status certs / preference programs / agency registrations the bidder must hold (e.g. "DBE", "MBE", "WBE", "SBE", "Small Business (SB)", "DVBE", "DIR Registration", "ISO 27001", "SOC 2"). DO NOT include trade or professional licenses here.
+- licenses_required: Trade or professional licenses required to perform the work (e.g. "CSLB Class A General Contractor", "C-10 Electrical Contractor License", "C-36 Plumbing Contractor License", "Professional Engineer (PE) License", "Architect License", "California Contractor License"). License classes/codes are licenses, not certifications.
+- clearances_required: Security clearances or background checks needed (e.g. "Live Scan", "DOJ Background Check", "Confidential Clearance")
+- set_aside_types: Set-aside categories the solicitation prefers (e.g. "Small Business", "DVBE", "8(a)")
+- capabilities_required: Specific skills/services required (e.g. "HVAC maintenance", "software development")
 - contract_value_estimate: Total estimated value as a string. Use null if not mentioned.
 - contract_duration: Duration (e.g. "36 months", "3 years")
 - location_details: Where work is performed (e.g. "Sacramento, CA")
@@ -217,9 +219,9 @@ def _parse_llm_json(raw: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 LIST_FIELDS = [
-    "naics_codes", "certifications_required", "clearances_required",
-    "set_aside_types", "capabilities_required", "location_details",
-    "deliverables", "evaluation_criteria",
+    "naics_codes", "certifications_required", "licenses_required",
+    "clearances_required", "set_aside_types", "capabilities_required",
+    "location_details", "deliverables", "evaluation_criteria",
 ]
 SCALAR_FIELDS = [
     "contract_value_estimate", "contract_duration", "onsite_required",
@@ -364,6 +366,7 @@ def enrich_event(
     return AttachmentExtraction(
         naics_codes=merged.get("naics_codes", []),
         certifications_required=merged.get("certifications_required", []),
+        licenses_required=merged.get("licenses_required", []),
         clearances_required=merged.get("clearances_required", []),
         set_aside_types=merged.get("set_aside_types", []),
         capabilities_required=merged.get("capabilities_required", []),
