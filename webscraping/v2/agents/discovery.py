@@ -36,6 +36,7 @@ from webscraping.v2.config import (
     S3_BUCKET,
     S3_V2_PREFIX,
     get_s3_client,
+    get_scrapingbee_proxy,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class PlatformProfile:
     url_template: str  # e.g. "https://procurement.opengov.com/portal/{slug}"
     listing_markers: list[str]  # Substrings on page text indicating a real portal.
     enumeration_hint: str  # Extra guidance for Claude (history, common slugs, etc.)
+    requires_proxy: bool = False  # Route Playwright probes through ScrapingBee.
 
 
 PLATFORM_PROFILES: dict[str, PlatformProfile] = {
@@ -75,6 +77,10 @@ PLATFORM_PROFILES: dict[str, PlatformProfile] = {
             "agency name in lowercase, hyphenated where multi-word "
             "(e.g. 'pasadena', 'long-beach', 'culver-city')."
         ),
+        # OpenGov fronts every portal with Cloudflare bot detection.
+        # Probes from headless Chromium without a stealth proxy hit the
+        # "Just a moment" challenge and never resolve.
+        requires_proxy=True,
     ),
     # Future platforms wire in by adding entries here.
 }
@@ -306,17 +312,33 @@ async def verify_candidates(
     """
     profile = PLATFORM_PROFILES[platform_name]
 
+    proxy_cfg = get_scrapingbee_proxy() if profile.requires_proxy else None
+    if profile.requires_proxy:
+        if proxy_cfg:
+            logger.info(
+                f"Discovery: routing {platform_name} probes through "
+                f"ScrapingBee stealth proxy"
+            )
+        else:
+            logger.warning(
+                f"Discovery: {platform_name} requires_proxy=True but no "
+                f"SCRAPINGBEE_API_KEY configured — probes will be blocked"
+            )
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
+        launch_kwargs = {
+            "headless": True,
+            "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--single-process",
             ],
-        )
+        }
+        if proxy_cfg:
+            launch_kwargs["proxy"] = proxy_cfg
+        browser = await p.chromium.launch(**launch_kwargs)
         context = await browser.new_context(
             viewport={"width": 1920, "height": 1080},
             user_agent=(

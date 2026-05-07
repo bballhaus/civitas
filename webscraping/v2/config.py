@@ -79,6 +79,50 @@ ANTHROPIC_MODEL = os.environ.get(
     "ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"
 )
 
+# ScrapingBee — managed-scraping API used to bypass Cloudflare on
+# protected portals (OpenGov today, possibly more later). Only sites
+# that explicitly opt in via `requires_proxy=True` route through it,
+# so credit burn is bounded to what actually needs it.
+#
+# Local: set SCRAPINGBEE_API_KEY in env / .env.
+# Lambda: set SCRAPINGBEE_API_KEY env var, OR (preferred) store in
+#   Secrets Manager at SCRAPINGBEE_SECRET_NAME and let get_secret()
+#   pull it.
+SCRAPINGBEE_SECRET_NAME = "civitas/scraping/scrapingbee"
+SCRAPINGBEE_PROXY_HOST = "proxy.scrapingbee.com"
+SCRAPINGBEE_PROXY_PORT = 8886
+
+
+def _resolve_scrapingbee_key() -> str:
+    """Env var first, then Secrets Manager. Empty string when neither."""
+    key = os.environ.get("SCRAPINGBEE_API_KEY", "")
+    if key:
+        return key
+    try:
+        secret = get_secret(SCRAPINGBEE_SECRET_NAME)
+    except Exception:
+        return ""
+    return (secret or {}).get("api_key", "") or (secret or {}).get("apiKey", "") or ""
+
+
+def get_scrapingbee_proxy() -> dict | None:
+    """Return a Playwright proxy config dict for ScrapingBee, or None.
+
+    None means "no proxy, go direct" — callers should treat that as a
+    successful no-op so non-Cloudflare scrapers keep working without
+    a key. Stealth-proxy mode handles Cloudflare and JS challenges.
+    `render_js=False` because Playwright is doing the rendering;
+    ScrapingBee only handles the IP / TLS-fingerprint side.
+    """
+    key = _resolve_scrapingbee_key()
+    if not key:
+        return None
+    return {
+        "server": f"http://{SCRAPINGBEE_PROXY_HOST}:{SCRAPINGBEE_PROXY_PORT}",
+        "username": key,
+        "password": "render_js=False&stealth_proxy=True",
+    }
+
 # Scraping defaults
 DEFAULT_REQUEST_INTERVAL_MS = 3000
 MAX_TEXT_CHARS = 15_000

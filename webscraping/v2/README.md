@@ -226,6 +226,44 @@ For local dev without AWS access, set `PLANETBIDS_USERNAME` /
 the Lambda env vars today; moving them to Secrets Manager is on the
 TODO list.
 
+### ScrapingBee (Cloudflare bypass)
+
+OpenGov Procurement is fronted by Cloudflare bot detection that does
+not resolve in headless Chromium even with stealth init scripts. We
+route OpenGov traffic through ScrapingBee's stealth proxy, which
+provides a residential-grade IP + TLS fingerprint that Cloudflare
+accepts.
+
+**Setup:**
+
+1. Sign up at scrapingbee.com (Hobby plan = $49/mo, 150K credits).
+2. Store the API key in AWS Secrets Manager:
+   ```bash
+   aws secretsmanager create-secret \
+     --name civitas/scraping/scrapingbee \
+     --secret-string '{"api_key":"YOUR_KEY"}' \
+     --region us-east-1
+   ```
+   Or set `SCRAPINGBEE_API_KEY` as a Lambda env var (less secure).
+3. Verify the Lambda role has read access to the secret (already
+   covered by the existing `secrets-manager-planetbids` policy if you
+   widen the resource ARN; otherwise add a sibling inline policy).
+
+**Which scrapers use the proxy:**
+
+- `scrapers/opengov.py` — always, when a key is configured. Logs a
+  warning at startup if no key is present.
+- `agents/discovery.py` — only for platforms whose `PlatformProfile`
+  has `requires_proxy=True` (currently just `opengov`).
+- All other scrapers (Cal eProcure, PlanetBids, BidSync) — never. They
+  don't need it, and routing them would burn credits unnecessarily.
+
+**Credit budget rough math:** each Cloudflare-protected page = 25
+credits. ~30-50 OpenGov portals × ~10 events × 2 pages per scrape =
+~1000 page loads/cycle = ~25K credits/cycle. Hobby plan (150K/mo) fits
+about 1 OpenGov scrape every 5 days; Pro ($99, 1M credits/mo) fits
+several full scrapes per day. Adjust scrape cadence accordingly.
+
 ### Tests
 
 ```bash
@@ -320,16 +358,15 @@ Lambda invocation by `get_opengov_site_configs()`.
 
 ## Known limitations
 
-- **OpenGov is currently blocked by Cloudflare.** Headless Chromium —
-  even with the stealth init scripts and `playwright-stealth` — receives
-  the "Just a moment / Performing security verification" challenge that
-  never auto-resolves. The scraper, the discovery probes, and any future
-  onboarding probes all hit this wall. Resolving needs one of:
-  (a) a residential-proxy or managed-scraping-API service (Bright Data,
-  ScrapingBee), (b) reverse-engineering OpenGov's underlying JSON API,
-  or (c) accepting that OpenGov isn't tractable today and adding
-  Bonfire / IonWave / Public Purchase / eBidBoard instead. The discovery
-  verifier rejects challenge pages so we don't false-positive them.
+- **OpenGov sits behind Cloudflare bot detection.** Headless Chromium
+  alone does not pass the "Just a moment" challenge. We solve this
+  with a ScrapingBee stealth-proxy integration (see "ScrapingBee
+  (Cloudflare bypass)" above). When `SCRAPINGBEE_API_KEY` /
+  `civitas/scraping/scrapingbee` is configured, OpenGov scrapes and
+  discovery probes route through the proxy automatically. Without a
+  key, OpenGov scrapes log a warning and produce zero events. The
+  discovery verifier explicitly rejects challenge pages so they do
+  not false-positive as "verified portals."
 
 - **PlanetBids gated documents require per-bid Prospective Bidder
   registration, NOT per-agency vendor registration.** Even with the

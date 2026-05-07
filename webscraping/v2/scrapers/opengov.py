@@ -30,6 +30,7 @@ from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import async_playwright, Page
 
+from webscraping.v2.config import get_scrapingbee_proxy
 from webscraping.v2.models import ContactInfo, RawScrapedEvent, SiteConfig
 from webscraping.v2.scrapers.base import BaseScraper
 
@@ -82,17 +83,37 @@ class OpenGovScraper(BaseScraper):
         self.total_available: int = 0
 
     async def scrape(self) -> AsyncIterator[RawScrapedEvent]:
+        # OpenGov is behind Cloudflare bot detection — headless Chromium
+        # alone (with stealth init scripts) does not pass the "Just a
+        # moment" challenge. We route through ScrapingBee's stealth
+        # proxy when SCRAPINGBEE_API_KEY is configured. Without a key
+        # the scraper still launches but Cloudflare will block it; the
+        # log line below makes that explicit so degraded operation is
+        # visible in CloudWatch.
+        proxy_cfg = get_scrapingbee_proxy()
+        if proxy_cfg:
+            logger.info(
+                f"[{self.source_id}] Routing through ScrapingBee stealth proxy"
+            )
+        else:
+            logger.warning(
+                f"[{self.source_id}] No ScrapingBee key — Cloudflare will "
+                f"likely block this run. Set SCRAPINGBEE_API_KEY."
+            )
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
+            launch_kwargs = {
+                "headless": True,
+                "args": [
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
                     "--single-process",
                 ],
-            )
+            }
+            if proxy_cfg:
+                launch_kwargs["proxy"] = proxy_cfg
+            browser = await p.chromium.launch(**launch_kwargs)
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent=(
