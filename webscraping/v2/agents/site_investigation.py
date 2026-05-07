@@ -733,7 +733,8 @@ SYSTEM_PROMPT = """You are an investigation agent. Given a procurement portal UR
 - Prefer `platform_class: opengov_api` (clean REST) > `salesforce_aura` > `peoplesoft_iscript` > `rendered_html`.
 - `confidence`: a clean unauth GET = high; an Aura RPC needing a context blob = medium; a brittle DOM scrape = low.
 - `notes` should record header gotchas (e.g. "API 403s the default python-requests/X.Y.Z UA — needs a browser-like User-Agent"), token-rotation needs, anti-bot considerations, and anything a human should verify before deploying.
-- Don't include session-bound tokens or specific IDs in templates. Use `{slug}`, `{id}`, etc. as placeholders.
+- **Use template placeholders, not the specific values you used while investigating.** If you tested with `pasadena`, the spec MUST show `{slug}` not `pasadena`. If you tested detail with id `232604`, the spec MUST show `{id}` not `232604`. The placeholder convention: `{slug}` for the per-portal/per-tenant identifier in the URL, `{id}` for the per-bid identifier, `{page}` and `{limit}` for pagination params. Hardcoded specific values produce a single-portal scraper that won't generalize.
+- Don't include session-bound tokens (CSRF, Aura tokens, ViewState, cookies) in templates either — those have to be re-extracted at scrape time, so the spec describes them only in `notes`.
 
 # Stop conditions — read this carefully
 
