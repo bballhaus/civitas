@@ -675,5 +675,112 @@ class TestPlanetBidsPagination:
         assert "batch_size=batch_size" in src
 
 
+# ============================================================================
+# OpenGov listing parser tests (no network — fixture HTML)
+# ============================================================================
+
+class TestOpenGovListingParser:
+    def _scraper(self):
+        from webscraping.v2.scrapers.opengov import OpenGovScraper
+        cfg = SiteConfig(
+            site_id="opengov_pasadena",
+            name="City of Pasadena",
+            url="https://procurement.opengov.com/portal/pasadena",
+            scraper_type=ScraperType.STRUCTURED,
+            config={
+                "slug": "pasadena",
+                "name": "City of Pasadena",
+                "url": "https://procurement.opengov.com/portal/pasadena",
+            },
+        )
+        return OpenGovScraper(cfg)
+
+    def test_bid_number_regex_year_prefix(self):
+        from webscraping.v2.scrapers.opengov import _BID_NUMBER_RE
+        m = _BID_NUMBER_RE.search("Janitorial Services 2026 2026-RFP-0123 Open")
+        assert m and m.group(0) == "2026-RFP-0123"
+
+    def test_bid_number_regex_letter_prefix(self):
+        from webscraping.v2.scrapers.opengov import _BID_NUMBER_RE
+        m = _BID_NUMBER_RE.search("Park Renovation RFB-2026-007 Open")
+        assert m and m.group(0) == "RFB-2026-007"
+
+    def test_bid_number_regex_no_match(self):
+        from webscraping.v2.scrapers.opengov import _BID_NUMBER_RE
+        assert _BID_NUMBER_RE.search("just plain text") is None
+
+    def test_parse_listing_extracts_cards(self):
+        s = self._scraper()
+        html = """
+        <html><body>
+          <nav><a href="/login">Login</a></nav>
+          <div class="row">
+            <a href="#">RFP for Citywide Janitorial Services 2026</a>
+            <span>2026-RFP-0123</span>
+            <span>Open</span>
+            <span>Closes May 15, 2026 5:00 PM</span>
+          </div>
+          <div class="row">
+            <a href="#">Demolition Services - 123 Main St</a>
+            <span>RFP-2025-099</span>
+            <span>Closed</span>
+          </div>
+          <footer><a href="#">Privacy</a></footer>
+        </body></html>
+        """
+        cards = s._parse_listing(html)
+        assert len(cards) == 2
+        first, second = cards
+        assert first["title"] == "RFP for Citywide Janitorial Services 2026"
+        assert first["bid_number"] == "2026-RFP-0123"
+        assert first["status"] == "Open"
+        assert first["deadline"] == "May 15, 2026 5:00 PM"
+        assert second["bid_number"] == "RFP-2025-099"
+        assert second["status"] == "Closed"
+
+    def test_parse_listing_drops_chrome(self):
+        # Anchors in nav/header/footer must not become cards even if
+        # they happen to sit near a bid-number-shaped string.
+        s = self._scraper()
+        html = """
+        <html><body>
+          <nav>
+            <a href="#">Some long navigation label that is RFP-2026-001</a>
+            <span>RFP-2026-001 Open</span>
+          </nav>
+        </body></html>
+        """
+        assert s._parse_listing(html) == []
+
+    def test_card_to_event_uses_bid_number_for_id(self):
+        s = self._scraper()
+        ev = s._card_to_event({
+            "title": "Park Renovation",
+            "bid_number": "RFB-2026-007",
+            "status": "Open",
+            "deadline": "06/01/2026",
+        })
+        assert ev is not None
+        assert ev.source_event_id == "RFB-2026-007"
+        assert ev.source_url.endswith("#bid=RFB-2026-007")
+        assert ev.due_date == "06/01/2026"
+        assert ev.raw_metadata["listing_only"] is True
+        assert ev.raw_metadata["bid_number"] == "RFB-2026-007"
+        assert ev.issuing_agency == "City of Pasadena"
+
+    def test_card_to_event_falls_back_to_title_when_no_bid_number(self):
+        s = self._scraper()
+        ev = s._card_to_event({
+            "title": "Park Renovation",
+            "bid_number": "",
+            "status": "Open",
+            "deadline": "",
+        })
+        assert ev is not None
+        assert ev.source_event_id == "Park Renovation"
+        # No bid number → no anchor on the URL.
+        assert ev.source_url == "https://procurement.opengov.com/portal/pasadena"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

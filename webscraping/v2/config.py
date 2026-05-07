@@ -84,13 +84,18 @@ ANTHROPIC_MODEL = os.environ.get(
 # that explicitly opt in via `requires_proxy=True` route through it,
 # so credit burn is bounded to what actually needs it.
 #
+# Integration mode: API, not proxy. The proxy endpoint
+# (proxy.scrapingbee.com:8886) does not expose stealth_proxy, which is
+# what OpenGov's Cloudflare config requires — that path was tried,
+# returned "Not found :(", and was removed. The API endpoint with
+# render_js=true&stealth_proxy=true returns post-React-hydration HTML.
+#
 # Local: set SCRAPINGBEE_API_KEY in env / .env.
 # Lambda: set SCRAPINGBEE_API_KEY env var, OR (preferred) store in
 #   Secrets Manager at SCRAPINGBEE_SECRET_NAME and let get_secret()
 #   pull it.
 SCRAPINGBEE_SECRET_NAME = "civitas/scraping/scrapingbee"
-SCRAPINGBEE_PROXY_HOST = "proxy.scrapingbee.com"
-SCRAPINGBEE_PROXY_PORT = 8886
+SCRAPINGBEE_API_URL = "https://app.scrapingbee.com/api/v1/"
 
 
 def _resolve_scrapingbee_key() -> str:
@@ -105,23 +110,42 @@ def _resolve_scrapingbee_key() -> str:
     return (secret or {}).get("api_key", "") or (secret or {}).get("apiKey", "") or ""
 
 
-def get_scrapingbee_proxy() -> dict | None:
-    """Return a Playwright proxy config dict for ScrapingBee, or None.
+def has_scrapingbee_key() -> bool:
+    return bool(_resolve_scrapingbee_key())
 
-    None means "no proxy, go direct" — callers should treat that as a
-    successful no-op so non-Cloudflare scrapers keep working without
-    a key. Stealth-proxy mode handles Cloudflare and JS challenges.
-    `render_js=False` because Playwright is doing the rendering;
-    ScrapingBee only handles the IP / TLS-fingerprint side.
+
+def fetch_via_scrapingbee(
+    url: str,
+    render_js: bool = True,
+    stealth: bool = True,
+    timeout: int = 90,
+) -> str:
+    """Fetch `url` through ScrapingBee API mode and return rendered HTML.
+
+    Defaults match what OpenGov needs to clear Cloudflare. Caller must
+    handle the empty-key case explicitly — this function raises on a
+    missing key rather than silently falling through to a direct GET,
+    because a direct GET will hit Cloudflare and look like a generic
+    network failure further down the stack.
     """
+    import requests
+
     key = _resolve_scrapingbee_key()
     if not key:
-        return None
-    return {
-        "server": f"http://{SCRAPINGBEE_PROXY_HOST}:{SCRAPINGBEE_PROXY_PORT}",
-        "username": key,
-        "password": "render_js=False&stealth_proxy=True",
+        raise RuntimeError(
+            "SCRAPINGBEE_API_KEY not configured (env var or Secrets "
+            f"Manager '{SCRAPINGBEE_SECRET_NAME}')"
+        )
+
+    params = {
+        "api_key": key,
+        "url": url,
+        "render_js": "true" if render_js else "false",
+        "stealth_proxy": "true" if stealth else "false",
     }
+    resp = requests.get(SCRAPINGBEE_API_URL, params=params, timeout=timeout)
+    resp.raise_for_status()
+    return resp.text
 
 # Scraping defaults
 DEFAULT_REQUEST_INTERVAL_MS = 3000

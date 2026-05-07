@@ -254,37 +254,45 @@ ScrapingBee with `stealth_proxy=true&render_js=true`.
    ```
 
 **Integration mode — API, not proxy.** ScrapingBee supports two
-integration patterns:
-- *Proxy mode* (`proxy.scrapingbee.com:8886`) — Playwright connects
-  through their proxy; they handle IP/TLS only. The plumbing for this
-  exists in the codebase (commits bd61abf, 01f118d) but **does not
-  pass Cloudflare on OpenGov** — their proxy endpoint does not expose
-  the `stealth_proxy` mode that OpenGov's Cloudflare config requires.
-  Returns `Not found :(`.
+integration patterns. We use the API endpoint exclusively:
+- *Proxy mode* (`proxy.scrapingbee.com:8886`) — does **not** expose
+  `stealth_proxy`, which is what OpenGov's Cloudflare config requires.
+  Returns `Not found :(`. Tried and abandoned.
 - *API mode* (`https://app.scrapingbee.com/api/v1/`) — we GET their
-  endpoint with target URL + flags, they return rendered HTML. With
+  endpoint with target URL + flags; they return rendered HTML. With
   `stealth_proxy=true&render_js=true`, Cloudflare is bypassed and we
-  get the post-React-hydration HTML.
+  get the post-React-hydration HTML. This is what
+  `scrapers/opengov.py` and the OpenGov path of `agents/discovery.py`
+  use today (via `config.fetch_via_scrapingbee`).
 
-  **API mode is the path forward** for OpenGov. The OpenGov scraper
-  and the discovery agent's OpenGov probes should use API mode, not
-  Playwright. As of this writing, the rewrite from Playwright-proxy
-  to API-mode is pending — `scrapers/opengov.py` and
-  `agents/discovery.py` still attempt proxy mode and so still fail.
+**OpenGov scraper is listing-only.** OpenGov's React app navigates to
+bid detail pages via Angular click handlers — bid cards render as
+`<a href="#">` with the navigation hidden in JS state. Until the
+detail-URL pattern is reverse-engineered (one manual DevTools
+inspection of the click-fired GraphQL/REST call, or an Apollo-state
+parse), the OpenGov scraper yields *listing-only* events: title,
+bid number, agency, status, deadline. No description, no PDFs, no
+LLM enrichment. Listing-only events still flow through the rest of
+the pipeline; the attachment-enrichment pass is a no-op when
+`attachment_texts` is empty.
 
 **Credit math (API mode):**
 - `render_js=true` + `stealth_proxy=true` ≈ 75 credits per page.
-- One Pasadena scrape = listing (75) + 11 detail pages (~825) +
-  attachment fetches ≈ ~900 credits.
-- Pro plan (250K credits/mo) ÷ 900 = ~275 Pasadena-scrapes/mo, or one
-  every 3 hours continuously.
+- One Pasadena listing-only scrape ≈ 75 credits.
+  (When detail-URL parsing lands, add ~75 × N detail pages — for
+  Pasadena's ~11 active bids that's ~900 credits per run.)
+- Pro plan: 250K credits/mo. Listing-only at 75 credits/run → 3,300
+  scrapes/mo. Plenty.
 - Discovery probe = listing-only fetch ≈ 75 credits per candidate. A
   full 30-candidate run ≈ 2,250 credits. Cheap.
 
 **Which scrapers route through ScrapingBee:**
-- `scrapers/opengov.py` — always, once API-mode rewrite lands.
+- `scrapers/opengov.py` — always (API mode + BeautifulSoup; no
+  Playwright). Skips the run entirely if no API key is configured.
 - `agents/discovery.py` — only for platforms with
   `PlatformProfile.requires_proxy=True` (currently just `opengov`).
+  Probes for those platforms use the same API-mode HTTP path; other
+  platforms continue to use direct Playwright probes.
 - Cal eProcure / PlanetBids / BidSync — never. No Cloudflare in
   front, so routing them through ScrapingBee would burn credits with
   no benefit.

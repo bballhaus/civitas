@@ -2,36 +2,48 @@
 OpenGov Procurement scraper — multi-tenant Tier-2 structured scraper.
 
 OpenGov Procurement (formerly ProcureNow) is a SaaS platform many CA
-cities have migrated onto, including Pasadena. Each agency lives at
+cities have migrated onto. Each agency lives at
 `https://procurement.opengov.com/portal/{slug}` with a near-identical
 DOM, so a single scraper covers many agencies.
 
 Sites are added by appending an entry to OPENGOV_AGENCIES; the runner
 picks them up automatically through `get_opengov_site_configs`.
 
-Cloudflare bot-detection is in front of OpenGov, so we use the same
-stealth Playwright setup (custom UA, headless tweaks, navigator.webdriver
-mask) that the agentic scraper uses.
+## Cloudflare bypass: ScrapingBee API mode
 
-PDF documents on OpenGov are typically public — no login flow needed.
-PDFs are downloaded inline via `page.context.request.get` so the
-existing enrich pipeline picks them up via `attachment_texts`.
+Every OpenGov portal sits behind Cloudflare bot detection. Headless
+Chromium — even with stealth init scripts — does not pass the "Just a
+moment" challenge. We bypass via ScrapingBee's API endpoint with
+`render_js=true&stealth_proxy=true`, which returns the post-React-
+hydration HTML. (The proxy endpoint at port 8886 does *not* expose
+stealth_proxy mode, so a Playwright-via-proxy approach was tried and
+abandoned.)
+
+## Listing-only today
+
+The OpenGov React app navigates to bid detail pages via Angular click
+handlers — bid cards render as `<a href="#">` with the navigation hidden
+in JS state. Until the detail-URL pattern is reverse-engineered (manual
+DevTools inspection of the GraphQL/REST call fired on click, or an
+Apollo-state parse), this scraper yields *listing-only* events:
+title, agency, status, bid number, and the deadline if present on the
+listing card. No description, no PDFs, no LLM enrichment.
+
+Listing-only events still flow through the rest of the pipeline; the
+attachment-enrichment pass is a no-op when `attachment_texts` is empty.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
-import tempfile
 from typing import AsyncIterator, Optional
-from urllib.parse import urljoin, urlparse
 
-from playwright.async_api import async_playwright, Page
+from bs4 import BeautifulSoup
 
-from webscraping.v2.config import get_scrapingbee_proxy
-from webscraping.v2.models import ContactInfo, RawScrapedEvent, SiteConfig
+from webscraping.v2.config import fetch_via_scrapingbee, has_scrapingbee_key
+from webscraping.v2.models import RawScrapedEvent, SiteConfig
 from webscraping.v2.scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -48,23 +60,37 @@ OPENGOV_AGENCIES: dict[str, dict] = {
 }
 
 
-# How many bid detail pages to scrape per Lambda invocation. The full
-# OpenGov bid listing per portal is small (typically 5-30 active bids),
-# so the whole portal usually fits in one Lambda invocation.
-DEFAULT_BATCH_SIZE = 12
+# How many bid cards to emit per Lambda invocation. OpenGov portals
+# typically expose 5-30 active bids, so the whole portal usually fits
+# in one invocation; the cap is defensive.
+DEFAULT_BATCH_SIZE = 30
 
-MAX_PDFS_PER_EVENT = 12  # Defensive cap on attachments.
+
+# Regex for the visible bid-number column on the listing. OpenGov
+# renders these as plain text in a sibling cell to the title link, e.g.
+# "2026-RFP-0123", "RFB-2026-007", "RFP-12345". The validator that
+# consumes RawScrapedEvent only needs stable per-bid identity, not a
+# clean format. Alternation order matters — the longer year-prefixed
+# shapes must come first so they aren't shadowed by sub-matches.
+_BID_NUMBER_RE = re.compile(
+    r"\b(?:"
+    r"\d{4}-[A-Z]{2,8}-[A-Z0-9-]+"        # 2026-RFP-0123
+    r"|[A-Z]{2,8}-\d{4}-[A-Z0-9-]+"        # RFB-2026-007
+    r"|[A-Z]{2,8}-?\d{3,}(?:-[A-Z0-9]+)?"  # RFP-12345 / RFP12345
+    r")\b"
+)
 
 
 class OpenGovScraper(BaseScraper):
-    """Multi-tenant OpenGov Procurement scraper.
+    """Multi-tenant OpenGov Procurement scraper (listing-only).
 
     Strategy:
-    1. Load /portal/{slug} (or its /projects sub-route).
-    2. Walk the bid cards, capture title/agency/deadline + detail URL.
-    3. For each bid: navigate, extract description/contact, find every
-       <a> pointing to a PDF, fetch via the browser's request context,
-       extract text with PyMuPDF, stash on the event for enrichment.
+    1. Fetch /portal/{slug} HTML through ScrapingBee API mode.
+    2. Parse with BeautifulSoup; walk every visible bid card.
+    3. Emit one RawScrapedEvent per card with whatever fields the
+       listing exposes — title, bid number, agency, status, deadline.
+       No detail-page navigation until OpenGov's React detail URLs are
+       solved.
     """
 
     def __init__(
@@ -83,278 +109,181 @@ class OpenGovScraper(BaseScraper):
         self.total_available: int = 0
 
     async def scrape(self) -> AsyncIterator[RawScrapedEvent]:
-        # OpenGov is behind Cloudflare bot detection — headless Chromium
-        # alone (with stealth init scripts) does not pass the "Just a
-        # moment" challenge. We route through ScrapingBee's stealth
-        # proxy when SCRAPINGBEE_API_KEY is configured. Without a key
-        # the scraper still launches but Cloudflare will block it; the
-        # log line below makes that explicit so degraded operation is
-        # visible in CloudWatch.
-        proxy_cfg = get_scrapingbee_proxy()
-        if proxy_cfg:
-            logger.info(
-                f"[{self.source_id}] Routing through ScrapingBee stealth proxy"
-            )
-        else:
+        if not has_scrapingbee_key():
             logger.warning(
-                f"[{self.source_id}] No ScrapingBee key — Cloudflare will "
-                f"likely block this run. Set SCRAPINGBEE_API_KEY."
+                f"[{self.source_id}] No SCRAPINGBEE_API_KEY — Cloudflare "
+                f"will block this run. Skipping."
             )
-        async with async_playwright() as p:
-            args = [
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--single-process",
-            ]
-            if proxy_cfg:
-                # ScrapingBee stealth proxy does TLS interception; Chromium
-                # doesn't ship their CA, so the connection looks like an
-                # invalid-CA error without this flag. Safe — we explicitly
-                # trust the proxy we configured ourselves.
-                args.append("--ignore-certificate-errors")
-            launch_kwargs = {"headless": True, "args": args}
-            if proxy_cfg:
-                launch_kwargs["proxy"] = proxy_cfg
-            browser = await p.chromium.launch(**launch_kwargs)
-            context = await browser.new_context(
-                viewport={"width": 1920, "height": 1080},
-                user_agent=(
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-                locale="en-US",
-                timezone_id="America/Los_Angeles",
-            )
-            await context.add_init_script(
-                'Object.defineProperty(navigator, "webdriver", '
-                '{get: () => undefined});'
-            )
-            page = await context.new_page()
+            return
 
-            try:
-                bid_links = await self._discover_bids(page)
-                self.total_available = len(bid_links)
-                logger.info(
-                    f"[{self.source_id}] Found {len(bid_links)} bids; "
-                    f"slicing [{self.batch_offset}:"
-                    f"{self.batch_offset + self.batch_size}]"
-                )
-                end = self.batch_offset + self.batch_size
-                for entry in bid_links[self.batch_offset:end]:
-                    try:
-                        self.throttle()
-                        event = await self._scrape_bid_detail(page, entry)
-                        if event:
-                            yield event
-                    except Exception as e:
-                        logger.warning(
-                            f"[{self.source_id}] Detail failed for "
-                            f"{entry.get('url', '?')}: {e}"
-                        )
-            finally:
-                await browser.close()
-
-    async def _discover_bids(self, page: Page) -> list[dict]:
-        """Load the portal listing and return [{title, url, ...}, ...]."""
-        listing_urls = [
-            self._portal_url.rstrip("/"),
-            f"{self._portal_url.rstrip('/')}/projects",
-        ]
-
-        for url in listing_urls:
-            try:
-                await page.goto(url, wait_until="networkidle", timeout=60000)
-                await page.wait_for_timeout(3000)
-            except Exception as e:
-                logger.debug(f"  goto {url} failed: {e}")
-                continue
-
-            # OpenGov renders bid cards as <a> with /projects/{id} hrefs.
-            entries = await page.evaluate(
-                """() => {
-                    const seen = new Set();
-                    const out = [];
-                    const anchors = document.querySelectorAll('a[href]');
-                    for (const a of anchors) {
-                        const href = a.href || '';
-                        if (!href) continue;
-                        // Match /portal/{slug}/projects/{id} routes
-                        if (!/\\/projects\\/[\\w-]+/i.test(href)) continue;
-                        if (seen.has(href)) continue;
-                        seen.add(href);
-                        const title = (a.textContent || '').trim() ||
-                                      (a.getAttribute('aria-label') || '').trim();
-                        out.push({ url: href, title });
-                    }
-                    return out;
-                }"""
-            )
-
-            if entries:
-                return entries
-
-        return []
-
-    async def _scrape_bid_detail(
-        self, page: Page, entry: dict
-    ) -> Optional[RawScrapedEvent]:
-        url = entry.get("url", "")
-        if not url:
-            return None
-
-        await page.goto(url, wait_until="networkidle", timeout=60000)
-        await page.wait_for_timeout(2500)
-
-        meta = await page.evaluate(
-            """() => {
-                function pickByLabel(labels) {
-                    const all = document.querySelectorAll(
-                        'div, dt, dd, li, span, p, h1, h2, h3, h4'
-                    );
-                    for (const el of all) {
-                        const t = (el.textContent || '').trim();
-                        for (const lbl of labels) {
-                            if (t.toLowerCase().startsWith(lbl.toLowerCase())) {
-                                return t.slice(lbl.length).trim().replace(/^[:\\s]+/, '');
-                            }
-                        }
-                    }
-                    return '';
-                }
-                const titleEl = document.querySelector('h1, h2');
-                const title = titleEl ? titleEl.textContent.trim() : '';
-                const description = (
-                    document.querySelector('[data-testid*="description"], .description, article p')
-                    || document.body
-                ).innerText.slice(0, 4000);
-                const deadline = pickByLabel(['Due Date', 'Closes', 'Closing', 'Deadline', 'Bid Due']);
-                const posted = pickByLabel(['Posted', 'Open Date', 'Issued']);
-                const contact_email = (() => {
-                    const a = document.querySelector('a[href^="mailto:"]');
-                    return a ? a.getAttribute('href').replace('mailto:', '') : '';
-                })();
-                return { title, description, deadline, posted, contact_email };
-            }"""
+        listing_url = self._portal_url.rstrip("/")
+        logger.info(
+            f"[{self.source_id}] Fetching listing via ScrapingBee API: "
+            f"{listing_url}"
         )
 
-        title = (meta.get("title") or entry.get("title") or "").strip()
+        # ScrapingBee fetch is sync; offload so we don't block the loop
+        # if a future caller runs multiple scrapers concurrently.
+        try:
+            html = await asyncio.to_thread(fetch_via_scrapingbee, listing_url)
+        except Exception as e:
+            logger.error(f"[{self.source_id}] ScrapingBee fetch failed: {e}")
+            return
+
+        cards = self._parse_listing(html)
+        self.total_available = len(cards)
+        logger.info(
+            f"[{self.source_id}] Parsed {len(cards)} cards; "
+            f"slicing [{self.batch_offset}:"
+            f"{self.batch_offset + self.batch_size}]"
+        )
+
+        end = self.batch_offset + self.batch_size
+        for card in cards[self.batch_offset:end]:
+            event = self._card_to_event(card)
+            if event is not None:
+                yield event
+
+    # ------------------------------------------------------------------
+    # Listing parser
+    # ------------------------------------------------------------------
+
+    def _parse_listing(self, html: str) -> list[dict]:
+        """Extract one dict per visible bid card from the rendered HTML.
+
+        OpenGov's listing renders each bid as a row containing:
+          - a title (link or heading text),
+          - a sibling cell with the public bid number,
+          - a status pill ("Open", "Closed", etc.),
+          - a deadline timestamp.
+
+        DOM markup varies subtly between agencies, so the parser is
+        defensive: it walks anchor candidates and falls back to the
+        nearest row container when the structured layout is missing.
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        cards: list[dict] = []
+        seen_titles: set[str] = set()
+
+        # OpenGov bid links currently render as <a href="#"> with the
+        # title as text content. Filter to anchors that look like bid
+        # rows: meaningful title length + a parent row with siblings.
+        for anchor in soup.find_all("a"):
+            title = (anchor.get_text(strip=True) or "").strip()
+            if len(title) < 8 or len(title) > 240:
+                continue
+            # Reject anchors that are obviously chrome (nav, footer).
+            if anchor.find_parent(["nav", "header", "footer"]):
+                continue
+            if title in seen_titles:
+                continue
+
+            row = self._row_container(anchor)
+            row_text = row.get_text(" ", strip=True) if row else ""
+
+            # A real bid card has either a recognizable bid number or a
+            # status keyword in the surrounding row. Anchors that match
+            # neither are usually navigation chrome that slipped through.
+            bid_number = self._extract_bid_number(row_text)
+            status = self._extract_status(row_text)
+            if not bid_number and not status:
+                continue
+
+            seen_titles.add(title)
+            cards.append(
+                {
+                    "title": title,
+                    "bid_number": bid_number,
+                    "status": status,
+                    "deadline": self._extract_deadline(row_text),
+                }
+            )
+
+        return cards
+
+    @staticmethod
+    def _row_container(anchor) -> Optional[object]:
+        """Walk up to ~4 levels to find a row-like ancestor."""
+        node = anchor
+        for _ in range(4):
+            node = node.parent
+            if node is None:
+                return None
+            # Heuristic: a row contains the anchor plus at least one
+            # sibling that holds the bid number / status.
+            if len(node.find_all(string=True, recursive=True)) > 3:
+                return node
+        return node
+
+    @staticmethod
+    def _extract_bid_number(text: str) -> str:
+        m = _BID_NUMBER_RE.search(text or "")
+        return m.group(0).strip() if m else ""
+
+    @staticmethod
+    def _extract_status(text: str) -> str:
+        lower = (text or "").lower()
+        for status in ("open", "closed", "awarded", "cancelled", "draft"):
+            # Word-boundary match so "Open" doesn't fire on "Opening".
+            if re.search(rf"\b{status}\b", lower):
+                return status.capitalize()
+        return ""
+
+    @staticmethod
+    def _extract_deadline(text: str) -> str:
+        # Pull the first date-ish token. Leave date normalization to the
+        # enrichment pipeline so we keep the source format verbatim.
+        m = re.search(
+            r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*"
+            r"\s+\d{1,2},?\s+\d{4}"
+            r"(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))?",
+            text or "",
+        )
+        if m:
+            return m.group(0).strip()
+        m = re.search(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", text or "")
+        return m.group(0).strip() if m else ""
+
+    # ------------------------------------------------------------------
+    # Event builder
+    # ------------------------------------------------------------------
+
+    def _card_to_event(self, card: dict) -> Optional[RawScrapedEvent]:
+        title = (card.get("title") or "").strip()
         if not title:
             return None
 
-        event_id = self._extract_event_id(url) or title[:80]
+        bid_number = (card.get("bid_number") or "").strip()
+        # source_event_id must be stable across runs. Prefer the bid
+        # number; fall back to the title (truncated) when absent.
+        source_event_id = bid_number or title[:80]
+
+        # Without a real detail URL, anchor the source URL with the bid
+        # number so deduping doesn't collapse multiple bids onto the
+        # same portal URL.
+        source_url = self._portal_url.rstrip("/")
+        if bid_number:
+            source_url = f"{source_url}#bid={bid_number}"
 
         event = RawScrapedEvent(
             source_id=self.source_id,
-            source_event_id=event_id,
-            source_url=url,
+            source_event_id=source_event_id,
+            source_url=source_url,
             title=title,
-            description=(meta.get("description") or "").strip(),
             issuing_agency=self._agency_name,
-            posted_date=meta.get("posted") or "",
-            due_date=meta.get("deadline") or "",
-            contact=ContactInfo(
-                email=meta.get("contact_email") or None,
-            ),
+            due_date=card.get("deadline") or "",
             procurement_type="RFP",
+            raw_metadata={
+                "bid_number": bid_number,
+                "status": card.get("status") or "",
+                "listing_only": True,
+            },
         )
-
-        await self._download_pdfs(page, event)
-
         logger.info(
-            f"[{self.source_id}] Scraped: {title[:60]} "
-            f"({len(event.attachment_urls)} PDFs)"
+            f"[{self.source_id}] Listing card: {title[:60]} "
+            f"(bid={bid_number or '?'}, status={card.get('status') or '?'})"
         )
         return event
-
-    async def _download_pdfs(self, page: Page, event: RawScrapedEvent) -> None:
-        """Find PDF anchors and inline-fetch them via the browser context."""
-        from webscraping.v2.pipeline.enrich import (
-            classify_pdf,
-            extract_text_from_pdf,
-        )
-
-        pdf_links = await page.evaluate(
-            """() => {
-                const seen = new Set();
-                const out = [];
-                const anchors = document.querySelectorAll('a[href]');
-                for (const a of anchors) {
-                    const href = a.href || '';
-                    if (!href) continue;
-                    const lower = href.toLowerCase();
-                    if (
-                        !lower.includes('.pdf') &&
-                        !lower.includes('/document/') &&
-                        !lower.includes('/file/') &&
-                        !lower.includes('attachment')
-                    ) continue;
-                    if (seen.has(href)) continue;
-                    seen.add(href);
-                    const filename =
-                        a.getAttribute('download') ||
-                        (a.textContent || '').trim() ||
-                        href.split('/').pop().split('?')[0];
-                    out.push({ url: href, filename });
-                }
-                return out;
-            }"""
-        )
-
-        if not pdf_links:
-            return
-
-        attachment_texts: dict[str, str] = {}
-        for entry in pdf_links[:MAX_PDFS_PER_EVENT]:
-            url = entry.get("url", "")
-            filename = (entry.get("filename") or "").strip() or "document.pdf"
-            if not filename.lower().endswith(".pdf"):
-                filename = f"{filename}.pdf"
-            if classify_pdf(filename) == "skip":
-                continue
-
-            tmp_path = None
-            try:
-                resp = await page.context.request.get(url, timeout=60000)
-                if not resp.ok:
-                    continue
-                body = await resp.body()
-                if not body or len(body) < 100:
-                    continue
-                with tempfile.NamedTemporaryFile(
-                    suffix=".pdf", delete=False
-                ) as tmp:
-                    tmp.write(body)
-                    tmp_path = tmp.name
-                text = extract_text_from_pdf(tmp_path)
-                if text:
-                    attachment_texts[filename] = text
-                    if url not in event.attachment_urls:
-                        event.attachment_urls.append(url)
-                    logger.info(
-                        f"  PDF: {filename} ({len(text)} chars)"
-                    )
-            except Exception as e:
-                logger.debug(f"  PDF fetch failed {filename}: {e}")
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
-
-        if attachment_texts:
-            existing = event.raw_metadata.get("attachment_texts", {}) or {}
-            existing.update(attachment_texts)
-            event.raw_metadata["attachment_texts"] = existing
-
-    @staticmethod
-    def _extract_event_id(url: str) -> str:
-        """Pull the trailing project id from /projects/{id}."""
-        m = re.search(r"/projects/([\w-]+)", url)
-        return m.group(1) if m else ""
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +360,9 @@ async def main():
     print(f"\nScraped {len(events)} events from {config.name}")
     for e in events[:5]:
         print(f"  - {e.title[:60]}")
-        print(f"    PDFs: {len(e.attachment_urls)}")
+        print(f"    bid={e.raw_metadata.get('bid_number')!r}  "
+              f"status={e.raw_metadata.get('status')!r}  "
+              f"deadline={e.due_date!r}")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 import anthropic
+from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
 from webscraping.v2.config import (
@@ -35,8 +36,9 @@ from webscraping.v2.config import (
     ANTHROPIC_MODEL,
     S3_BUCKET,
     S3_V2_PREFIX,
+    fetch_via_scrapingbee,
     get_s3_client,
-    get_scrapingbee_proxy,
+    has_scrapingbee_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -239,55 +241,63 @@ Return up to 30 candidates as JSON.
 
 
 # ---------------------------------------------------------------------------
-# Stage 2: Verify with Playwright probe
+# Stage 2: Verify each candidate
 # ---------------------------------------------------------------------------
+#
+# Two probe paths exist:
+#   - Playwright (direct headless Chromium): for platforms with no
+#     bot-detection layer.
+#   - ScrapingBee API mode (`fetch_via_scrapingbee` + BeautifulSoup):
+#     for `requires_proxy=True` platforms. The Cloudflare challenge in
+#     front of OpenGov can't be solved with vanilla headless Chromium,
+#     and ScrapingBee's *proxy* endpoint doesn't expose stealth_proxy,
+#     so Playwright-via-proxy was abandoned in favor of API mode.
 
-async def _probe_one(page, candidate: Candidate, profile: PlatformProfile) -> None:
-    try:
-        # networkidle hangs on OpenGov-style SPAs; use domcontentloaded
-        # and a hard settle, then poll for a Cloudflare challenge.
-        await page.goto(candidate.url, wait_until="domcontentloaded", timeout=45000)
-        await page.wait_for_timeout(3000)
-    except Exception as e:
-        candidate.verification_notes = f"goto failed: {e}"
-        return
+# Cloudflare/anti-bot interstitial markers. Listing-marker keyword
+# matching false-positives on these pages because the challenge body
+# usually contains the platform domain (e.g. "procurement.opengov.com"
+# matches "OpenGov" and "Procurement").
+_BLOCKED_TITLE_TOKENS = ("just a moment", "attention required")
+_BLOCKED_BODY_TOKENS = (
+    "performing security verification",
+    "verifying you are human",
+    "ray id:",
+)
 
-    title = await page.title()
-    body_text = await page.evaluate(
-        "() => (document.body ? document.body.innerText : '').slice(0, 6000)"
-    )
-    candidate.page_title_observed = (title or "")[:160]
-    text_lower = body_text.lower()
+
+def _is_blocked(title: str, body_text: str) -> bool:
     title_lower = (title or "").lower()
+    head = (body_text or "")[:1500].lower()
+    if any(t in title_lower for t in _BLOCKED_TITLE_TOKENS):
+        return True
+    return any(t in head for t in _BLOCKED_BODY_TOKENS)
 
-    # Reject Cloudflare/anti-bot interstitials. Without this guard the
-    # marker keyword check would false-positive on the challenge page —
-    # its body text contains the platform's domain, which usually carries
-    # the platform name (e.g. "procurement.opengov.com" matches both
-    # "OpenGov" and "Procurement").
-    blocked = (
-        "just a moment" in title_lower
-        or "attention required" in title_lower
-        or "performing security verification" in text_lower[:500]
-        or "verifying you are human" in text_lower[:500]
-        or "ray id:" in text_lower[:1500]
-    )
-    if blocked:
+
+def _evaluate_probe(
+    candidate: Candidate,
+    profile: PlatformProfile,
+    title: str,
+    body_text: str,
+    listing_count: int,
+) -> None:
+    """Apply the verified-or-not decision based on observed markers."""
+    candidate.page_title_observed = (title or "")[:160]
+    candidate.listing_count_observed = listing_count
+
+    if _is_blocked(title, body_text):
         candidate.verification_notes = (
             f"blocked: anti-bot challenge (title='{title[:60]}')"
         )
         return
 
+    text_lower = (body_text or "").lower()
+    title_lower = (title or "").lower()
     matches = [m for m in profile.listing_markers if m.lower() in text_lower]
-    listing_count = await page.evaluate(
-        """() => document.querySelectorAll('a[href*="/projects/"]').length"""
-    )
-    candidate.listing_count_observed = listing_count
 
     if (
         len(matches) >= 2
-        and ("404" not in title_lower)
-        and ("not found" not in text_lower[:500])
+        and "404" not in title_lower
+        and "not found" not in text_lower[:500]
     ):
         candidate.verified = True
         candidate.verification_notes = (
@@ -299,47 +309,135 @@ async def _probe_one(page, candidate: Candidate, profile: PlatformProfile) -> No
         )
 
 
+async def _probe_one_playwright(
+    page, candidate: Candidate, profile: PlatformProfile
+) -> None:
+    try:
+        # networkidle hangs on SPA-style portals; use domcontentloaded
+        # and a hard settle, then read DOM state.
+        await page.goto(candidate.url, wait_until="domcontentloaded", timeout=45000)
+        await page.wait_for_timeout(3000)
+    except Exception as e:
+        candidate.verification_notes = f"goto failed: {e}"
+        return
+
+    title = await page.title()
+    body_text = await page.evaluate(
+        "() => (document.body ? document.body.innerText : '').slice(0, 6000)"
+    )
+    listing_count = await page.evaluate(
+        """() => document.querySelectorAll('a[href*="/projects/"]').length"""
+    )
+    _evaluate_probe(candidate, profile, title, body_text, listing_count)
+
+
+def _probe_one_scrapingbee(
+    candidate: Candidate, profile: PlatformProfile
+) -> None:
+    try:
+        html = fetch_via_scrapingbee(candidate.url)
+    except Exception as e:
+        candidate.verification_notes = f"scrapingbee fetch failed: {e}"
+        return
+
+    soup = BeautifulSoup(html, "html.parser")
+    title_el = soup.find("title")
+    title = title_el.get_text(strip=True) if title_el else ""
+    body_text = (soup.body.get_text(" ", strip=True) if soup.body else "")[:6000]
+
+    # OpenGov listings expose bid links as <a href="#"> (the React
+    # detail navigation is in JS state, not the href). Counting
+    # /projects/ anchors — as the Playwright probe used to do — finds
+    # zero on real portals. Instead, count anchors with non-trivial
+    # text inside the page body, which mirrors what the scraper
+    # actually parses.
+    listing_count = 0
+    if soup.body is not None:
+        for a in soup.body.find_all("a"):
+            if a.find_parent(["nav", "header", "footer"]):
+                continue
+            t = a.get_text(strip=True) or ""
+            if 8 <= len(t) <= 240:
+                listing_count += 1
+
+    _evaluate_probe(candidate, profile, title, body_text, listing_count)
+
+
 async def verify_candidates(
     platform_name: str,
     candidates: list[Candidate],
     concurrency: int = 5,
 ) -> list[Candidate]:
-    """Probe each candidate URL with Playwright; populate verified flag.
+    """Probe each candidate URL; populate verified flag.
+
+    Forks on `profile.requires_proxy`:
+      - True  → ScrapingBee API mode (sync HTTP, offloaded to threads).
+      - False → Playwright direct.
 
     Probes run in parallel (semaphore-bounded) so the whole verification
-    pass fits inside Lambda's 15-min timeout. Each probe gets its own
-    page in a shared browser context.
+    pass fits inside Lambda's 15-min timeout.
     """
     profile = PLATFORM_PROFILES[platform_name]
 
-    proxy_cfg = get_scrapingbee_proxy() if profile.requires_proxy else None
     if profile.requires_proxy:
-        if proxy_cfg:
-            logger.info(
-                f"Discovery: routing {platform_name} probes through "
-                f"ScrapingBee stealth proxy"
-            )
-        else:
+        if not has_scrapingbee_key():
             logger.warning(
                 f"Discovery: {platform_name} requires_proxy=True but no "
-                f"SCRAPINGBEE_API_KEY configured — probes will be blocked"
+                f"SCRAPINGBEE_API_KEY configured — probes will fail"
             )
+        else:
+            logger.info(
+                f"Discovery: routing {platform_name} probes through "
+                f"ScrapingBee API mode"
+            )
+        await _verify_via_scrapingbee(candidates, profile, concurrency)
+    else:
+        await _verify_via_playwright(candidates, profile, concurrency)
 
+    return candidates
+
+
+async def _verify_via_scrapingbee(
+    candidates: list[Candidate],
+    profile: PlatformProfile,
+    concurrency: int,
+) -> None:
+    sem = asyncio.Semaphore(concurrency)
+    completed = {"n": 0}
+    total = len(candidates)
+
+    async def probe(c: Candidate) -> None:
+        async with sem:
+            try:
+                await asyncio.to_thread(_probe_one_scrapingbee, c, profile)
+            except Exception as e:
+                c.verification_notes = f"probe error: {e}"
+            finally:
+                completed["n"] += 1
+                logger.info(
+                    f"  Probed [{completed['n']}/{total}] {c.site_id} "
+                    f"-> {'OK' if c.verified else 'reject'}"
+                )
+
+    await asyncio.gather(*(probe(c) for c in candidates))
+
+
+async def _verify_via_playwright(
+    candidates: list[Candidate],
+    profile: PlatformProfile,
+    concurrency: int,
+) -> None:
     async with async_playwright() as p:
-        args = [
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--single-process",
-        ]
-        if proxy_cfg:
-            # ScrapingBee stealth proxy does TLS interception
-            args.append("--ignore-certificate-errors")
-        launch_kwargs = {"headless": True, "args": args}
-        if proxy_cfg:
-            launch_kwargs["proxy"] = proxy_cfg
-        browser = await p.chromium.launch(**launch_kwargs)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--single-process",
+            ],
+        )
         context = await browser.new_context(
             viewport={"width": 1920, "height": 1080},
             user_agent=(
@@ -357,11 +455,11 @@ async def verify_candidates(
         completed = {"n": 0}
         total = len(candidates)
 
-        async def probe_with_sem(c: Candidate) -> None:
+        async def probe(c: Candidate) -> None:
             async with sem:
                 page = await context.new_page()
                 try:
-                    await _probe_one(page, c, profile)
+                    await _probe_one_playwright(page, c, profile)
                 except Exception as e:
                     c.verification_notes = f"probe error: {e}"
                 finally:
@@ -376,11 +474,9 @@ async def verify_candidates(
                         pass
 
         try:
-            await asyncio.gather(*(probe_with_sem(c) for c in candidates))
+            await asyncio.gather(*(probe(c) for c in candidates))
         finally:
             await browser.close()
-
-    return candidates
 
 
 # ---------------------------------------------------------------------------
