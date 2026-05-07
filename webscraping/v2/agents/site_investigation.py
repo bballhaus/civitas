@@ -735,10 +735,18 @@ SYSTEM_PROMPT = """You are an investigation agent. Given a procurement portal UR
 - `notes` should record header gotchas (e.g. "API 403s the default python-requests/X.Y.Z UA — needs a browser-like User-Agent"), token-rotation needs, anti-bot considerations, and anything a human should verify before deploying.
 - Don't include session-bound tokens or specific IDs in templates. Use `{slug}`, `{id}`, etc. as placeholders.
 
-# Stop conditions
+# Stop conditions — read this carefully
 
-- Call `report` ONCE when you've confirmed the listing call works and identified the detail path.
-- If the portal is down, requires Civitas-incompatible login, or you've spent a lot of turns without progress, call `give_up` with a concrete reason.
+You have a strict budget. **As soon as both of these are true, call `report` IMMEDIATELY:**
+
+- (a) `replay` of a candidate **listing** endpoint returned status 200 with a parseable list of rows (e.g. JSON `{count, rows[]}` or an array, or HTML containing visible bid rows).
+- (b) `replay` of a candidate **detail** endpoint returned status 200 with per-row data including a description/summary field and ideally attachment URLs.
+
+Do NOT keep exploring once both are true. Do NOT re-navigate to the SPA portal you started on once you've confirmed the API host works — the SPA will hit Cloudflare on subsequent loads, which is a dead end. Stay on the API host. Additional exploration burns turns and is not rewarded — the goal is the spec, not a perfect understanding of the site.
+
+If a listing-only spec is what you have when turns run low, that is still useful — emit a spec with no `detail` endpoint and `confidence: medium` rather than letting the loop time out. Calling `report` with a partial spec is always better than not calling `report`.
+
+If the portal is down, requires Civitas-incompatible login, or you've spent many turns without identifying ANY working endpoint, call `give_up` with a concrete reason.
 
 # Worked example: OpenGov / Pasadena
 
@@ -754,7 +762,7 @@ SYSTEM_PROMPT = """You are an investigation agent. Given a procurement portal UR
 # Agent loop
 # ============================================================================
 
-DEFAULT_MAX_TURNS = 25
+DEFAULT_MAX_TURNS = 35
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
@@ -875,7 +883,24 @@ async def run_investigation(
                         }
                     )
 
-                messages.append({"role": "user", "content": tool_results})
+                # Budget reminder: when turns are running low, nudge the
+                # model to terminate. Without this the loop tends to spend
+                # its tail re-exploring instead of calling `report`.
+                user_content: list = list(tool_results)
+                turns_remaining = max_turns - turn - 1
+                if 0 < turns_remaining <= 5:
+                    user_content.append(
+                        {
+                            "type": "text",
+                            "text": (
+                                f"BUDGET: only {turns_remaining} turns left. "
+                                f"If ANY listing endpoint is working, call "
+                                f"`report` NOW with whatever you have. A "
+                                f"partial spec is far better than no spec."
+                            ),
+                        }
+                    )
+                messages.append({"role": "user", "content": user_content})
 
                 if toolbox.spec_received is not None:
                     logger.info("Investigation complete: spec received")
