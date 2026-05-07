@@ -102,11 +102,8 @@ PLANETBIDS_AGENCIES: dict[str, dict] = {
         "name": "City of Torrance",
         "url": "https://vendors.planetbids.com/portal/47426/bo/bo-search",
     },
-    "planetbids_pasadena": {
-        "portal_id": "14770",
-        "name": "City of Pasadena",
-        "url": "https://vendors.planetbids.com/portal/14770/bo/bo-search",
-    },
+    # Pasadena migrated off PlanetBids → OpenGov in early 2026. Removed
+    # from registry; the OpenGov scraper picks it up via opengov_pasadena.
     "planetbids_downey": {
         "portal_id": "24661",
         "name": "City of Downey",

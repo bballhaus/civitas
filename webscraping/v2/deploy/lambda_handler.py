@@ -364,11 +364,12 @@ def _handle_run_all(event, context):
             logger.error(f"Failed to dispatch BidSync: {e}")
 
     # Dispatch each PlanetBids portal as its own single-site chained job.
-    # Each portal paginates internally (8 events per Lambda invocation),
-    # so even the largest portals (San Diego at 21+ events) finish without
-    # hitting the 15-min Lambda timeout. Stagger between portals avoids
-    # 44 concurrent logins to the same vendor account.
-    PLANETBIDS_BATCH_SIZE = 8
+    # Each portal paginates internally (5 events per Lambda invocation —
+    # each detail page is ~70-80s once login + tabs + market intel are
+    # accounted for, so 5 leaves ~10min of headroom under the 15-min
+    # Lambda budget). Stagger between portals avoids ~44 concurrent
+    # logins to the same vendor account.
+    PLANETBIDS_BATCH_SIZE = 5
     PLANETBIDS_STAGGER_SECONDS = 90
     for i, site_id in enumerate(planetbids_sites):
         try:

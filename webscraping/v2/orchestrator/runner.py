@@ -61,16 +61,25 @@ def _build_site_registry() -> dict[str, SiteConfig]:
     # Add BidSync agencies (~15 agencies)
     registry.update(get_bidsync_site_configs())
 
-    # Add PlanetBids agencies (~44 agencies)
+    # Add PlanetBids agencies (~43 agencies; Pasadena moved off PlanetBids)
     registry.update(get_planetbids_site_configs())
 
-    # Agentic sites (custom portals that aren't on PlanetBids/BidSync)
-    # San Diego + Sacramento are now on PlanetBids; Oakland uses iSupplier (not scrapable)
+    # Agentic sites (custom portals that aren't on PlanetBids/BidSync).
+    # San Diego + Sacramento are now on PlanetBids; Oakland uses iSupplier (not scrapable).
+    # LA City (labavn.org) DNS-fails on Lambda; SF City URL was a 404 — both
+    # disabled until the agentic onboarding pipeline (which can re-discover
+    # the listing page) takes over. Keeping the entries so re-enabling is
+    # one config flip away.
     agentic_sites = [
-        ("la_city", "City of Los Angeles", "https://www.labavn.org/"),
-        ("sf_city", "City of San Francisco", "https://sfgov.org/oca/contracting-opportunities"),
+        ("la_city", "City of Los Angeles", "https://www.labavn.org/", False),
+        (
+            "sf_city",
+            "City of San Francisco",
+            "https://sf.gov/topics/contracting-opportunities",
+            False,
+        ),
     ]
-    for site_id, name, url in agentic_sites:
+    for site_id, name, url, enabled in agentic_sites:
         registry[site_id] = SiteConfig(
             site_id=site_id,
             name=name,
@@ -78,6 +87,7 @@ def _build_site_registry() -> dict[str, SiteConfig]:
             scraper_type=ScraperType.AGENTIC,
             min_request_interval_ms=5000,
             priority=2,
+            enabled=enabled,
         )
 
     return registry
