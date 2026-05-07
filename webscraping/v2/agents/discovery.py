@@ -28,6 +28,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 import anthropic
+import requests
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
@@ -39,6 +40,10 @@ from webscraping.v2.config import (
     fetch_via_scrapingbee,
     get_s3_client,
     has_scrapingbee_key,
+)
+from webscraping.v2.scrapers.opengov import (
+    OPENGOV_API_BASE,
+    _DEFAULT_HEADERS as _OPENGOV_HEADERS,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +63,11 @@ class PlatformProfile:
     listing_markers: list[str]  # Substrings on page text indicating a real portal.
     enumeration_hint: str  # Extra guidance for Claude (history, common slugs, etc.)
     requires_proxy: bool = False  # Route Playwright probes through ScrapingBee.
+    # Verification strategy. "html" probes the SPA URL (Playwright direct
+    # or via ScrapingBee depending on requires_proxy). "api_listing" calls
+    # a JSON endpoint we know the platform exposes; way faster, cheaper,
+    # and more reliable than rendering the SPA. OpenGov uses "api_listing".
+    verify_strategy: str = "html"
 
 
 PLATFORM_PROFILES: dict[str, PlatformProfile] = {
@@ -79,10 +89,11 @@ PLATFORM_PROFILES: dict[str, PlatformProfile] = {
             "agency name in lowercase, hyphenated where multi-word "
             "(e.g. 'pasadena', 'long-beach', 'culver-city')."
         ),
-        # OpenGov fronts every portal with Cloudflare bot detection.
-        # Probes from headless Chromium without a stealth proxy hit the
-        # "Just a moment" challenge and never resolve.
-        requires_proxy=True,
+        # The customer-facing portal is fronted by Cloudflare, but
+        # OpenGov's JSON API host is wide open — we verify by hitting
+        # /api/v1/government/{slug}/project/public, which is way faster
+        # and cheaper than rendering the SPA.
+        verify_strategy="api_listing",
     ),
     # Future platforms wire in by adding entries here.
 }
@@ -370,16 +381,22 @@ async def verify_candidates(
 ) -> list[Candidate]:
     """Probe each candidate URL; populate verified flag.
 
-    Forks on `profile.requires_proxy`:
-      - True  → ScrapingBee API mode (sync HTTP, offloaded to threads).
-      - False → Playwright direct.
+    Strategy is chosen by `profile.verify_strategy`:
+      - "api_listing" → POST the platform's JSON listing endpoint.
+      - "html" + requires_proxy=True  → ScrapingBee API mode + BS4.
+      - "html" + requires_proxy=False → Playwright direct.
 
     Probes run in parallel (semaphore-bounded) so the whole verification
     pass fits inside Lambda's 15-min timeout.
     """
     profile = PLATFORM_PROFILES[platform_name]
 
-    if profile.requires_proxy:
+    if profile.verify_strategy == "api_listing":
+        logger.info(
+            f"Discovery: probing {platform_name} candidates via JSON API"
+        )
+        await _verify_via_api_listing(candidates, profile, concurrency)
+    elif profile.requires_proxy:
         if not has_scrapingbee_key():
             logger.warning(
                 f"Discovery: {platform_name} requires_proxy=True but no "
@@ -395,6 +412,75 @@ async def verify_candidates(
         await _verify_via_playwright(candidates, profile, concurrency)
 
     return candidates
+
+
+def _probe_one_api_listing(candidate: Candidate, profile: PlatformProfile) -> None:
+    """Verify by POST'ing the platform's JSON listing endpoint."""
+    if profile.name != "opengov":
+        # Future API-backed platforms can extend this; today only one.
+        candidate.verification_notes = (
+            f"api_listing not implemented for {profile.name}"
+        )
+        return
+    url = f"{OPENGOV_API_BASE}/government/{candidate.slug}/project/public"
+    try:
+        resp = requests.post(
+            url,
+            json={"status": "open", "page": 1, "limit": 1},
+            headers=_OPENGOV_HEADERS,
+            timeout=20,
+        )
+    except Exception as e:
+        candidate.verification_notes = f"api fetch failed: {e}"
+        return
+    if resp.status_code == 404:
+        candidate.verification_notes = "api 404 — slug not on platform"
+        return
+    if not resp.ok:
+        candidate.verification_notes = (
+            f"api status {resp.status_code}"
+        )
+        return
+    try:
+        data = resp.json()
+    except ValueError:
+        candidate.verification_notes = "api non-JSON response"
+        return
+    count = int(data.get("count") or 0)
+    candidate.listing_count_observed = count
+    candidate.page_title_observed = "(api listing)"
+    if count > 0:
+        candidate.verified = True
+        candidate.verification_notes = f"api count={count}"
+    else:
+        candidate.verification_notes = (
+            "api count=0 (slug exists but no active projects)"
+        )
+
+
+async def _verify_via_api_listing(
+    candidates: list[Candidate],
+    profile: PlatformProfile,
+    concurrency: int,
+) -> None:
+    sem = asyncio.Semaphore(concurrency)
+    completed = {"n": 0}
+    total = len(candidates)
+
+    async def probe(c: Candidate) -> None:
+        async with sem:
+            try:
+                await asyncio.to_thread(_probe_one_api_listing, c, profile)
+            except Exception as e:
+                c.verification_notes = f"probe error: {e}"
+            finally:
+                completed["n"] += 1
+                logger.info(
+                    f"  Probed [{completed['n']}/{total}] {c.site_id} "
+                    f"-> {'OK' if c.verified else 'reject'}"
+                )
+
+    await asyncio.gather(*(probe(c) for c in candidates))
 
 
 async def _verify_via_scrapingbee(

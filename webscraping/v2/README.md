@@ -226,76 +226,67 @@ For local dev without AWS access, set `PLANETBIDS_USERNAME` /
 the Lambda env vars today; moving them to Secrets Manager is on the
 TODO list.
 
-### ScrapingBee (Cloudflare bypass)
+### OpenGov: direct JSON API (no Cloudflare in path)
 
-OpenGov Procurement is fronted by Cloudflare bot detection. Headless
-Chromium with stealth init scripts does NOT pass — the "Just a
-moment / Performing security verification" challenge does not
-auto-resolve. We bypass it by routing OpenGov fetches through
-ScrapingBee with `stealth_proxy=true&render_js=true`.
+The customer-facing portal at `procurement.opengov.com` is fronted by
+Cloudflare bot detection, but OpenGov's JSON API host
+`api.procurement.opengov.com` is wide open: no challenge, no auth, no
+rate-limit headers in normal use. `scrapers/opengov.py` and the
+OpenGov path of `agents/discovery.py` hit the API directly with
+`requests` and skip ScrapingBee entirely.
 
-**Setup:**
+**Endpoints used:**
 
-1. Sign up at scrapingbee.com (Pro plan recommended for OpenGov —
-   $99/mo, 250K credits/mo). Verify the email.
-2. Store the API key in AWS Secrets Manager:
+- `POST /api/v1/government/{slug}/project/public`
+  - body: `{"status":"open","page":N,"limit":L}` (defaults to 10/page).
+  - response: `{"count": int, "rows": [Project, ...]}` — each row has
+    `id`, `financialId`, `title`, `summary` (full HTML description),
+    `status`, `proposalDeadline`, `releaseProjectDate`, `department`,
+    `government`, `addendums`. **No attachments at this level.**
+
+- `GET /api/v1/project/{id}`
+  - response: full Project (≈ 149 keys). Adds `attachments[]` (each
+    with a public download `url`, `filename`, `fileExtension`, `type`)
+    and the flat contact field set (`contactEmail`, `contactPhone`,
+    `contactDisplayName`, etc.).
+
+PDF attachments are public URLs that don't require any cookie or
+token — `requests.get` each one, hand the bytes to PyMuPDF, then run
+the existing Claude Haiku enrichment pipeline.
+
+### ScrapingBee (legacy backstop)
+
+The `config.fetch_via_scrapingbee` helper is still available for
+platforms whose customer-facing site is behind Cloudflare *and* doesn't
+expose a clean JSON API host. No platform currently uses it (OpenGov
+moved off it once the API was discovered). Setup remains:
+
+1. Sign up at scrapingbee.com (Pro plan, ~$99/mo, 250K credits/mo).
+2. Store the key in AWS Secrets Manager:
    ```bash
    aws secretsmanager create-secret \
      --name civitas/scraping/scrapingbee \
      --secret-string '{"api_key":"YOUR_KEY"}' \
      --region us-east-1
    ```
-   The Lambda role already has `secretsmanager:GetSecretValue` on
-   `civitas/scraping/*`. Local dev: set `SCRAPINGBEE_API_KEY` env var.
-3. Sanity-check with their `/usage` endpoint:
-   ```bash
-   curl -G "https://app.scrapingbee.com/api/v1/usage" \
-     --data-urlencode "api_key=YOUR_KEY"
-   ```
+   Or set `SCRAPINGBEE_API_KEY` in the environment. The Lambda role
+   already has `secretsmanager:GetSecretValue` on `civitas/scraping/*`.
 
-**Integration mode — API, not proxy.** ScrapingBee supports two
-integration patterns. We use the API endpoint exclusively:
-- *Proxy mode* (`proxy.scrapingbee.com:8886`) — does **not** expose
-  `stealth_proxy`, which is what OpenGov's Cloudflare config requires.
-  Returns `Not found :(`. Tried and abandoned.
-- *API mode* (`https://app.scrapingbee.com/api/v1/`) — we GET their
-  endpoint with target URL + flags; they return rendered HTML. With
-  `stealth_proxy=true&render_js=true`, Cloudflare is bypassed and we
-  get the post-React-hydration HTML. This is what
-  `scrapers/opengov.py` and the OpenGov path of `agents/discovery.py`
-  use today (via `config.fetch_via_scrapingbee`).
+**Integration mode is API, not proxy.** ScrapingBee's proxy endpoint
+at `proxy.scrapingbee.com:8886` does **not** expose `stealth_proxy`,
+which is what Cloudflare-protected SPAs require — that path was tried
+and abandoned. The API endpoint at `https://app.scrapingbee.com/api/v1/`
+with `render_js=true&stealth_proxy=true` returns rendered HTML and is
+what the helper hits.
 
-**OpenGov scraper is listing-only.** OpenGov's React app navigates to
-bid detail pages via Angular click handlers — bid cards render as
-`<a href="#">` with the navigation hidden in JS state. Until the
-detail-URL pattern is reverse-engineered (one manual DevTools
-inspection of the click-fired GraphQL/REST call, or an Apollo-state
-parse), the OpenGov scraper yields *listing-only* events: title,
-bid number, agency, status, deadline. No description, no PDFs, no
-LLM enrichment. Listing-only events still flow through the rest of
-the pipeline; the attachment-enrichment pass is a no-op when
-`attachment_texts` is empty.
-
-**Credit math (API mode):**
-- `render_js=true` + `stealth_proxy=true` ≈ 75 credits per page.
-- One Pasadena listing-only scrape ≈ 75 credits.
-  (When detail-URL parsing lands, add ~75 × N detail pages — for
-  Pasadena's ~11 active bids that's ~900 credits per run.)
-- Pro plan: 250K credits/mo. Listing-only at 75 credits/run → 3,300
-  scrapes/mo. Plenty.
-- Discovery probe = listing-only fetch ≈ 75 credits per candidate. A
-  full 30-candidate run ≈ 2,250 credits. Cheap.
-
-**Which scrapers route through ScrapingBee:**
-- `scrapers/opengov.py` — always (API mode + BeautifulSoup; no
-  Playwright). Skips the run entirely if no API key is configured.
+**Which scrapers route through ScrapingBee today:**
+- `scrapers/opengov.py` — **no** (uses direct API).
 - `agents/discovery.py` — only for platforms with
-  `PlatformProfile.requires_proxy=True` (currently just `opengov`).
-  Probes for those platforms use the same API-mode HTTP path; other
-  platforms continue to use direct Playwright probes.
-- Cal eProcure / PlanetBids / BidSync — never. No Cloudflare in
-  front, so routing them through ScrapingBee would burn credits with
-  no benefit.
+  `PlatformProfile.verify_strategy="html"` and `requires_proxy=True`
+  (none today). OpenGov uses `verify_strategy="api_listing"` which
+  probes the listing API directly.
+- Cal eProcure / PlanetBids / BidSync — never. No Cloudflare in front,
+  so routing them through ScrapingBee would burn credits with no benefit.
 
 ### Tests
 

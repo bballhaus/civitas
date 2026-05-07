@@ -676,11 +676,11 @@ class TestPlanetBidsPagination:
 
 
 # ============================================================================
-# OpenGov listing parser tests (no network — fixture HTML)
+# OpenGov API client tests (no network — fake requests via monkeypatch)
 # ============================================================================
 
-class TestOpenGovListingParser:
-    def _scraper(self):
+class TestOpenGovApiClient:
+    def _scraper(self, **kwargs):
         from webscraping.v2.scrapers.opengov import OpenGovScraper
         cfg = SiteConfig(
             site_id="opengov_pasadena",
@@ -693,93 +693,231 @@ class TestOpenGovListingParser:
                 "url": "https://procurement.opengov.com/portal/pasadena",
             },
         )
-        return OpenGovScraper(cfg)
+        return OpenGovScraper(cfg, **kwargs)
 
-    def test_bid_number_regex_year_prefix(self):
-        from webscraping.v2.scrapers.opengov import _BID_NUMBER_RE
-        m = _BID_NUMBER_RE.search("Janitorial Services 2026 2026-RFP-0123 Open")
-        assert m and m.group(0) == "2026-RFP-0123"
+    def test_extract_procurement_type(self):
+        from webscraping.v2.scrapers.opengov import _extract_procurement_type
+        assert _extract_procurement_type("2026-RFP-0123") == "RFP"
+        assert _extract_procurement_type("RFB-2026-007") == "RFB"
+        assert _extract_procurement_type("2026-IFB-CIV-0216") == "IFB"
+        assert _extract_procurement_type("RFQ-001") == "RFQ"
+        # Unknown shape falls back to RFP.
+        assert _extract_procurement_type("some-random-id") == "RFP"
+        assert _extract_procurement_type("") == "RFP"
 
-    def test_bid_number_regex_letter_prefix(self):
-        from webscraping.v2.scrapers.opengov import _BID_NUMBER_RE
-        m = _BID_NUMBER_RE.search("Park Renovation RFB-2026-007 Open")
-        assert m and m.group(0) == "RFB-2026-007"
-
-    def test_bid_number_regex_no_match(self):
-        from webscraping.v2.scrapers.opengov import _BID_NUMBER_RE
-        assert _BID_NUMBER_RE.search("just plain text") is None
-
-    def test_parse_listing_extracts_cards(self):
-        s = self._scraper()
-        html = """
-        <html><body>
-          <nav><a href="/login">Login</a></nav>
-          <div class="row">
-            <a href="#">RFP for Citywide Janitorial Services 2026</a>
-            <span>2026-RFP-0123</span>
-            <span>Open</span>
-            <span>Closes May 15, 2026 5:00 PM</span>
-          </div>
-          <div class="row">
-            <a href="#">Demolition Services - 123 Main St</a>
-            <span>RFP-2025-099</span>
-            <span>Closed</span>
-          </div>
-          <footer><a href="#">Privacy</a></footer>
-        </body></html>
-        """
-        cards = s._parse_listing(html)
-        assert len(cards) == 2
-        first, second = cards
-        assert first["title"] == "RFP for Citywide Janitorial Services 2026"
-        assert first["bid_number"] == "2026-RFP-0123"
-        assert first["status"] == "Open"
-        assert first["deadline"] == "May 15, 2026 5:00 PM"
-        assert second["bid_number"] == "RFP-2025-099"
-        assert second["status"] == "Closed"
-
-    def test_parse_listing_drops_chrome(self):
-        # Anchors in nav/header/footer must not become cards even if
-        # they happen to sit near a bid-number-shaped string.
-        s = self._scraper()
-        html = """
-        <html><body>
-          <nav>
-            <a href="#">Some long navigation label that is RFP-2026-001</a>
-            <span>RFP-2026-001 Open</span>
-          </nav>
-        </body></html>
-        """
-        assert s._parse_listing(html) == []
-
-    def test_card_to_event_uses_bid_number_for_id(self):
-        s = self._scraper()
-        ev = s._card_to_event({
-            "title": "Park Renovation",
-            "bid_number": "RFB-2026-007",
-            "status": "Open",
-            "deadline": "06/01/2026",
+    def test_extract_contact_prefers_display_name(self):
+        from webscraping.v2.scrapers.opengov import _extract_contact
+        c = _extract_contact({
+            "contactDisplayName": "Jane Doe",
+            "contactFirstName": "Janet",
+            "contactLastName": "Smith",
+            "contactEmail": "jane@example.gov",
+            "contactPhoneComplete": "(626) 555-0100 ext 42",
+            "contactPhone": "626-555-0100",
         })
+        assert c.name == "Jane Doe"
+        assert c.email == "jane@example.gov"
+        assert c.phone == "(626) 555-0100 ext 42"
+
+    def test_extract_contact_falls_back_to_first_last(self):
+        from webscraping.v2.scrapers.opengov import _extract_contact
+        c = _extract_contact({
+            "contactFirstName": "Janet",
+            "contactLastName": "Smith",
+            "contactEmail": "",
+            "contactPhone": "626-555-0100",
+        })
+        assert c.name == "Janet Smith"
+        assert c.email is None
+        assert c.phone == "626-555-0100"
+
+    def test_extract_contact_all_blank(self):
+        from webscraping.v2.scrapers.opengov import _extract_contact
+        c = _extract_contact({})
+        assert c.name is None
+        assert c.email is None
+        assert c.phone is None
+
+    def test_strip_html_handles_tags_and_entities(self):
+        from webscraping.v2.scrapers.opengov import _strip_html
+        html = "<p>Hello&nbsp;<b>world</b> &amp; goodbye</p>"
+        assert _strip_html(html) == "Hello world & goodbye"
+        assert _strip_html("") == ""
+
+    def test_build_event_from_detail(self):
+        s = self._scraper()
+        detail = {
+            "id": 232604,
+            "title": "Design-Build Services for a Hydrogen Fueling Station",
+            "financialId": "2026-RFP-0123",
+            "summary": "<p>Full RFP description.</p>",
+            "status": "open",
+            "releaseProjectDate": "2026-04-08T22:25:33.381Z",
+            "proposalDeadline": "2026-06-08T21:00:54.486Z",
+            "government": {
+                "code": "pasadena",
+                "organization": {"name": "City of Pasadena", "id": 530},
+            },
+            "department": {"id": 5, "name": "Public Works"},
+            "contactDisplayName": "Jane Doe",
+            "contactEmail": "jane@cityofpasadena.net",
+            "contactPhone": "626-555-0100",
+        }
+        ev = s._build_event(detail, listing_row={"id": 232604})
         assert ev is not None
-        assert ev.source_event_id == "RFB-2026-007"
-        assert ev.source_url.endswith("#bid=RFB-2026-007")
-        assert ev.due_date == "06/01/2026"
-        assert ev.raw_metadata["listing_only"] is True
-        assert ev.raw_metadata["bid_number"] == "RFB-2026-007"
+        assert ev.source_event_id == "2026-RFP-0123"
+        assert ev.source_url == "https://procurement.opengov.com/portal/pasadena/projects/232604"
+        assert ev.title == detail["title"]
+        assert ev.description == "Full RFP description."
         assert ev.issuing_agency == "City of Pasadena"
+        assert ev.posted_date == detail["releaseProjectDate"]
+        assert ev.due_date == detail["proposalDeadline"]
+        assert ev.procurement_type == "RFP"
+        assert ev.contact.email == "jane@cityofpasadena.net"
+        assert ev.raw_metadata["project_id"] == 232604
+        assert ev.raw_metadata["financial_id"] == "2026-RFP-0123"
+        assert ev.raw_metadata["department"] == "Public Works"
 
-    def test_card_to_event_falls_back_to_title_when_no_bid_number(self):
+    def test_build_event_falls_back_to_project_id_when_no_financial_id(self):
         s = self._scraper()
-        ev = s._card_to_event({
-            "title": "Park Renovation",
-            "bid_number": "",
-            "status": "Open",
-            "deadline": "",
-        })
+        ev = s._build_event(
+            {"id": 999, "title": "Something", "summary": ""},
+            listing_row={"id": 999},
+        )
         assert ev is not None
-        assert ev.source_event_id == "Park Renovation"
-        # No bid number → no anchor on the URL.
-        assert ev.source_url == "https://procurement.opengov.com/portal/pasadena"
+        assert ev.source_event_id == "999"
+        assert ev.source_url.endswith("/projects/999")
+
+    def test_list_projects_uses_page_when_offset_is_clean_multiple(self, monkeypatch):
+        from webscraping.v2.scrapers import opengov as og
+
+        captured = {}
+
+        class FakeResp:
+            status_code = 200
+            ok = True
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"count": 100, "rows": [{"id": i} for i in range(12)]}
+
+        def fake_post(url, json=None, timeout=None, headers=None):
+            captured["url"] = url
+            captured["body"] = json
+            return FakeResp()
+
+        monkeypatch.setattr(og.requests, "post", fake_post)
+
+        s = self._scraper(batch_offset=24, batch_size=12)
+        rows = s._list_projects()
+        assert len(rows) == 12
+        assert s.total_available == 100
+        assert captured["body"] == {"status": "open", "page": 3, "limit": 12}
+        assert captured["url"].endswith("/government/pasadena/project/public")
+
+    def test_list_projects_slices_locally_when_offset_is_not_a_multiple(
+        self, monkeypatch
+    ):
+        from webscraping.v2.scrapers import opengov as og
+
+        captured = {}
+
+        class FakeResp:
+            status_code = 200
+            ok = True
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                # 15 rows requested, return 15
+                return {
+                    "count": 50,
+                    "rows": [{"id": i} for i in range(15)],
+                }
+
+        def fake_post(url, json=None, timeout=None, headers=None):
+            captured["body"] = json
+            return FakeResp()
+
+        monkeypatch.setattr(og.requests, "post", fake_post)
+
+        s = self._scraper(batch_offset=5, batch_size=10)
+        rows = s._list_projects()
+        # Should request page=1, limit=15, then slice [5:15]
+        assert captured["body"]["page"] == 1
+        assert captured["body"]["limit"] == 15
+        assert [r["id"] for r in rows] == list(range(5, 15))
+
+
+# ============================================================================
+# OpenGov discovery probe tests (no network)
+# ============================================================================
+
+class TestOpenGovDiscoveryProbe:
+    def _candidate(self, slug="long-beach"):
+        from webscraping.v2.agents.discovery import Candidate
+        return Candidate(
+            platform="opengov",
+            site_id=f"opengov_{slug.replace('-', '_')}",
+            slug=slug,
+            name=f"City of {slug.title()}",
+            url=f"https://procurement.opengov.com/portal/{slug}",
+        )
+
+    def test_api_probe_verifies_when_count_positive(self, monkeypatch):
+        from webscraping.v2.agents import discovery as disc
+
+        class FakeResp:
+            status_code = 200
+            ok = True
+
+            def json(self):
+                return {"count": 7, "rows": [{}]}
+
+        monkeypatch.setattr(disc.requests, "post", lambda *a, **kw: FakeResp())
+
+        c = self._candidate()
+        disc._probe_one_api_listing(c, disc.PLATFORM_PROFILES["opengov"])
+        assert c.verified is True
+        assert c.listing_count_observed == 7
+        assert "count=7" in c.verification_notes
+
+    def test_api_probe_rejects_when_count_zero(self, monkeypatch):
+        from webscraping.v2.agents import discovery as disc
+
+        class FakeResp:
+            status_code = 200
+            ok = True
+
+            def json(self):
+                return {"count": 0, "rows": []}
+
+        monkeypatch.setattr(disc.requests, "post", lambda *a, **kw: FakeResp())
+
+        c = self._candidate()
+        disc._probe_one_api_listing(c, disc.PLATFORM_PROFILES["opengov"])
+        assert c.verified is False
+        assert "count=0" in c.verification_notes
+
+    def test_api_probe_rejects_on_404(self, monkeypatch):
+        from webscraping.v2.agents import discovery as disc
+
+        class FakeResp:
+            status_code = 404
+            ok = False
+
+            def json(self):
+                return {}
+
+        monkeypatch.setattr(disc.requests, "post", lambda *a, **kw: FakeResp())
+
+        c = self._candidate(slug="not-a-real-slug")
+        disc._probe_one_api_listing(c, disc.PLATFORM_PROFILES["opengov"])
+        assert c.verified is False
+        assert "404" in c.verification_notes
 
 
 if __name__ == "__main__":
