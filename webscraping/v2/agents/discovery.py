@@ -326,16 +326,17 @@ async def verify_candidates(
             )
 
     async with async_playwright() as p:
-        launch_kwargs = {
-            "headless": True,
-            "args": [
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--single-process",
-            ],
-        }
+        args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--single-process",
+        ]
+        if proxy_cfg:
+            # ScrapingBee stealth proxy does TLS interception
+            args.append("--ignore-certificate-errors")
+        launch_kwargs = {"headless": True, "args": args}
         if proxy_cfg:
             launch_kwargs["proxy"] = proxy_cfg
         browser = await p.chromium.launch(**launch_kwargs)

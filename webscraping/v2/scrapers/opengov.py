@@ -101,16 +101,20 @@ class OpenGovScraper(BaseScraper):
                 f"likely block this run. Set SCRAPINGBEE_API_KEY."
             )
         async with async_playwright() as p:
-            launch_kwargs = {
-                "headless": True,
-                "args": [
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--single-process",
-                ],
-            }
+            args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--single-process",
+            ]
+            if proxy_cfg:
+                # ScrapingBee stealth proxy does TLS interception; Chromium
+                # doesn't ship their CA, so the connection looks like an
+                # invalid-CA error without this flag. Safe — we explicitly
+                # trust the proxy we configured ourselves.
+                args.append("--ignore-certificate-errors")
+            launch_kwargs = {"headless": True, "args": args}
             if proxy_cfg:
                 launch_kwargs["proxy"] = proxy_cfg
             browser = await p.chromium.launch(**launch_kwargs)
