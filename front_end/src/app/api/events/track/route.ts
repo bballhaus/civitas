@@ -45,7 +45,10 @@ function sanitizePayload(raw: unknown): Record<string, unknown> {
 export async function POST(request: Request) {
   const user = await getAuthenticatedUser(request);
   if (!user) {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    // Tracker fires from public pages too (signup, login). Drop silently
+    // rather than returning 401 — KPI ingest is best-effort and the noise
+    // shows up as a console error in the browser.
+    return new NextResponse(null, { status: 204 });
   }
 
   const ip = getClientIp(request);
