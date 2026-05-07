@@ -17,7 +17,7 @@ rich `prospective_bidders` / `bid_results` instead.
 | **Cal eProcure** | 1 (state-level, ~530 events) | None needed | Inline download via `page.context.request.get` (replaces the broken click-based flow) | — | **Active.** Full scrape ~5 h. |
 | **PlanetBids** | 43 portals (Pasadena removed; migrated to OpenGov) | Shared cross-portal vendor login (Secrets Manager) | Gated; `vendor_registered=True` flag opens the Documents tab download path. **Currently broken** — see notes below. | ✓ Prospective Bidders / Bid Results / Awards | **Active.** `--include-awarded` adds historical archive. |
 | **BidSync / Periscope** | 15 agencies (1 Advanced Search) | None | Detail pages require login (not scraped) | — | Active; search-result metadata only. |
-| **OpenGov Procurement** | 1 in registry (Pasadena); discovery agent finds more | None expected for read-only public bids | Inline fetch via context.request once accessible | — | **Blocked by Cloudflare.** The scraper exists but the Cloudflare bot challenge does not auto-resolve in headless Chromium even with stealth tweaks. |
+| **OpenGov Procurement** | 1 in registry (Pasadena); discovery agent enumerates more | None expected for read-only public bids | Pending — depends on detail-page URL pattern (unsolved) | — | **Cloudflare bypass works (ScrapingBee API mode), bid-extraction does not.** Verified: API mode + stealth_proxy + render_js returns full Pasadena HTML with all 11 active bids and titles. Blocked: bid cards are href="#" click-handlers, internal detail IDs hidden in JS state — URL pattern reverse-engineering pending. Also: code still uses Playwright-proxy mode (which doesn't bypass Cloudflare) — rewrite to API-mode pending. |
 | **Agentic (LA City, SF City)** | 2 | n/a | n/a | n/a | **Disabled in registry.** LA fails DNS resolution on Lambda; SF URL is 404. |
 
 LLM enrichment provider: Claude Haiku 4.5 (default) with prompt
@@ -299,12 +299,24 @@ The thinnest source — search-result metadata only.
 
 ### OpenGov (Pasadena and beyond)
 
-Scraper is wired but currently produces zero events because Cloudflare's
-bot challenge does not auto-resolve in headless Chromium. The verifier
-in `agents/discovery.py` rejects challenge pages so they do not
-false-positive as "verified portals." When unblocked (residential proxy
-or JSON API), the field shape mirrors Cal eProcure for everything except
-the PlanetBids-only market intel tabs.
+Two-step blocker — first one solved, second one pending.
+
+1. **Cloudflare bypass (solved).** ScrapingBee API mode with
+   `stealth_proxy=true&render_js=true` returns full rendered HTML.
+   Verified against Pasadena: `City of Pasadena Procurement Portal`
+   loads with all 11 active bids and titles, no challenge page.
+
+2. **Bid → detail-page URL mapping (pending).** OpenGov's listing
+   uses Angular click-handlers (`<a href="#">`); the visible bid
+   number is in a sibling cell but the URL pattern the React app uses
+   for detail navigation is opaque. Until this is resolved, OpenGov
+   can deliver only listing-page fields (title, bid number, agency,
+   status), not the LLM-extracted RFP fields.
+
+Code state: `scrapers/opengov.py` and `agents/discovery.py` still
+attempt Playwright-proxy mode, which does NOT bypass Cloudflare. The
+rewrite to ScrapingBee API mode + the URL-pattern reverse-engineering
+are both pending.
 
 ### Agentic (LA City, SF City)
 
@@ -317,7 +329,8 @@ alternate URLs are confirmed.
 
 | Reason | Affected | Possible unblock |
 |---|---|---|
-| **OpenGov Cloudflare** | every field for every OpenGov event | Residential proxy / managed scraping API / find OpenGov's underlying JSON API |
+| **OpenGov code path uses Playwright proxy mode** that doesn't bypass Cloudflare | every field for every OpenGov event | Rewrite scraper + discovery probe to ScrapingBee API mode (stealth_proxy=true, render_js=true). Bypass is proven; just unimplemented. |
+| **OpenGov detail-page URL pattern is opaque** | LLM-extracted fields, attachments for OpenGov events even after API-mode rewrite | Click one bid card with browser DevTools open; inspect the resulting GraphQL or REST call. Encode that URL pattern in the scraper. |
 | **PlanetBids gated docs require per-bid Prospective Bidder registration** | `public_documents` (for `*`-marked rows), `attachment_urls`, all LLM-extracted fields, `attachment_rollup` for all PlanetBids events | Per-agency vendor registration alone does NOT unlock private docs — clicking "Download" opens a "Become a Prospective Bidder" modal for each bid. Automating PB-status is a ToS / disclosure issue (Civitas would appear in every bid's prospective_bidders tab). Pragmatic answer: live with PlanetBids = market-intel-only and rely on Cal eProcure for LLM-extracted RFP fields. |
 | **BidSync detail pages require login** | `description`, `contact`, `attachment_urls` and downstream LLM fields for all BidSync events | Investigate vendor-account creation; or ToS questions; or skip in favour of agency-direct sources |
 | **Agentic scrapers disabled** | All fields for LA City, SF City | Re-onboard via discovery + onboarding pipeline |

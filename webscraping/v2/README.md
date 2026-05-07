@@ -228,15 +228,16 @@ TODO list.
 
 ### ScrapingBee (Cloudflare bypass)
 
-OpenGov Procurement is fronted by Cloudflare bot detection that does
-not resolve in headless Chromium even with stealth init scripts. We
-route OpenGov traffic through ScrapingBee's stealth proxy, which
-provides a residential-grade IP + TLS fingerprint that Cloudflare
-accepts.
+OpenGov Procurement is fronted by Cloudflare bot detection. Headless
+Chromium with stealth init scripts does NOT pass — the "Just a
+moment / Performing security verification" challenge does not
+auto-resolve. We bypass it by routing OpenGov fetches through
+ScrapingBee with `stealth_proxy=true&render_js=true`.
 
 **Setup:**
 
-1. Sign up at scrapingbee.com (Hobby plan = $49/mo, 150K credits).
+1. Sign up at scrapingbee.com (Pro plan recommended for OpenGov —
+   $99/mo, 250K credits/mo). Verify the email.
 2. Store the API key in AWS Secrets Manager:
    ```bash
    aws secretsmanager create-secret \
@@ -244,25 +245,49 @@ accepts.
      --secret-string '{"api_key":"YOUR_KEY"}' \
      --region us-east-1
    ```
-   Or set `SCRAPINGBEE_API_KEY` as a Lambda env var (less secure).
-3. Verify the Lambda role has read access to the secret (already
-   covered by the existing `secrets-manager-planetbids` policy if you
-   widen the resource ARN; otherwise add a sibling inline policy).
+   The Lambda role already has `secretsmanager:GetSecretValue` on
+   `civitas/scraping/*`. Local dev: set `SCRAPINGBEE_API_KEY` env var.
+3. Sanity-check with their `/usage` endpoint:
+   ```bash
+   curl -G "https://app.scrapingbee.com/api/v1/usage" \
+     --data-urlencode "api_key=YOUR_KEY"
+   ```
 
-**Which scrapers use the proxy:**
+**Integration mode — API, not proxy.** ScrapingBee supports two
+integration patterns:
+- *Proxy mode* (`proxy.scrapingbee.com:8886`) — Playwright connects
+  through their proxy; they handle IP/TLS only. The plumbing for this
+  exists in the codebase (commits bd61abf, 01f118d) but **does not
+  pass Cloudflare on OpenGov** — their proxy endpoint does not expose
+  the `stealth_proxy` mode that OpenGov's Cloudflare config requires.
+  Returns `Not found :(`.
+- *API mode* (`https://app.scrapingbee.com/api/v1/`) — we GET their
+  endpoint with target URL + flags, they return rendered HTML. With
+  `stealth_proxy=true&render_js=true`, Cloudflare is bypassed and we
+  get the post-React-hydration HTML.
 
-- `scrapers/opengov.py` — always, when a key is configured. Logs a
-  warning at startup if no key is present.
-- `agents/discovery.py` — only for platforms whose `PlatformProfile`
-  has `requires_proxy=True` (currently just `opengov`).
-- All other scrapers (Cal eProcure, PlanetBids, BidSync) — never. They
-  don't need it, and routing them would burn credits unnecessarily.
+  **API mode is the path forward** for OpenGov. The OpenGov scraper
+  and the discovery agent's OpenGov probes should use API mode, not
+  Playwright. As of this writing, the rewrite from Playwright-proxy
+  to API-mode is pending — `scrapers/opengov.py` and
+  `agents/discovery.py` still attempt proxy mode and so still fail.
 
-**Credit budget rough math:** each Cloudflare-protected page = 25
-credits. ~30-50 OpenGov portals × ~10 events × 2 pages per scrape =
-~1000 page loads/cycle = ~25K credits/cycle. Hobby plan (150K/mo) fits
-about 1 OpenGov scrape every 5 days; Pro ($99, 1M credits/mo) fits
-several full scrapes per day. Adjust scrape cadence accordingly.
+**Credit math (API mode):**
+- `render_js=true` + `stealth_proxy=true` ≈ 75 credits per page.
+- One Pasadena scrape = listing (75) + 11 detail pages (~825) +
+  attachment fetches ≈ ~900 credits.
+- Pro plan (250K credits/mo) ÷ 900 = ~275 Pasadena-scrapes/mo, or one
+  every 3 hours continuously.
+- Discovery probe = listing-only fetch ≈ 75 credits per candidate. A
+  full 30-candidate run ≈ 2,250 credits. Cheap.
+
+**Which scrapers route through ScrapingBee:**
+- `scrapers/opengov.py` — always, once API-mode rewrite lands.
+- `agents/discovery.py` — only for platforms with
+  `PlatformProfile.requires_proxy=True` (currently just `opengov`).
+- Cal eProcure / PlanetBids / BidSync — never. No Cloudflare in
+  front, so routing them through ScrapingBee would burn credits with
+  no benefit.
 
 ### Tests
 
@@ -358,15 +383,24 @@ Lambda invocation by `get_opengov_site_configs()`.
 
 ## Known limitations
 
-- **OpenGov sits behind Cloudflare bot detection.** Headless Chromium
-  alone does not pass the "Just a moment" challenge. We solve this
-  with a ScrapingBee stealth-proxy integration (see "ScrapingBee
-  (Cloudflare bypass)" above). When `SCRAPINGBEE_API_KEY` /
-  `civitas/scraping/scrapingbee` is configured, OpenGov scrapes and
-  discovery probes route through the proxy automatically. Without a
-  key, OpenGov scrapes log a warning and produce zero events. The
-  discovery verifier explicitly rejects challenge pages so they do
-  not false-positive as "verified portals."
+- **OpenGov sits behind Cloudflare bot detection.** Bypass requires
+  ScrapingBee API mode (`stealth_proxy=true&render_js=true`); see
+  "ScrapingBee (Cloudflare bypass)" above. Code path is being
+  rewritten from Playwright-proxy to API-mode — until that lands,
+  OpenGov scrapes still produce zero events even with the API key
+  configured. The discovery verifier already rejects Cloudflare
+  interstitials so they do not false-positive.
+
+- **OpenGov bid-card → detail-page mapping is unsolved.** Bid cards
+  on a portal listing render as `<a href="#">` Angular click-handlers
+  (same pattern as PlanetBids). The visible bid number ("2026-RFP-
+  0123") is plain text in a sibling cell, but the URL pattern that
+  the React app uses for detail navigation is opaque — internal IDs
+  live in JS state, not in any href. Resolving this needs either
+  network-tab inspection of one click event (cheap, one-time) or
+  reverse-engineering the GraphQL/REST endpoint OpenGov's app uses
+  internally. Until resolved, OpenGov can only deliver listing-page
+  fields (title, bid number, agency, status), not full enrichment.
 
 - **PlanetBids gated documents require per-bid Prospective Bidder
   registration, NOT per-agency vendor registration.** Even with the
