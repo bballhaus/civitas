@@ -64,12 +64,23 @@ def get_secret(secret_name: str) -> dict:
     resp = client.get_secret_value(SecretId=secret_name)
     return json.loads(resp["SecretString"])
 
-# LLM
+# LLM — provider choice for PDF enrichment.
+# "anthropic" (default): Claude Haiku 4.5 with prompt caching on the system
+#   prompt; better structured extraction than llama 3.1 8B and the system
+#   prompt cache makes per-PDF cost dominated by per-PDF text only.
+# "groq": llama 3.1 8B fallback, kept as an escape hatch.
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower()
+
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = "llama-3.1-8b-instant"
+
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL = os.environ.get(
+    "ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"
+)
 
 # Scraping defaults
 DEFAULT_REQUEST_INTERVAL_MS = 3000
 MAX_TEXT_CHARS = 15_000
+# Inter-call sleep — only enforced for Groq's free-tier rate limits.
 GROQ_SLEEP_SECONDS = 2

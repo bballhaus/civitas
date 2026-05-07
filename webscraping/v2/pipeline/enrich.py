@@ -22,9 +22,16 @@ from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
 import requests
-from groq import Groq
 
-from webscraping.v2.config import GROQ_API_KEY, GROQ_MODEL, MAX_TEXT_CHARS, GROQ_SLEEP_SECONDS
+from webscraping.v2.config import (
+    ANTHROPIC_API_KEY,
+    ANTHROPIC_MODEL,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    GROQ_SLEEP_SECONDS,
+    LLM_PROVIDER,
+    MAX_TEXT_CHARS,
+)
 from webscraping.v2.models import AttachmentExtraction, RawScrapedEvent
 
 logger = logging.getLogger(__name__)
@@ -178,6 +185,8 @@ def download_pdf(url: str, cookies: dict | None = None) -> str:
 
 def call_groq(text: str, max_retries: int = 5) -> dict[str, Any]:
     """Send text to Groq for structured extraction with rate-limit retry."""
+    from groq import Groq
+
     client = Groq(api_key=GROQ_API_KEY)
 
     for attempt in range(max_retries):
@@ -205,6 +214,98 @@ def call_groq(text: str, max_retries: int = 5) -> dict[str, Any]:
             else:
                 raise
     raise RuntimeError(f"Max retries ({max_retries}) exceeded for Groq API")
+
+
+# Module-level Anthropic client — reused across PDFs so prompt-cache hits
+# accrue. Created lazily on first call so unit tests that don't enrich
+# don't need ANTHROPIC_API_KEY set.
+_anthropic_client = None
+
+
+def _get_anthropic_client():
+    global _anthropic_client
+    if _anthropic_client is None:
+        if not ANTHROPIC_API_KEY:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY not set; cannot enrich via Anthropic. "
+                "Set LLM_PROVIDER=groq to fall back."
+            )
+        import anthropic
+        _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    return _anthropic_client
+
+
+def call_anthropic(text: str, max_retries: int = 4) -> dict[str, Any]:
+    """Send text to Claude Haiku 4.5 for structured RFP extraction.
+
+    Uses prompt caching on the (~1KB) system prompt so each subsequent
+    enrichment call only pays for the per-PDF user text — typically
+    10-100x cheaper than re-sending the schema every call.
+    """
+    client = _get_anthropic_client()
+
+    for attempt in range(max_retries):
+        try:
+            response = client.messages.create(
+                model=ANTHROPIC_MODEL,
+                max_tokens=2000,
+                temperature=0.0,
+                system=[
+                    {
+                        "type": "text",
+                        "text": EXTRACTION_SYSTEM_PROMPT,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                messages=[{"role": "user", "content": text}],
+            )
+            raw = "".join(
+                block.text for block in response.content
+                if getattr(block, "type", "") == "text"
+            ).strip()
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                logger.debug(
+                    "anthropic enrich tokens: input=%s cache_read=%s "
+                    "cache_create=%s output=%s",
+                    getattr(usage, "input_tokens", "?"),
+                    getattr(usage, "cache_read_input_tokens", "?"),
+                    getattr(usage, "cache_creation_input_tokens", "?"),
+                    getattr(usage, "output_tokens", "?"),
+                )
+            return _parse_llm_json(raw)
+        except Exception as e:
+            err = str(e)
+            # Retry on 429/5xx; give up on 4xx auth errors.
+            if (
+                "429" in err
+                or "overloaded" in err.lower()
+                or "rate_limit" in err.lower()
+                or "503" in err
+                or "502" in err
+            ):
+                wait = min(2 ** attempt * 5, 60)
+                logger.warning(
+                    f"Anthropic transient error, waiting {wait}s "
+                    f"(attempt {attempt + 1}/{max_retries}): {err[:120]}"
+                )
+                time.sleep(wait)
+                continue
+            raise
+    raise RuntimeError(
+        f"Max retries ({max_retries}) exceeded for Anthropic API"
+    )
+
+
+def call_llm(text: str) -> dict[str, Any]:
+    """Provider-agnostic structured extraction call.
+
+    Dispatches based on LLM_PROVIDER config. Returns the raw JSON dict
+    matching EXTRACTION_SCHEMA.
+    """
+    if LLM_PROVIDER == "groq":
+        return call_groq(text)
+    return call_anthropic(text)
 
 
 def _parse_llm_json(raw: str) -> dict[str, Any]:
@@ -326,9 +427,10 @@ def enrich_event(
                 logger.info(f"  {filename}: {len(text)} chars (pre-extracted)")
                 all_text_parts.append(f"=== {filename} ===\n{text}")
 
-                result = call_groq(text)
+                result = call_llm(text)
                 extractions.append(result)
-                time.sleep(GROQ_SLEEP_SECONDS)
+                if LLM_PROVIDER == "groq":
+                    time.sleep(GROQ_SLEEP_SECONDS)
             except Exception as e:
                 logger.warning(f"Failed LLM processing {filename}: {e}")
         else:
@@ -348,9 +450,10 @@ def enrich_event(
                 logger.info(f"  {filename}: {len(text)} chars")
                 all_text_parts.append(f"=== {filename} ===\n{text}")
 
-                result = call_groq(text)
+                result = call_llm(text)
                 extractions.append(result)
-                time.sleep(GROQ_SLEEP_SECONDS)
+                if LLM_PROVIDER == "groq":
+                    time.sleep(GROQ_SLEEP_SECONDS)
 
             except Exception as e:
                 logger.warning(f"Failed processing {filename}: {e}")

@@ -40,10 +40,15 @@ logger = logging.getLogger(__name__)
 # Known California agencies on PlanetBids (44 verified portals)
 PLANETBIDS_AGENCIES: dict[str, dict] = {
     # --- Cities ---
+    # vendor_registered=True means we have a per-agency vendor account
+    # for this portal — unlocks the Documents tab for full PDF enrichment.
+    # Default False; flip to True once Civitas LLC is registered with the
+    # agency and the shared cross-portal login can see the docs.
     "planetbids_san_diego": {
         "portal_id": "17950",
         "name": "City of San Diego",
         "url": "https://vendors.planetbids.com/portal/17950/bo/bo-search",
+        "vendor_registered": True,
     },
     "planetbids_sacramento": {
         "portal_id": "15300",
@@ -277,6 +282,13 @@ class PlanetBidsScraper(BaseScraper):
         self._agency_name = site_config.config.get("name", site_config.name)
         self._portal_id = site_config.config.get("portal_id")
         self._authenticated = False
+        # When True, we have a per-agency vendor registration (unlocks the
+        # Documents tab for full PDF enrichment). Driven by config flag in
+        # PLANETBIDS_AGENCIES; default False keeps unregistered portals on
+        # the addenda-only path.
+        self._vendor_registered = bool(
+            site_config.config.get("vendor_registered", False)
+        )
         # Pagination — when set, scrape() yields events[batch_offset:batch_offset+batch_size]
         # within a single status pass. Lets the Lambda handler chain batches of N events
         # per invocation so large portals (San Diego, Anaheim) don't hit the 15-min timeout.
@@ -660,6 +672,19 @@ class PlanetBidsScraper(BaseScraper):
                     event.raw_metadata["public_documents"] = doc_info
                     logger.debug(f"  Found {len(doc_info)} public documents")
 
+                # Vendor-registered portals get full Documents-tab download.
+                # The shared cross-portal login already ran; per-agency
+                # registration on the SAME account unlocks gated PDFs once
+                # the vendor_registered flag is set in PLANETBIDS_AGENCIES.
+                if self._vendor_registered and self._authenticated:
+                    try:
+                        await self._download_documents_tab(page, event)
+                    except Exception as e:
+                        logger.warning(
+                            f"  Documents-tab download failed for "
+                            f"{event.source_event_id}: {e}"
+                        )
+
             # Market intel — Prospective Bidders / Bid Results / Awards
             # Requires the basic vendor login (NOT per-agency registration)
             await self._scrape_market_intel(page, event)
@@ -686,6 +711,102 @@ class PlanetBidsScraper(BaseScraper):
                 await page.wait_for_timeout(2000)
         except Exception:
             pass
+
+    async def _download_documents_tab(self, page: Page, event: RawScrapedEvent):
+        """For vendor-registered portals: download every PDF in Documents tab.
+
+        Assumes the Documents tab is already active (caller clicked it).
+        Extracts every <a href> with a PDF target, fetches via the
+        authenticated browser context, and stashes the per-PDF text into
+        `event.raw_metadata["attachment_texts"]` so the existing
+        `enrich_event` pipeline (PDF text -> LLM) takes over downstream.
+        Also populates `event.attachment_urls` with the PDF URLs.
+        """
+        import os
+        import tempfile
+        from webscraping.v2.pipeline.enrich import (
+            classify_pdf,
+            extract_text_from_pdf,
+        )
+
+        doc_links = await page.evaluate(
+            """() => {
+                const out = [];
+                const seen = new Set();
+                const anchors = document.querySelectorAll('a[href]');
+                for (const a of anchors) {
+                    const href = a.href || '';
+                    if (!href) continue;
+                    const lower = href.toLowerCase();
+                    const looksPdf =
+                        lower.includes('.pdf') ||
+                        lower.includes('/document/') ||
+                        lower.includes('/file/') ||
+                        lower.includes('download');
+                    if (!looksPdf) continue;
+                    if (seen.has(href)) continue;
+                    seen.add(href);
+                    const filename =
+                        a.getAttribute('download') ||
+                        a.textContent.trim() ||
+                        href.split('/').pop().split('?')[0];
+                    out.push({ url: href, filename });
+                }
+                return out;
+            }"""
+        )
+
+        if not doc_links:
+            return
+
+        attachment_texts: dict[str, str] = {}
+        urls_kept: list[str] = []
+
+        for entry in doc_links:
+            url = entry.get("url", "")
+            filename = (entry.get("filename") or "").strip() or "document.pdf"
+            if not filename.lower().endswith(".pdf"):
+                filename = f"{filename}.pdf"
+            if classify_pdf(filename) == "skip":
+                continue
+
+            tmp_path = None
+            try:
+                resp = await page.context.request.get(url, timeout=60000)
+                if not resp.ok:
+                    logger.debug(
+                        f"  Doc fetch HTTP {resp.status} for {filename}"
+                    )
+                    continue
+                body = await resp.body()
+                if not body or len(body) < 100:
+                    continue
+                with tempfile.NamedTemporaryFile(
+                    suffix=".pdf", delete=False
+                ) as tmp:
+                    tmp.write(body)
+                    tmp_path = tmp.name
+                text = extract_text_from_pdf(tmp_path)
+                if text:
+                    attachment_texts[filename] = text
+                    urls_kept.append(url)
+                    logger.info(f"  Doc: {filename} ({len(text)} chars)")
+            except Exception as e:
+                logger.debug(f"  Doc fetch failed {filename}: {e}")
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+        if attachment_texts:
+            existing = event.raw_metadata.get("attachment_texts", {}) or {}
+            existing.update(attachment_texts)
+            event.raw_metadata["attachment_texts"] = existing
+            for u in urls_kept:
+                if u not in event.attachment_urls:
+                    event.attachment_urls.append(u)
 
     async def _scrape_market_intel(self, page: Page, event: RawScrapedEvent):
         """Click Prospective Bidders / Bid Results / Awards tabs and parse rows.
@@ -974,6 +1095,7 @@ def get_planetbids_site_configs() -> dict[str, SiteConfig]:
                 "url": agency["url"],
                 "name": agency["name"],
                 "portal_id": agency["portal_id"],
+                "vendor_registered": agency.get("vendor_registered", False),
             },
         )
     return configs

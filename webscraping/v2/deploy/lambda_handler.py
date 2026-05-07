@@ -200,8 +200,14 @@ def _handle_single_site(site_id, event, context):
     # to be smaller), fire a recovery chain only when there is actual work
     # remaining. The over-shoot case (we scraped fewer than batch_size,
     # hit end of listing) is handled gracefully by the expected_total
-    # guard at the top of the next invocation.
-    chain_continues = next_offset_actual < total_events and events_scraped > 0
+    # guard at the top of the next invocation. Honour an explicit user-
+    # passed cap (used for tests) instead of overriding with total_events.
+    propagated_total = total_events
+    if expected_total is not None:
+        propagated_total = min(expected_total, total_events)
+    chain_continues = (
+        next_offset_actual < propagated_total and events_scraped > 0
+    )
     if chain_continues and not speculative_dispatched:
         try:
             _invoke_async(context, {
@@ -209,7 +215,7 @@ def _handle_single_site(site_id, event, context):
                 "batch_offset": next_offset_actual,
                 "batch_size": batch_size,
                 "skip_enrich": skip_enrich,
-                "expected_total": total_events,
+                "expected_total": propagated_total,
             })
             logger.info(f"Recovery-chained next batch: offset={next_offset_actual}")
         except Exception as e:
