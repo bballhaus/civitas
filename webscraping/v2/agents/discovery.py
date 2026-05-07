@@ -238,8 +238,10 @@ Return up to 30 candidates as JSON.
 
 async def _probe_one(page, candidate: Candidate, profile: PlatformProfile) -> None:
     try:
-        await page.goto(candidate.url, wait_until="networkidle", timeout=45000)
-        await page.wait_for_timeout(2500)
+        # networkidle hangs on OpenGov-style SPAs; use domcontentloaded
+        # and a hard settle, then poll for a Cloudflare challenge.
+        await page.goto(candidate.url, wait_until="domcontentloaded", timeout=45000)
+        await page.wait_for_timeout(3000)
     except Exception as e:
         candidate.verification_notes = f"goto failed: {e}"
         return
@@ -249,8 +251,27 @@ async def _probe_one(page, candidate: Candidate, profile: PlatformProfile) -> No
         "() => (document.body ? document.body.innerText : '').slice(0, 6000)"
     )
     candidate.page_title_observed = (title or "")[:160]
-
     text_lower = body_text.lower()
+    title_lower = (title or "").lower()
+
+    # Reject Cloudflare/anti-bot interstitials. Without this guard the
+    # marker keyword check would false-positive on the challenge page —
+    # its body text contains the platform's domain, which usually carries
+    # the platform name (e.g. "procurement.opengov.com" matches both
+    # "OpenGov" and "Procurement").
+    blocked = (
+        "just a moment" in title_lower
+        or "attention required" in title_lower
+        or "performing security verification" in text_lower[:500]
+        or "verifying you are human" in text_lower[:500]
+        or "ray id:" in text_lower[:1500]
+    )
+    if blocked:
+        candidate.verification_notes = (
+            f"blocked: anti-bot challenge (title='{title[:60]}')"
+        )
+        return
+
     matches = [m for m in profile.listing_markers if m.lower() in text_lower]
     listing_count = await page.evaluate(
         """() => document.querySelectorAll('a[href*="/projects/"]').length"""
@@ -259,7 +280,7 @@ async def _probe_one(page, candidate: Candidate, profile: PlatformProfile) -> No
 
     if (
         len(matches) >= 2
-        and ("404" not in title.lower())
+        and ("404" not in title_lower)
         and ("not found" not in text_lower[:500])
     ):
         candidate.verified = True
