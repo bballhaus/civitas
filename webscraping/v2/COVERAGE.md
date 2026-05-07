@@ -14,54 +14,65 @@ rich `prospective_bidders` / `bid_results` instead.
 
 | Source | Sites | Auth | PDFs | Market intel | Status |
 |---|---|---|---|---|---|
-| **Cal eProcure** | 1 (state-level, ~642 events) | None needed | Inline download via Playwright | — | Active. Full scrape ~5h. |
-| **PlanetBids** | 42 portals | Free vendor login (in Secrets Manager) | Gated behind per-agency vendor registration | ✓ Prospective Bidders / Bid Results / Awards | Active; `--include-awarded` adds historical archive. |
+| **Cal eProcure** | 1 (state-level, ~530 events) | None needed | Inline download via `page.context.request.get` (replaces the broken click-based flow) | — | **Active.** Full scrape ~5 h. |
+| **PlanetBids** | 43 portals (Pasadena removed; migrated to OpenGov) | Shared cross-portal vendor login (Secrets Manager) | Gated; `vendor_registered=True` flag opens the Documents tab download path. **Currently broken** — see notes below. | ✓ Prospective Bidders / Bid Results / Awards | **Active.** `--include-awarded` adds historical archive. |
 | **BidSync / Periscope** | 15 agencies (1 Advanced Search) | None | Detail pages require login (not scraped) | — | Active; search-result metadata only. |
-| **Agentic (LA City, SF City)** | 2 | n/a | n/a | n/a | Broken on Lambda (browser/ENOSPC issues). |
+| **OpenGov Procurement** | 1 in registry (Pasadena); discovery agent enumerates more | None expected for read-only public bids | ✓ Direct download from `attachment.url` returned by the detail API | — | **Active.** Direct JSON API at `api.procurement.opengov.com` (no Cloudflare on that host). Two-step scrape: `POST /api/v1/government/{slug}/project/public` for the listing, then `GET /api/v1/project/{id}` per row for full description + attachments + contact. ScrapingBee not in path. |
+| **Agentic (LA City, SF City)** | 2 | n/a | n/a | n/a | **Disabled in registry.** LA fails DNS resolution on Lambda; SF URL is 404. |
+
+LLM enrichment provider: Claude Haiku 4.5 (default) with prompt
+caching on the system prompt. Groq llama-3.1-8b kept as a fallback via
+`LLM_PROVIDER=groq`. `certifications_required` stays distinct from
+`licenses_required` — see README for the rule.
 
 ## Field population matrix
 
 Rows are `EnrichedEvent` fields; columns are sources.
 ✓ = populated when data exists on source · ◐ = sometimes populated · ✗ = always empty / not extracted.
 
-| Field | Cal eProcure | PlanetBids | BidSync | Agentic |
-|---|:-:|:-:|:-:|:-:|
-| **Identity** | | | | |
-| `id`, `source_id`, `source_event_id`, `source_url` | ✓ | ✓ | ✓ | ✓ |
-| **Status tracking** | | | | |
-| `status`, `first_seen_at`, `last_seen_at`, `closed_at` | ✓ | ✓ | ✓ | n/a |
-| **Core fields** | | | | |
-| `title` | ✓ | ✓ | ✓ | n/a |
-| `description` | ✓ | ✓ (from detail page) | ✗ | n/a |
-| `agency` | ✓ | ✓ | ✓ | n/a |
-| `procurement_type` | ✓ | "Bid" (default) | ✗ | n/a |
-| `posted_date` | ✓ | ✓ (when present) | ✗ | n/a |
-| `deadline` (due_date) | ✓ | ✓ | ✓ | n/a |
-| **Contact** | | | | |
-| `contact.name`, `.email`, `.phone` | ✓ | ✓ (from detail page) | ✗ | n/a |
-| **Attachments** | | | | |
-| `attachment_urls` | ✓ (signed URLs) | ✗ (gated) | ✗ | n/a |
-| **Inferred (regex/text)** | | | | |
-| `industry`, `capabilities`, `location`, `estimated_value` | ✓ | ✓ (from title+desc) | ◐ (title only) | n/a |
-| **LLM-extracted from PDFs** | | | | |
-| `naics_codes` | ✓ | ✗ | ✗ | n/a |
-| `certifications` (RFP-required) | ✓ | ✗ | ✗ | n/a |
-| `licenses_required` | ✓ | ✗ | ✗ | n/a |
-| `clearances_required` | ✓ | ✗ | ✗ | n/a |
-| `set_aside_types` | ✓ | ✗ | ✗ | n/a |
-| `deliverables` | ✓ | ✗ | ✗ | n/a |
-| `evaluation_criteria` | ✓ | ✗ | ✗ | n/a |
-| `contract_duration` | ✓ | ✗ | ✗ | n/a |
-| `attachment_rollup` (PDF text snippet) | ✓ | ✗ | ✗ | n/a |
-| `incumbent_vendor` / `incumbent_contract_end` | ✓ *(once wired)* | ✗ | ✗ | n/a |
-| **Market intel (PlanetBids tabs)** | | | | |
-| `prospective_bidders[]` | ✗ | ✓ | ✗ | n/a |
-| `bid_results[]` (closed bids) | ✗ | ✓ | ✗ | n/a |
-| `award` (awarded bids) | ✗ | ✓ | ✗ | n/a |
-| **Source-specific (raw_metadata stash)** | | | | |
-| `categories` | ✗ | ✓ (NAICS-like, in `raw_metadata`) | ✗ | n/a |
-| `public_documents` (filename list) | ✗ | ✓ (when not gated) | ✗ | n/a |
-| `org_name_raw` | ✗ | ✗ | ✓ | n/a |
+**OpenGov** column reflects what the direct JSON API returns. Most
+fields populate; the few exceptions are noted inline.
+
+| Field | Cal eProcure | PlanetBids | BidSync | OpenGov | Agentic |
+|---|:-:|:-:|:-:|:-:|:-:|
+| **Identity** | | | | | |
+| `id`, `source_id`, `source_event_id`, `source_url` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Status tracking** | | | | | |
+| `status`, `first_seen_at`, `last_seen_at`, `closed_at` | ✓ | ✓ | ✓ | ✓ | n/a |
+| **Core fields** | | | | | |
+| `title` | ✓ | ✓ | ✓ | ✓ | n/a |
+| `description` | ✓ | ✓ (detail page) | ✗ | ✓ (`summary` field) | n/a |
+| `agency` | ✓ | ✓ | ✓ | ✓ | n/a |
+| `procurement_type` | ✓ | "Bid" (default) | ✗ | ✓ (parsed from `financialId`) | n/a |
+| `posted_date` | ✓ | ✓ (when present) | ✗ | ✓ (`releaseProjectDate`) | n/a |
+| `deadline` (due_date) | ✓ | ✓ | ✓ | ✓ (`proposalDeadline`) | n/a |
+| **Contact** | | | | | |
+| `contact.name` | ✓ | ✓ (detail page) | ✗ | ✓ (`contactDisplayName`) | n/a |
+| `contact.email` | ✓ | ✓ (detail page) | ✗ | ✓ (`contactEmail`) | n/a |
+| `contact.phone` | ✓ | ✓ (detail page) | ✗ | ✓ (`contactPhoneComplete`) | n/a |
+| **Attachments** | | | | | |
+| `attachment_urls` | ✓ (signed URLs) | ◐ (gated; `vendor_registered=True` opens Documents tab) | ✗ | ✓ (public S3 URLs from API) | n/a |
+| **Inferred (regex/text)** | | | | | |
+| `industry`, `capabilities`, `location`, `estimated_value` | ✓ | ✓ (from title+desc) | ◐ (title only) | ✓ (from title+summary) | n/a |
+| **LLM-extracted from PDFs** | | | | | |
+| `naics_codes` | ✓ | ✗ (Documents tab broken) | ✗ | ✓ | n/a |
+| `certifications` (RFP-required) | ✓ | ✗ | ✗ | ✓ | n/a |
+| `licenses_required` | ✓ | ✗ | ✗ | ✓ | n/a |
+| `clearances_required` | ✓ | ✗ | ✗ | ✓ | n/a |
+| `set_aside_types` | ✓ | ✗ | ✗ | ✓ | n/a |
+| `deliverables` | ✓ | ✗ | ✗ | ✓ | n/a |
+| `evaluation_criteria` | ✓ | ✗ | ✗ | ✓ | n/a |
+| `contract_duration` | ✓ | ✗ | ✗ | ✓ | n/a |
+| `attachment_rollup` (PDF text snippet) | ✓ | ✗ | ✗ | ✓ | n/a |
+| `incumbent_vendor` / `incumbent_contract_end` | ✓ | ✗ | ✗ | ✓ | n/a |
+| **Market intel (PlanetBids tabs)** | | | | | |
+| `prospective_bidders[]` | ✗ | ✓ | ✗ | ✗ | n/a |
+| `bid_results[]` (closed bids) | ✗ | ✓ | ✗ | ✗ | n/a |
+| `award` (awarded bids) | ✗ | ✓ | ✗ | ✗ | n/a |
+| **Source-specific (raw_metadata stash)** | | | | | |
+| `categories` | ✗ | ✓ (NAICS-like, in `raw_metadata`) | ✗ | ✗ | n/a |
+| `public_documents` (filename list) | ✗ | ◐ (Documents-tab heuristic broken on most portals) | ✗ | ✗ | n/a |
+| `org_name_raw` | ✗ | ✗ | ✓ | ✗ | n/a |
 
 ## Per-source typical EnrichedEvent
 
@@ -71,7 +82,9 @@ for readability.
 
 ### Cal eProcure (state-level, full pipeline)
 
-The strongest data source — PDFs download inline and feed the LLM.
+The strongest data source — PDFs download inline (via
+`page.context.request.get` against the session-bound href) and feed
+Claude Haiku 4.5 for structured extraction.
 
 ```json
 {
@@ -284,21 +297,43 @@ The thinnest source — search-result metadata only.
 }
 ```
 
+### OpenGov (Pasadena and beyond)
+
+Fully active via the direct JSON API. The customer-facing portal at
+`procurement.opengov.com` is fronted by Cloudflare, but
+`api.procurement.opengov.com` is wide open: no challenge, no auth.
+Two-step scrape:
+
+1. `POST /api/v1/government/{slug}/project/public` returns
+   `{count, rows[]}` — each row has `id`, `financialId`, `title`,
+   `summary`, `status`, `proposalDeadline`, `releaseProjectDate`,
+   `department`, `government`. The orchestrator's
+   `batch_offset`/`batch_size` map to the API's `page`/`limit`.
+
+2. `GET /api/v1/project/{id}` per row returns the full project (~149
+   keys) including `attachments[]` (each with a public S3 download
+   `url`) and the flat contact field set (`contactEmail`,
+   `contactPhone`, `contactDisplayName`, etc.).
+
+Attachment PDFs download with plain `requests.get` and feed into the
+existing PyMuPDF + Claude Haiku enrichment pipeline. ScrapingBee is
+not in the OpenGov path.
+
 ### Agentic (LA City, SF City)
 
-Currently broken on Lambda — no manifests produced. When working, expected
-to populate similarly to PlanetBids (no PDFs, no market intel) plus the
-`cached_recipe` in `SiteConfig`.
+Disabled in the registry. LA's `labavn.org` DNS-fails on Lambda; SF's
+contracting opportunities URL is a 404. Re-onboard via the agentic
+onboarding pipeline once the Cloudflare situation is resolved or
+alternate URLs are confirmed.
 
 ## Why fields are empty
 
 | Reason | Affected | Possible unblock |
 |---|---|---|
-| **PlanetBids documents gated** behind per-agency vendor registration | `attachment_urls`, `naics_codes`, `certifications`, `licenses_required`, `clearances_required`, `deliverables`, `evaluation_criteria`, `incumbent_*`, `attachment_rollup` for all PlanetBids events | Civitas registers as a vendor with each agency (legal/operational decision pending) |
-| **BidSync detail pages require login** | `description`, `contact`, `attachment_urls` and downstream LLM fields for all BidSync events | Investigate vendor-account creation; or ToS questions; or skip in favor of agency-direct sources |
-| **Agentic scrapers broken on Lambda** | All fields for LA City, SF City | Diagnose Chromium failures or move to GitHub Actions |
+| **PlanetBids gated docs require per-bid Prospective Bidder registration** | `public_documents` (for `*`-marked rows), `attachment_urls`, all LLM-extracted fields, `attachment_rollup` for all PlanetBids events | Per-agency vendor registration alone does NOT unlock private docs — clicking "Download" opens a "Become a Prospective Bidder" modal for each bid. Automating PB-status is a ToS / disclosure issue (Civitas would appear in every bid's prospective_bidders tab). Pragmatic answer: live with PlanetBids = market-intel-only and rely on Cal eProcure for LLM-extracted RFP fields. |
+| **BidSync detail pages require login** | `description`, `contact`, `attachment_urls` and downstream LLM fields for all BidSync events | Investigate vendor-account creation; or ToS questions; or skip in favour of agency-direct sources |
+| **Agentic scrapers disabled** | All fields for LA City, SF City | Re-onboard via discovery + onboarding pipeline |
 | **Source doesn't expose the data** (Cal eProcure has no Prospective Bidders tab) | `prospective_bidders`, `bid_results`, `award` for Cal eProcure | Not unblock-able; intrinsic to the source |
-| **Field exists but extraction not wired** | `incumbent_vendor`, `incumbent_contract_end` everywhere | Extending the LLM prompt + AttachmentExtraction model |
 
 ## Implications for matching
 

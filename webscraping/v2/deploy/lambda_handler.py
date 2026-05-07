@@ -56,21 +56,115 @@ def handler(event, context):
     # Always clean up /tmp at the start to handle warm container reuse
     _cleanup_tmp()
 
+    mode = event.get("mode")
+
+    if mode == "discover":
+        return _handle_discover(event)
+    if mode == "onboard":
+        return _handle_onboard(event)
+    if mode == "monitor":
+        return _handle_monitor(event)
+
     # Mode 1: Multi-site batch (with optional chaining)
     sites = event.get("sites", [])
     if sites:
         return _handle_multi_site(sites, event, context)
 
     # Mode 2: Run all sites (dispatches batched invocations)
-    if event.get("mode") == "all":
+    if mode == "all":
         return _handle_run_all(event, context)
 
     # Mode 3: Single site with chained batching
     site_id = event.get("site_id", os.environ.get("SITE_ID", ""))
     if not site_id:
-        return {"statusCode": 400, "body": "site_id, sites, or mode is required"}
+        return {
+            "statusCode": 400,
+            "body": (
+                "site_id, sites, mode=all, mode=discover, mode=onboard, "
+                "or mode=monitor is required"
+            ),
+        }
 
     return _handle_single_site(site_id, event, context)
+
+
+def _handle_discover(event: dict) -> dict:
+    """Trigger the discovery agent for a given platform."""
+    platform = event.get("platform", "opengov")
+    try:
+        from webscraping.v2.agents.discovery import discover_platform
+        candidates = asyncio.get_event_loop().run_until_complete(
+            discover_platform(platform)
+        )
+        verified = sum(1 for c in candidates if c.verified)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "mode": "discover",
+                "platform": platform,
+                "total_candidates": len(candidates),
+                "verified": verified,
+            }),
+        }
+    except Exception as e:
+        logger.error(f"Discovery failed: {traceback.format_exc()}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"mode": "discover", "error": str(e)}),
+        }
+
+
+def _handle_onboard(event: dict) -> dict:
+    """Probe verified candidates and register the ones that scrape OK."""
+    platform = event.get("platform", "opengov")
+    max_per_run = int(event.get("max_per_run", 5))
+    try:
+        from webscraping.v2.agents.onboarding import onboard_platform
+        results = asyncio.get_event_loop().run_until_complete(
+            onboard_platform(platform, max_per_run=max_per_run)
+        )
+        accepted = sum(1 for r in results if r.accepted)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "mode": "onboard",
+                "platform": platform,
+                "probed": len(results),
+                "accepted": accepted,
+                "rejected": len(results) - accepted,
+            }),
+        }
+    except Exception as e:
+        logger.error(f"Onboarding failed: {traceback.format_exc()}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"mode": "onboard", "error": str(e)}),
+        }
+
+
+def _handle_monitor(event: dict) -> dict:
+    """Roll up per-source health and return the list of stale/failing sources."""
+    stale_hours = int(event.get("stale_hours", 72))
+    try:
+        from webscraping.v2.pipeline.health import write_summary
+        summary = write_summary(stale_hours=stale_hours)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "mode": "monitor",
+                "stale_hours": stale_hours,
+                "stale_count": summary.get("stale_count", 0),
+                "stale_sources": [
+                    s.get("source_id") for s in summary.get("stale", [])
+                ],
+            }),
+        }
+    except Exception as e:
+        logger.error(f"Monitor failed: {traceback.format_exc()}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"mode": "monitor", "error": str(e)}),
+        }
 
 
 def _cleanup_tmp():
@@ -111,33 +205,62 @@ def _handle_single_site(site_id, event, context):
     batch_offset = event.get("batch_offset", 0)
     batch_size = event.get("batch_size", 40)
     skip_enrich = event.get("skip_enrich", False)
+    # `expected_total` propagates through chained invocations once the
+    # first batch learns the total event count. Used to bound the chain:
+    # once batch_offset >= expected_total there's nothing left to do, so
+    # we skip the scrape AND skip the speculative dispatch (the runaway
+    # we hit when zero-event batches kept chaining was caused by missing
+    # this guard).
+    expected_total = event.get("expected_total")
 
     logger.info(
         f"Single-site: site={site_id}, offset={batch_offset}, "
-        f"batch_size={batch_size}, skip_enrich={skip_enrich}"
+        f"batch_size={batch_size}, skip_enrich={skip_enrich}, "
+        f"expected_total={expected_total}"
     )
 
+    # Stop if we already know we're past the end of the listing.
+    if expected_total is not None and batch_offset >= expected_total:
+        logger.info(
+            f"Chain done: offset={batch_offset} >= expected_total={expected_total}"
+        )
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "site_id": site_id,
+                "events_scraped": 0,
+                "batch_offset": batch_offset,
+                "next_offset": batch_offset,
+                "total_events": expected_total,
+                "chain_continues": False,
+                "chain_error": None,
+            }),
+        }
+
     # Chain-first: dispatch next batch BEFORE running current scrape.
-    # We don't know events_scraped yet, but dispatching by best estimate
-    # means a timeout doesn't kill the within-portal chain. The chained
-    # invocation will only do useful work if there are still events left
-    # at its offset; if not, run_site_batch returns events_scraped=0 and
-    # the chain stops naturally. This trades a possible wasted invocation
-    # for chain robustness.
+    # Robust to the current invocation's runtime / timeout. Only fire the
+    # speculative chain if we either don't yet know the total or we know
+    # there's more work after the next offset — otherwise we'd pile on a
+    # cascade of zero-event invocations.
     next_offset = batch_offset + batch_size
     speculative_dispatched = False
-    try:
-        _invoke_async(context, {
-            "site_id": site_id,
-            "batch_offset": next_offset,
-            "batch_size": batch_size,
-            "skip_enrich": skip_enrich,
-            # No delay_before_start — within-portal chain runs back-to-back
-        })
-        speculative_dispatched = True
-        logger.info(f"Speculatively chained next batch: offset={next_offset}")
-    except Exception as e:
-        logger.error(f"Failed to speculatively chain: {e}")
+    should_speculate = (
+        expected_total is None or next_offset < expected_total
+    )
+    if should_speculate:
+        try:
+            _invoke_async(context, {
+                "site_id": site_id,
+                "batch_offset": next_offset,
+                "batch_size": batch_size,
+                "skip_enrich": skip_enrich,
+                "expected_total": expected_total,
+                # No delay_before_start — within-portal chain runs back-to-back
+            })
+            speculative_dispatched = True
+            logger.info(f"Speculatively chained next batch: offset={next_offset}")
+        except Exception as e:
+            logger.error(f"Failed to speculatively chain: {e}")
 
     try:
         from webscraping.v2.orchestrator.runner import run_site_batch
@@ -167,11 +290,18 @@ def _handle_single_site(site_id, event, context):
         f"(offset {batch_offset}-{next_offset_actual} of {total_events})"
     )
 
-    # If the speculative dispatch was wrong (we scraped fewer events than expected),
-    # the chained invocation may need to be re-fired at the actual next_offset.
-    # The over-shoot case (we scraped fewer than batch_size, hit end of listing)
-    # is handled gracefully — chained batch will return events_scraped=0 and stop.
-    chain_continues = next_offset_actual < total_events and events_scraped > 0
+    # If we couldn't speculatively chain (or didn't because total is known
+    # to be smaller), fire a recovery chain only when there is actual work
+    # remaining. The over-shoot case (we scraped fewer than batch_size,
+    # hit end of listing) is handled gracefully by the expected_total
+    # guard at the top of the next invocation. Honour an explicit user-
+    # passed cap (used for tests) instead of overriding with total_events.
+    propagated_total = total_events
+    if expected_total is not None:
+        propagated_total = min(expected_total, total_events)
+    chain_continues = (
+        next_offset_actual < propagated_total and events_scraped > 0
+    )
     if chain_continues and not speculative_dispatched:
         try:
             _invoke_async(context, {
@@ -179,6 +309,7 @@ def _handle_single_site(site_id, event, context):
                 "batch_offset": next_offset_actual,
                 "batch_size": batch_size,
                 "skip_enrich": skip_enrich,
+                "expected_total": propagated_total,
             })
             logger.info(f"Recovery-chained next batch: offset={next_offset_actual}")
         except Exception as e:
@@ -327,13 +458,16 @@ def _handle_run_all(event, context):
     # Group 2: BidSync all_ca (one invocation covers all CA agencies)
     # Group 3: PlanetBids portals (each dispatched as its own chained batch
     #          with within-portal pagination; staggered to avoid hammering)
-    # Group 4: Agentic (LA, SF) — multi-site batch with chain-first stagger
+    # Group 4: OpenGov portals (same single-site chained pattern)
+    # Group 5: Agentic (disabled by default) — multi-site batch
     planetbids_sites = [s for s in all_sites if s.startswith("planetbids_")]
+    opengov_sites = [s for s in all_sites if s.startswith("opengov_")]
     agentic_sites = [
         sid for sid in all_sites
         if sid != "caleprocure"
         and not sid.startswith("bidsync_")
         and not sid.startswith("planetbids_")
+        and not sid.startswith("opengov_")
     ]
 
     dispatched = []
@@ -364,11 +498,12 @@ def _handle_run_all(event, context):
             logger.error(f"Failed to dispatch BidSync: {e}")
 
     # Dispatch each PlanetBids portal as its own single-site chained job.
-    # Each portal paginates internally (8 events per Lambda invocation),
-    # so even the largest portals (San Diego at 21+ events) finish without
-    # hitting the 15-min Lambda timeout. Stagger between portals avoids
-    # 44 concurrent logins to the same vendor account.
-    PLANETBIDS_BATCH_SIZE = 8
+    # Each portal paginates internally (5 events per Lambda invocation —
+    # each detail page is ~70-80s once login + tabs + market intel are
+    # accounted for, so 5 leaves ~10min of headroom under the 15-min
+    # Lambda budget). Stagger between portals avoids ~44 concurrent
+    # logins to the same vendor account.
+    PLANETBIDS_BATCH_SIZE = 5
     PLANETBIDS_STAGGER_SECONDS = 90
     for i, site_id in enumerate(planetbids_sites):
         try:
@@ -386,6 +521,32 @@ def _handle_run_all(event, context):
         logger.info(
             f"Dispatched {len(planetbids_sites)} PlanetBids portals "
             f"(stagger {PLANETBIDS_STAGGER_SECONDS}s, batch size {PLANETBIDS_BATCH_SIZE} events)"
+        )
+
+    # Dispatch each OpenGov portal as its own single-site chained job.
+    # Stagger after PlanetBids fan-out so we don't burst Lambda capacity.
+    OPENGOV_BATCH_SIZE = 6
+    OPENGOV_STAGGER_SECONDS = 60
+    opengov_offset = (
+        len(planetbids_sites) * PLANETBIDS_STAGGER_SECONDS
+        + OPENGOV_STAGGER_SECONDS
+    )
+    for i, site_id in enumerate(opengov_sites):
+        try:
+            _invoke_async(context, {
+                "site_id": site_id,
+                "batch_offset": 0,
+                "batch_size": OPENGOV_BATCH_SIZE,
+                "skip_enrich": skip_enrich,
+                "delay_before_start": opengov_offset + i * OPENGOV_STAGGER_SECONDS,
+            })
+            dispatched.append(site_id)
+        except Exception as e:
+            logger.error(f"Failed to dispatch {site_id}: {e}")
+    if opengov_sites:
+        logger.info(
+            f"Dispatched {len(opengov_sites)} OpenGov portals "
+            f"(stagger {OPENGOV_STAGGER_SECONDS}s, batch size {OPENGOV_BATCH_SIZE} events)"
         )
 
     # Dispatch agentic sites as a chain-first multi-site batch (no pagination).
@@ -410,6 +571,7 @@ def _handle_run_all(event, context):
             "dispatched": dispatched,
             "total_sites": len(all_sites),
             "planetbids_portals": len(planetbids_sites),
+            "opengov_portals": len(opengov_sites),
             "agentic_portals": len(agentic_sites),
             "note": "Sites dispatched as async invocations. Check CloudWatch logs for progress.",
         }),

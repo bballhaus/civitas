@@ -33,6 +33,7 @@ from webscraping.v2.models import (
 from webscraping.v2.scrapers.base import BaseScraper, make_event_id
 from webscraping.v2.pipeline.normalize import normalize_event
 from webscraping.v2.pipeline.enrich import enrich_event
+from webscraping.v2.pipeline.health import record_run
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ logger = logging.getLogger(__name__)
 def _build_site_registry() -> dict[str, SiteConfig]:
     """Build the full site registry from all scraper modules."""
     from webscraping.v2.scrapers.bidsync import get_bidsync_site_configs
+    from webscraping.v2.scrapers.opengov import get_opengov_site_configs
     from webscraping.v2.scrapers.planetbids import get_planetbids_site_configs
 
     registry: dict[str, SiteConfig] = {
@@ -61,16 +63,28 @@ def _build_site_registry() -> dict[str, SiteConfig]:
     # Add BidSync agencies (~15 agencies)
     registry.update(get_bidsync_site_configs())
 
-    # Add PlanetBids agencies (~44 agencies)
+    # Add PlanetBids agencies (~43 agencies; Pasadena moved off PlanetBids)
     registry.update(get_planetbids_site_configs())
 
-    # Agentic sites (custom portals that aren't on PlanetBids/BidSync)
-    # San Diego + Sacramento are now on PlanetBids; Oakland uses iSupplier (not scrapable)
+    # Add OpenGov agencies (Pasadena seed; more added by discovery agent)
+    registry.update(get_opengov_site_configs())
+
+    # Agentic sites (custom portals that aren't on PlanetBids/BidSync).
+    # San Diego + Sacramento are now on PlanetBids; Oakland uses iSupplier (not scrapable).
+    # LA City (labavn.org) DNS-fails on Lambda; SF City URL was a 404 — both
+    # disabled until the agentic onboarding pipeline (which can re-discover
+    # the listing page) takes over. Keeping the entries so re-enabling is
+    # one config flip away.
     agentic_sites = [
-        ("la_city", "City of Los Angeles", "https://www.labavn.org/"),
-        ("sf_city", "City of San Francisco", "https://sfgov.org/oca/contracting-opportunities"),
+        ("la_city", "City of Los Angeles", "https://www.labavn.org/", False),
+        (
+            "sf_city",
+            "City of San Francisco",
+            "https://sf.gov/topics/contracting-opportunities",
+            False,
+        ),
     ]
-    for site_id, name, url in agentic_sites:
+    for site_id, name, url, enabled in agentic_sites:
         registry[site_id] = SiteConfig(
             site_id=site_id,
             name=name,
@@ -78,6 +92,7 @@ def _build_site_registry() -> dict[str, SiteConfig]:
             scraper_type=ScraperType.AGENTIC,
             min_request_interval_ms=5000,
             priority=2,
+            enabled=enabled,
         )
 
     return registry
@@ -95,6 +110,10 @@ def get_scraper(site_config: SiteConfig, include_awarded: bool = False) -> BaseS
     if site_config.site_id.startswith("bidsync"):
         from webscraping.v2.scrapers.bidsync import BidSyncScraper
         return BidSyncScraper(site_config)
+
+    if site_config.site_id.startswith("opengov_"):
+        from webscraping.v2.scrapers.opengov import OpenGovScraper
+        return OpenGovScraper(site_config)
 
     if site_config.scraper_type in (ScraperType.STRUCTURED, ScraperType.API):
         from webscraping.v2.scrapers.planetbids import PlanetBidsScraper
@@ -259,11 +278,26 @@ async def run_site(
 
     # 1. Scrape
     logger.info(f"=== Scraping {config.name} ===")
-    raw_events = await scraper.run()
+    try:
+        raw_events = await scraper.run()
+    except Exception as e:
+        record_run(
+            source_id=site_id,
+            source_name=config.name,
+            events_scraped=0,
+            error=f"scrape failed: {e}",
+        )
+        raise
     logger.info(f"Scraped {len(raw_events)} raw events")
 
     if not raw_events:
         logger.warning("No events scraped, exiting")
+        record_run(
+            source_id=site_id,
+            source_name=config.name,
+            events_scraped=0,
+            error="no events scraped",
+        )
         return []
 
     # 2. Enrich (optional)
@@ -313,6 +347,13 @@ async def run_site(
 
         enriched_events = merged_events
 
+    record_run(
+        source_id=site_id,
+        source_name=config.name,
+        events_scraped=len(raw_events),
+        pdfs_observed=sum(len(e.attachment_urls) for e in raw_events),
+    )
+
     logger.info(f"=== Done: {len(enriched_events)} events processed ===")
     return enriched_events
 
@@ -343,18 +384,46 @@ async def run_site_batch(
         scraper = PlanetBidsScraper(
             config, batch_offset=batch_offset, batch_size=batch_size
         )
+    elif site_id.startswith("opengov_"):
+        from webscraping.v2.scrapers.opengov import OpenGovScraper
+        scraper = OpenGovScraper(
+            config, batch_offset=batch_offset, batch_size=batch_size
+        )
     else:
         scraper = get_scraper(config)
 
     # Scrape
     logger.info(f"=== Scraping {config.name} (batch offset={batch_offset}, size={batch_size}) ===")
-    raw_events = await scraper.run()
+    try:
+        raw_events = await scraper.run()
+    except Exception as e:
+        record_run(
+            source_id=site_id,
+            source_name=config.name,
+            events_scraped=0,
+            error=f"batch scrape failed (offset={batch_offset}): {e}",
+        )
+        raise
     logger.info(f"Scraped {len(raw_events)} raw events")
 
     total_events = getattr(scraper, "total_available", len(raw_events))
 
     if not raw_events:
+        if batch_offset == 0:
+            record_run(
+                source_id=site_id,
+                source_name=config.name,
+                events_scraped=0,
+                error="batch returned 0 events",
+            )
         return {"events_scraped": 0, "total_events": total_events}
+
+    record_run(
+        source_id=site_id,
+        source_name=config.name,
+        events_scraped=len(raw_events),
+        pdfs_observed=sum(len(e.attachment_urls) for e in raw_events),
+    )
 
     # Enrich
     enrichments: dict = {}

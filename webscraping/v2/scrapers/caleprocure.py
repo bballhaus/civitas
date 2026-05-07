@@ -117,7 +117,21 @@ class CalEprocureScraper(BaseScraper):
         page = await context.new_page()
         try:
             await page.goto(SEARCH_URL, wait_until="networkidle", timeout=60000)
-            await page.wait_for_timeout(5000)
+            # The Cal eProcure search table is hydrated after networkidle.
+            # The old `wait_for_timeout(5000)` race was sometimes too short
+            # under Lambda contention, leaving the page with no rows and
+            # the scraper returning 0 events. Wait for an actual row, then
+            # a small settle.
+            try:
+                await page.wait_for_selector(
+                    '[data-if-label^="tblBodyTr"]', timeout=30000
+                )
+                await page.wait_for_timeout(1500)
+            except Exception:
+                logger.warning(
+                    "Search-page rows did not appear within 30s — "
+                    "table may be empty or page hit a soft block."
+                )
 
             # Extract event IDs and construct URLs directly
             # Each row has a click handler that opens /event/{dept_id}/{event_id}
@@ -335,12 +349,18 @@ class CalEprocureScraper(BaseScraper):
         )
 
     async def _download_attachments(self, page: Page) -> list[dict]:
-        """Click 'View Event Package', download PDFs via Playwright, and extract text.
+        """Click 'View Event Package', fetch PDFs via session cookies, extract text.
 
         Cal eProcure download URLs are session-bound tokens that expire when the
-        browser closes, so we must download within the same Playwright session.
+        browser closes. Earlier we triggered downloads by clicking the download
+        button, which hit Playwright actionability timeouts (modal overlay
+        intercepted the click). Now we read the href off `#downloadButton` and
+        fetch it directly through the browser context (same cookies → same
+        session) — no click required.
         Returns a list of dicts: [{"filename": str, "url": str, "text": str}, ...]
         """
+        from webscraping.v2.pipeline.enrich import classify_pdf, extract_text_from_pdf
+
         results = []
         try:
             view_pkg = await page.wait_for_selector(
@@ -351,7 +371,6 @@ class CalEprocureScraper(BaseScraper):
             await view_pkg.click()
             await page.wait_for_timeout(4000)
 
-            # Wait for attachments table
             await page.wait_for_selector(
                 '[data-if-label^="ViewAttachmentsTableRow"]', timeout=10000
             )
@@ -359,10 +378,12 @@ class CalEprocureScraper(BaseScraper):
             buttons = await page.query_selector_all(
                 'button[data-if-label^="ViewAttachmentsView"]'
             )
+            n_attachments = len(buttons)
 
-            for i in range(len(buttons)):
+            for i in range(n_attachments):
+                filename = f"attachment_{i}.pdf"
+                pdf_url = ""
                 try:
-                    # Re-query buttons (DOM may change after modal interactions)
                     buttons = await page.query_selector_all(
                         'button[data-if-label^="ViewAttachmentsView"]'
                     )
@@ -371,74 +392,120 @@ class CalEprocureScraper(BaseScraper):
 
                     btn = buttons[i]
                     await btn.scroll_into_view_if_needed()
-                    await page.wait_for_timeout(500)
-                    await btn.click()
+                    await page.wait_for_timeout(300)
+                    # Bypass actionability — modal overlay sometimes blocks normal click
+                    try:
+                        await btn.click(timeout=5000)
+                    except Exception:
+                        await btn.evaluate("el => el.click()")
 
-                    # Wait for attachment modal
-                    await page.wait_for_selector("#attachmentBox", state="visible", timeout=10000)
-                    await page.wait_for_timeout(2000)
+                    await page.wait_for_selector(
+                        "#attachmentBox", state="visible", timeout=10000
+                    )
+                    await page.wait_for_timeout(1000)
 
-                    download_btn = await page.wait_for_selector("#downloadButton", timeout=5000)
+                    download_btn = await page.wait_for_selector(
+                        "#downloadButton", timeout=5000
+                    )
                     if not download_btn:
+                        await self._close_attachment_modal(page)
                         continue
 
                     pdf_url = await download_btn.get_attribute("href") or ""
-                    filename = pdf_url.split("/")[-1].split("?")[0] if pdf_url else f"attachment_{i}.pdf"
+                    if pdf_url:
+                        filename = (
+                            pdf_url.split("/")[-1].split("?")[0]
+                            or f"attachment_{i}.pdf"
+                        )
 
-                    # Skip non-PDF files and drawings/maps
-                    from webscraping.v2.pipeline.enrich import classify_pdf
+                    if not pdf_url:
+                        await self._close_attachment_modal(page)
+                        continue
+
                     if classify_pdf(filename) == "skip":
                         logger.debug(f"  Skipping {filename} (classified as skip)")
-                    elif pdf_url:
-                        # Download via Playwright (uses browser session cookies)
-                        try:
-                            async with page.expect_download(timeout=30000) as download_info:
-                                await download_btn.click()
-                            download = await download_info.value
-                            tmp_path = await download.path()
+                        await self._close_attachment_modal(page)
+                        continue
 
-                            if tmp_path:
-                                # Extract text with PyMuPDF
-                                from webscraping.v2.pipeline.enrich import extract_text_from_pdf
-                                text = extract_text_from_pdf(str(tmp_path))
-                                if text:
-                                    logger.info(f"  PDF: {filename} ({len(text)} chars)")
-                                    results.append({
-                                        "filename": filename,
-                                        "url": pdf_url,
-                                        "text": text,
-                                    })
-                                else:
-                                    logger.debug(f"  No text from {filename}")
-                                    results.append({"filename": filename, "url": pdf_url, "text": ""})
-                        except Exception as e:
-                            logger.warning(f"  Download failed for {filename}: {e}")
-                            results.append({"filename": filename, "url": pdf_url, "text": ""})
+                    text = await self._fetch_pdf_text(page, pdf_url, filename)
+                    if text:
+                        logger.info(f"  PDF: {filename} ({len(text)} chars)")
+                    results.append({
+                        "filename": filename,
+                        "url": pdf_url,
+                        "text": text,
+                    })
 
-                    # Close modal
-                    close_btn = await page.query_selector(
-                        "#attachmentWrapperModal .btn-outline-primary"
-                    )
-                    if close_btn:
-                        await close_btn.click()
-                    await page.wait_for_timeout(2000)
+                    await self._close_attachment_modal(page)
 
                 except Exception as e:
-                    logger.warning(f"Error on attachment #{i + 1}: {e}")
-                    try:
-                        close_btn = await page.query_selector(
-                            "#attachmentWrapperModal .btn-outline-primary"
-                        )
-                        if close_btn:
-                            await close_btn.click()
-                    except Exception:
-                        pass
-                    await page.wait_for_timeout(2000)
+                    logger.warning(f"Error on attachment #{i + 1} ({filename}): {e}")
+                    if pdf_url:
+                        results.append({"filename": filename, "url": pdf_url, "text": ""})
+                    await self._close_attachment_modal(page)
 
         except Exception as e:
             logger.debug(f"No attachments or error: {e}")
 
         return results
+
+    async def _close_attachment_modal(self, page: Page) -> None:
+        """Close the Cal eProcure attachment modal, swallowing any error."""
+        try:
+            close_btn = await page.query_selector(
+                "#attachmentWrapperModal .btn-outline-primary"
+            )
+            if close_btn:
+                try:
+                    await close_btn.click(timeout=3000)
+                except Exception:
+                    await close_btn.evaluate("el => el.click()")
+                await page.wait_for_timeout(800)
+        except Exception:
+            pass
+
+    async def _fetch_pdf_text(self, page: Page, pdf_url: str, filename: str) -> str:
+        """Fetch a session-bound PDF via the browser context and extract text.
+
+        Uses Playwright's APIRequestContext to share cookies with the
+        navigated page — sidestepping the click-based download flow that
+        was hitting actionability timeouts.
+        """
+        import os
+        import tempfile
+
+        from webscraping.v2.pipeline.enrich import extract_text_from_pdf
+
+        tmp_path = None
+        try:
+            response = await page.context.request.get(pdf_url, timeout=60000)
+            if not response.ok:
+                logger.warning(
+                    f"  Fetch failed for {filename}: HTTP {response.status}"
+                )
+                return ""
+            body = await response.body()
+            if not body or len(body) < 100:
+                logger.warning(f"  Empty PDF body for {filename}")
+                return ""
+
+            with tempfile.NamedTemporaryFile(
+                suffix=".pdf", delete=False
+            ) as tmp:
+                tmp.write(body)
+                tmp_path = tmp.name
+
+            text = extract_text_from_pdf(tmp_path)
+            return text or ""
+        except Exception as e:
+            logger.warning(f"  Fetch/extract failed for {filename}: {e}")
+            return ""
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
 
 # ---------------------------------------------------------------------------
