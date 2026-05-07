@@ -117,7 +117,21 @@ class CalEprocureScraper(BaseScraper):
         page = await context.new_page()
         try:
             await page.goto(SEARCH_URL, wait_until="networkidle", timeout=60000)
-            await page.wait_for_timeout(5000)
+            # The Cal eProcure search table is hydrated after networkidle.
+            # The old `wait_for_timeout(5000)` race was sometimes too short
+            # under Lambda contention, leaving the page with no rows and
+            # the scraper returning 0 events. Wait for an actual row, then
+            # a small settle.
+            try:
+                await page.wait_for_selector(
+                    '[data-if-label^="tblBodyTr"]', timeout=30000
+                )
+                await page.wait_for_timeout(1500)
+            except Exception:
+                logger.warning(
+                    "Search-page rows did not appear within 30s — "
+                    "table may be empty or page hit a soft block."
+                )
 
             # Extract event IDs and construct URLs directly
             # Each row has a click handler that opens /event/{dept_id}/{event_id}

@@ -111,33 +111,62 @@ def _handle_single_site(site_id, event, context):
     batch_offset = event.get("batch_offset", 0)
     batch_size = event.get("batch_size", 40)
     skip_enrich = event.get("skip_enrich", False)
+    # `expected_total` propagates through chained invocations once the
+    # first batch learns the total event count. Used to bound the chain:
+    # once batch_offset >= expected_total there's nothing left to do, so
+    # we skip the scrape AND skip the speculative dispatch (the runaway
+    # we hit when zero-event batches kept chaining was caused by missing
+    # this guard).
+    expected_total = event.get("expected_total")
 
     logger.info(
         f"Single-site: site={site_id}, offset={batch_offset}, "
-        f"batch_size={batch_size}, skip_enrich={skip_enrich}"
+        f"batch_size={batch_size}, skip_enrich={skip_enrich}, "
+        f"expected_total={expected_total}"
     )
 
+    # Stop if we already know we're past the end of the listing.
+    if expected_total is not None and batch_offset >= expected_total:
+        logger.info(
+            f"Chain done: offset={batch_offset} >= expected_total={expected_total}"
+        )
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "site_id": site_id,
+                "events_scraped": 0,
+                "batch_offset": batch_offset,
+                "next_offset": batch_offset,
+                "total_events": expected_total,
+                "chain_continues": False,
+                "chain_error": None,
+            }),
+        }
+
     # Chain-first: dispatch next batch BEFORE running current scrape.
-    # We don't know events_scraped yet, but dispatching by best estimate
-    # means a timeout doesn't kill the within-portal chain. The chained
-    # invocation will only do useful work if there are still events left
-    # at its offset; if not, run_site_batch returns events_scraped=0 and
-    # the chain stops naturally. This trades a possible wasted invocation
-    # for chain robustness.
+    # Robust to the current invocation's runtime / timeout. Only fire the
+    # speculative chain if we either don't yet know the total or we know
+    # there's more work after the next offset — otherwise we'd pile on a
+    # cascade of zero-event invocations.
     next_offset = batch_offset + batch_size
     speculative_dispatched = False
-    try:
-        _invoke_async(context, {
-            "site_id": site_id,
-            "batch_offset": next_offset,
-            "batch_size": batch_size,
-            "skip_enrich": skip_enrich,
-            # No delay_before_start — within-portal chain runs back-to-back
-        })
-        speculative_dispatched = True
-        logger.info(f"Speculatively chained next batch: offset={next_offset}")
-    except Exception as e:
-        logger.error(f"Failed to speculatively chain: {e}")
+    should_speculate = (
+        expected_total is None or next_offset < expected_total
+    )
+    if should_speculate:
+        try:
+            _invoke_async(context, {
+                "site_id": site_id,
+                "batch_offset": next_offset,
+                "batch_size": batch_size,
+                "skip_enrich": skip_enrich,
+                "expected_total": expected_total,
+                # No delay_before_start — within-portal chain runs back-to-back
+            })
+            speculative_dispatched = True
+            logger.info(f"Speculatively chained next batch: offset={next_offset}")
+        except Exception as e:
+            logger.error(f"Failed to speculatively chain: {e}")
 
     try:
         from webscraping.v2.orchestrator.runner import run_site_batch
@@ -167,10 +196,11 @@ def _handle_single_site(site_id, event, context):
         f"(offset {batch_offset}-{next_offset_actual} of {total_events})"
     )
 
-    # If the speculative dispatch was wrong (we scraped fewer events than expected),
-    # the chained invocation may need to be re-fired at the actual next_offset.
-    # The over-shoot case (we scraped fewer than batch_size, hit end of listing)
-    # is handled gracefully — chained batch will return events_scraped=0 and stop.
+    # If we couldn't speculatively chain (or didn't because total is known
+    # to be smaller), fire a recovery chain only when there is actual work
+    # remaining. The over-shoot case (we scraped fewer than batch_size,
+    # hit end of listing) is handled gracefully by the expected_total
+    # guard at the top of the next invocation.
     chain_continues = next_offset_actual < total_events and events_scraped > 0
     if chain_continues and not speculative_dispatched:
         try:
@@ -179,6 +209,7 @@ def _handle_single_site(site_id, event, context):
                 "batch_offset": next_offset_actual,
                 "batch_size": batch_size,
                 "skip_enrich": skip_enrich,
+                "expected_total": total_events,
             })
             logger.info(f"Recovery-chained next batch: offset={next_offset_actual}")
         except Exception as e:
