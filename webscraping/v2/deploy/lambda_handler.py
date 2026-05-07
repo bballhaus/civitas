@@ -56,21 +56,115 @@ def handler(event, context):
     # Always clean up /tmp at the start to handle warm container reuse
     _cleanup_tmp()
 
+    mode = event.get("mode")
+
+    if mode == "discover":
+        return _handle_discover(event)
+    if mode == "onboard":
+        return _handle_onboard(event)
+    if mode == "monitor":
+        return _handle_monitor(event)
+
     # Mode 1: Multi-site batch (with optional chaining)
     sites = event.get("sites", [])
     if sites:
         return _handle_multi_site(sites, event, context)
 
     # Mode 2: Run all sites (dispatches batched invocations)
-    if event.get("mode") == "all":
+    if mode == "all":
         return _handle_run_all(event, context)
 
     # Mode 3: Single site with chained batching
     site_id = event.get("site_id", os.environ.get("SITE_ID", ""))
     if not site_id:
-        return {"statusCode": 400, "body": "site_id, sites, or mode is required"}
+        return {
+            "statusCode": 400,
+            "body": (
+                "site_id, sites, mode=all, mode=discover, mode=onboard, "
+                "or mode=monitor is required"
+            ),
+        }
 
     return _handle_single_site(site_id, event, context)
+
+
+def _handle_discover(event: dict) -> dict:
+    """Trigger the discovery agent for a given platform."""
+    platform = event.get("platform", "opengov")
+    try:
+        from webscraping.v2.agents.discovery import discover_platform
+        candidates = asyncio.get_event_loop().run_until_complete(
+            discover_platform(platform)
+        )
+        verified = sum(1 for c in candidates if c.verified)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "mode": "discover",
+                "platform": platform,
+                "total_candidates": len(candidates),
+                "verified": verified,
+            }),
+        }
+    except Exception as e:
+        logger.error(f"Discovery failed: {traceback.format_exc()}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"mode": "discover", "error": str(e)}),
+        }
+
+
+def _handle_onboard(event: dict) -> dict:
+    """Probe verified candidates and register the ones that scrape OK."""
+    platform = event.get("platform", "opengov")
+    max_per_run = int(event.get("max_per_run", 5))
+    try:
+        from webscraping.v2.agents.onboarding import onboard_platform
+        results = asyncio.get_event_loop().run_until_complete(
+            onboard_platform(platform, max_per_run=max_per_run)
+        )
+        accepted = sum(1 for r in results if r.accepted)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "mode": "onboard",
+                "platform": platform,
+                "probed": len(results),
+                "accepted": accepted,
+                "rejected": len(results) - accepted,
+            }),
+        }
+    except Exception as e:
+        logger.error(f"Onboarding failed: {traceback.format_exc()}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"mode": "onboard", "error": str(e)}),
+        }
+
+
+def _handle_monitor(event: dict) -> dict:
+    """Roll up per-source health and return the list of stale/failing sources."""
+    stale_hours = int(event.get("stale_hours", 72))
+    try:
+        from webscraping.v2.pipeline.health import write_summary
+        summary = write_summary(stale_hours=stale_hours)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "mode": "monitor",
+                "stale_hours": stale_hours,
+                "stale_count": summary.get("stale_count", 0),
+                "stale_sources": [
+                    s.get("source_id") for s in summary.get("stale", [])
+                ],
+            }),
+        }
+    except Exception as e:
+        logger.error(f"Monitor failed: {traceback.format_exc()}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"mode": "monitor", "error": str(e)}),
+        }
 
 
 def _cleanup_tmp():
@@ -364,13 +458,16 @@ def _handle_run_all(event, context):
     # Group 2: BidSync all_ca (one invocation covers all CA agencies)
     # Group 3: PlanetBids portals (each dispatched as its own chained batch
     #          with within-portal pagination; staggered to avoid hammering)
-    # Group 4: Agentic (LA, SF) — multi-site batch with chain-first stagger
+    # Group 4: OpenGov portals (same single-site chained pattern)
+    # Group 5: Agentic (disabled by default) — multi-site batch
     planetbids_sites = [s for s in all_sites if s.startswith("planetbids_")]
+    opengov_sites = [s for s in all_sites if s.startswith("opengov_")]
     agentic_sites = [
         sid for sid in all_sites
         if sid != "caleprocure"
         and not sid.startswith("bidsync_")
         and not sid.startswith("planetbids_")
+        and not sid.startswith("opengov_")
     ]
 
     dispatched = []
@@ -426,6 +523,32 @@ def _handle_run_all(event, context):
             f"(stagger {PLANETBIDS_STAGGER_SECONDS}s, batch size {PLANETBIDS_BATCH_SIZE} events)"
         )
 
+    # Dispatch each OpenGov portal as its own single-site chained job.
+    # Stagger after PlanetBids fan-out so we don't burst Lambda capacity.
+    OPENGOV_BATCH_SIZE = 6
+    OPENGOV_STAGGER_SECONDS = 60
+    opengov_offset = (
+        len(planetbids_sites) * PLANETBIDS_STAGGER_SECONDS
+        + OPENGOV_STAGGER_SECONDS
+    )
+    for i, site_id in enumerate(opengov_sites):
+        try:
+            _invoke_async(context, {
+                "site_id": site_id,
+                "batch_offset": 0,
+                "batch_size": OPENGOV_BATCH_SIZE,
+                "skip_enrich": skip_enrich,
+                "delay_before_start": opengov_offset + i * OPENGOV_STAGGER_SECONDS,
+            })
+            dispatched.append(site_id)
+        except Exception as e:
+            logger.error(f"Failed to dispatch {site_id}: {e}")
+    if opengov_sites:
+        logger.info(
+            f"Dispatched {len(opengov_sites)} OpenGov portals "
+            f"(stagger {OPENGOV_STAGGER_SECONDS}s, batch size {OPENGOV_BATCH_SIZE} events)"
+        )
+
     # Dispatch agentic sites as a chain-first multi-site batch (no pagination).
     if agentic_sites:
         first_batch = agentic_sites[:1]
@@ -448,6 +571,7 @@ def _handle_run_all(event, context):
             "dispatched": dispatched,
             "total_sites": len(all_sites),
             "planetbids_portals": len(planetbids_sites),
+            "opengov_portals": len(opengov_sites),
             "agentic_portals": len(agentic_sites),
             "note": "Sites dispatched as async invocations. Check CloudWatch logs for progress.",
         }),
