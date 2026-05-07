@@ -273,9 +273,16 @@ async def _probe_one(page, candidate: Candidate, profile: PlatformProfile) -> No
 
 
 async def verify_candidates(
-    platform_name: str, candidates: list[Candidate]
+    platform_name: str,
+    candidates: list[Candidate],
+    concurrency: int = 5,
 ) -> list[Candidate]:
-    """Probe each candidate URL with Playwright; populate verified flag."""
+    """Probe each candidate URL with Playwright; populate verified flag.
+
+    Probes run in parallel (semaphore-bounded) so the whole verification
+    pass fits inside Lambda's 15-min timeout. Each probe gets its own
+    page in a shared browser context.
+    """
     profile = PLATFORM_PROFILES[platform_name]
 
     async with async_playwright() as p:
@@ -301,15 +308,34 @@ async def verify_candidates(
             'Object.defineProperty(navigator, "webdriver", '
             '{get: () => undefined});'
         )
-        page = await context.new_page()
+
+        sem = asyncio.Semaphore(concurrency)
+        completed = {"n": 0}
+        total = len(candidates)
+
+        async def probe_with_sem(c: Candidate) -> None:
+            async with sem:
+                page = await context.new_page()
+                try:
+                    await _probe_one(page, c, profile)
+                except Exception as e:
+                    c.verification_notes = f"probe error: {e}"
+                finally:
+                    completed["n"] += 1
+                    logger.info(
+                        f"  Probed [{completed['n']}/{total}] {c.site_id} "
+                        f"-> {'OK' if c.verified else 'reject'}"
+                    )
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+
         try:
-            for i, c in enumerate(candidates, 1):
-                logger.info(
-                    f"  Probing [{i}/{len(candidates)}] {c.site_id} → {c.url}"
-                )
-                await _probe_one(page, c, profile)
+            await asyncio.gather(*(probe_with_sem(c) for c in candidates))
         finally:
             await browser.close()
+
     return candidates
 
 
