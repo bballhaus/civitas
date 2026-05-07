@@ -1,0 +1,81 @@
+name: Investigate Portal
+
+# Manually-dispatched developer tool. Drives a real Chromium browser via
+# Playwright and uses Claude as the reasoning brain to investigate an
+# unknown procurement portal, emitting an InvestigationSpec describing
+# how to scrape it. The spec is uploaded as a downloadable artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Portal URL to investigate"
+        required: true
+        type: string
+      model:
+        description: "Anthropic model ID"
+        required: false
+        default: "claude-sonnet-4-6"
+        type: string
+      max_turns:
+        description: "Max agent turns before giving up"
+        required: false
+        default: "25"
+        type: string
+
+env:
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+jobs:
+  investigate:
+    name: "Investigate ${{ github.event.inputs.url }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: webscraping/v2/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r webscraping/v2/requirements.txt
+
+      - name: Install Playwright browsers
+        run: python -m playwright install chromium --with-deps
+
+      - name: Run investigation
+        id: invest
+        run: |
+          mkdir -p out
+          # Headless on CI; verbose so the model's tool calls show up in
+          # the run log, which is the easiest way to debug a session.
+          python -m webscraping.v2.agents.site_investigation \
+            "${{ github.event.inputs.url }}" \
+            --model "${{ github.event.inputs.model }}" \
+            --max-turns "${{ github.event.inputs.max_turns }}" \
+            --out out/spec.json \
+            -v
+          echo "spec_written=true" >> $GITHUB_OUTPUT
+
+      - name: Show spec in summary
+        if: success()
+        run: |
+          echo "## Investigation result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Portal: \`${{ github.event.inputs.url }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat out/spec.json >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload spec artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: investigation-spec
+          path: out/spec.json
+          if-no-files-found: warn
