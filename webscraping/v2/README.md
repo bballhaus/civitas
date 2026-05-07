@@ -331,11 +331,24 @@ Lambda invocation by `get_opengov_site_configs()`.
   Bonfire / IonWave / Public Purchase / eBidBoard instead. The discovery
   verifier rejects challenge pages so we don't false-positive them.
 
-- **PlanetBids Documents tab is not yet pulling docs.** As of this
-  writing, 0 of 41 events on `planetbids_san_diego` have ever had
-  `public_documents` populated. Both the legacy filename heuristic and
-  the new `vendor_registered` download path miss the actual DOM the
-  Documents tab renders. Investigating.
+- **PlanetBids gated documents require per-bid Prospective Bidder
+  registration, NOT per-agency vendor registration.** Even with the
+  shared cross-portal vendor login AND a per-agency vendor signup on
+  the agency, clicking "Download" on a `*`-prefixed (private) document
+  opens a "Become a Prospective Bidder — You must become a Prospective
+  Bidder to download private documents" modal. Becoming a PB on each
+  bid is one click + likely a ToS issue + listed on the public
+  Prospective Bidders tab, so we don't automate it. The
+  `_download_documents_tab` code path detects the modal and logs the
+  count of gated docs per bid; non-gated public docs (rare on most
+  CA portals) are downloaded normally. The `vendor_registered` flag is
+  retained on `PLANETBIDS_AGENCIES` entries as a hint but is currently
+  a no-op for download purposes.
+
+  Net implication: PlanetBids events stay market-intel-only
+  (`prospective_bidders`, `bid_results`, `award`). LLM-extracted RFP
+  fields (NAICS, certs, licenses, deliverables) come only from
+  Cal eProcure today.
 
 - **BidSync detail pages require login** — only search-result metadata
   is collected. Description and attachments need authentication.
