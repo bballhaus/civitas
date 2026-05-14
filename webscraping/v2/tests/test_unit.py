@@ -801,7 +801,10 @@ class TestOpenGovApiClient:
                 pass
 
             def json(self):
-                return {"count": 100, "rows": [{"id": i} for i in range(12)]}
+                return {
+                    "count": 100,
+                    "rows": [{"id": i, "status": "open"} for i in range(12)],
+                }
 
         def fake_post(url, json=None, timeout=None, headers=None):
             captured["url"] = url
@@ -832,10 +835,11 @@ class TestOpenGovApiClient:
                 pass
 
             def json(self):
-                # 15 rows requested, return 15
+                # 15 rows requested, return 15 — all status=open so the
+                # detail-404 filter is a no-op for this test.
                 return {
                     "count": 50,
-                    "rows": [{"id": i} for i in range(15)],
+                    "rows": [{"id": i, "status": "open"} for i in range(15)],
                 }
 
         def fake_post(url, json=None, timeout=None, headers=None):
@@ -850,6 +854,39 @@ class TestOpenGovApiClient:
         assert captured["body"]["page"] == 1
         assert captured["body"]["limit"] == 15
         assert [r["id"] for r in rows] == list(range(5, 15))
+
+    def test_list_projects_drops_review_status_rows(self, monkeypatch):
+        """OpenGov listing returns review-status projects that 404 on
+        detail. The scraper filters them out at list time so we don't
+        blast 404s downstream."""
+        from webscraping.v2.scrapers import opengov as og
+
+        class FakeResp:
+            status_code = 200
+            ok = True
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "count": 100,
+                    "rows": [
+                        {"id": 1, "status": "open"},
+                        {"id": 2, "status": "review"},  # would 404 on detail
+                        {"id": 3, "status": "open"},
+                        {"id": 4, "status": "closed"},
+                        {"id": 5, "status": "OPEN"},  # case-insensitive match
+                    ],
+                }
+
+        monkeypatch.setattr(
+            og.requests, "post", lambda *a, **k: FakeResp()
+        )
+        s = self._scraper(batch_offset=0, batch_size=5)
+        rows = s._list_projects()
+        assert [r["id"] for r in rows] == [1, 3, 5]
+        assert s.total_available == 100  # count not affected by filter
 
 
 # ============================================================================
