@@ -158,14 +158,24 @@ class SpecDrivenScraper(BaseScraper):
 
     async def scrape(self) -> AsyncIterator[RawScrapedEvent]:
         listing = self.spec.listing
+        if listing.response_format == "html":
+            # Delegate to the HTML scraper. Lazy import keeps the
+            # Playwright dependency optional for callers that only
+            # ever see JSON specs.
+            from webscraping.v2.scrapers.spec_html import HtmlSpecScraper
+            html_scraper = HtmlSpecScraper(
+                self.site_config,
+                batch_offset=self.batch_offset,
+                batch_size=self.batch_size,
+            )
+            async for event in html_scraper.scrape():
+                self.total_available = html_scraper.total_available
+                yield event
+            return
         if listing.response_format != "json":
-            # Rendered-HTML specs are the agent's fallback path
-            # (`confidence: low`) and need a different scraper (Playwright
-            # + BS4 or ScrapingBee). Deferring rather than half-implementing.
             raise NotImplementedError(
-                f"SpecDrivenScraper supports response_format=json only; "
-                f"got {listing.response_format!r} for {self.source_id}. "
-                f"Rendered-HTML specs need the HTML scraper path."
+                f"SpecDrivenScraper supports response_format=json|html; "
+                f"got {listing.response_format!r} for {self.source_id}."
             )
 
         try:

@@ -297,10 +297,18 @@ import re as _re
 _OPENGOV_SLUG_RE = _re.compile(
     r"procurement\.opengov\.com/portal/([^/?#]+)", _re.I
 )
+_PLANETBIDS_PORTAL_RE = _re.compile(
+    r"vendors\.planetbids\.com/portal/(\d+)", _re.I
+)
 
 
 def _extract_opengov_slug(url: str) -> Optional[str]:
     m = _OPENGOV_SLUG_RE.search(url or "")
+    return m.group(1) if m else None
+
+
+def _extract_planetbids_portal_id(url: str) -> Optional[str]:
+    m = _PLANETBIDS_PORTAL_RE.search(url or "")
     return m.group(1) if m else None
 
 
@@ -344,6 +352,152 @@ async def _route_known_opengov(
     return result
 
 
+_PLANETBIDS_REGISTRY_KEY = "scrapes/v2/registry/planetbids.json"
+
+
+async def _route_known_planetbids(
+    *, url: str, agency_name: str
+) -> Optional[SpecOnboardingResult]:
+    """Try the cheap PlanetBids path.
+
+    PlanetBids portals are identified by a numeric portal_id in the URL
+    (`vendors.planetbids.com/portal/{N}`). The cheap check is to extract
+    that id, instantiate `PlanetBidsScraper` against it with a small
+    batch_size, and confirm we get back ≥1 real event. If the shared
+    vendor login also unlocks this portal (almost always — the login is
+    domain-scoped to `vendors.planetbids.com`), we register it in
+    `scrapes/v2/registry/planetbids.json` so `get_planetbids_site_configs`
+    picks it up on the next runner pass.
+
+    Returns None if the URL doesn't match the PlanetBids pattern (caller
+    falls back to investigation).
+    """
+    portal_id = _extract_planetbids_portal_id(url)
+    if not portal_id:
+        return None
+
+    from webscraping.v2.models import ScraperType, SiteConfig
+    from webscraping.v2.scrapers.planetbids import PlanetBidsScraper
+
+    # Stable site_id from the portal_id. Includes the agency name slug
+    # so the registry listing is readable, but the portal_id is the
+    # authoritative key.
+    safe_name = _re.sub(r"[^a-z0-9]+", "_", agency_name.lower()).strip("_")
+    site_id = f"planetbids_{safe_name}" if safe_name else f"planetbids_{portal_id}"
+
+    config = SiteConfig(
+        site_id=site_id,
+        name=agency_name,
+        url=url,
+        scraper_type=ScraperType.STRUCTURED,
+        min_request_interval_ms=3000,
+        config={
+            "url": url,
+            "name": agency_name,
+            "portal_id": portal_id,
+            "vendor_registered": False,
+        },
+    )
+
+    try:
+        scraper = PlanetBidsScraper(config, batch_offset=0, batch_size=PROBE_BATCH_SIZE)
+        events = await scraper.run()
+    except Exception as e:
+        logger.warning(f"PlanetBids cheap-route probe failed for {url}: {e}")
+        return SpecOnboardingResult(
+            site_id=site_id, accepted=False,
+            spec_class="planetbids",
+            reason=f"probe failed: {e}",
+        )
+
+    pdfs = sum(len(e.attachment_urls) for e in events)
+    sample = [e.title[:80] for e in events[:5]]
+    if not events or not any(e.title for e in events):
+        return SpecOnboardingResult(
+            site_id=site_id, accepted=False,
+            spec_class="planetbids",
+            events_scraped=len(events),
+            sample_titles=sample,
+            reason="probe returned no events with real titles",
+        )
+
+    # Register in S3 — same shape as in-code PLANETBIDS_AGENCIES.
+    try:
+        s3 = get_s3_client()
+        try:
+            resp = s3.get_object(Bucket=S3_BUCKET, Key=_PLANETBIDS_REGISTRY_KEY)
+            existing = json.loads(resp["Body"].read())
+            if not isinstance(existing, dict):
+                existing = {}
+        except Exception:
+            existing = {}
+        existing[site_id] = {
+            "portal_id": portal_id,
+            "name": agency_name,
+            "url": url,
+        }
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key=_PLANETBIDS_REGISTRY_KEY,
+            Body=json.dumps(existing, indent=2),
+            ContentType="application/json",
+        )
+        logger.info(
+            f"Registered {site_id} in s3://{S3_BUCKET}/{_PLANETBIDS_REGISTRY_KEY}"
+        )
+    except Exception as e:
+        # Probe succeeded but registry write failed — log loud, return
+        # accepted=False so the caller falls through to investigation
+        # (which will write to spec_sites/ as a backup).
+        logger.error(f"PlanetBids registry write failed: {e}")
+        return SpecOnboardingResult(
+            site_id=site_id, accepted=False,
+            spec_class="planetbids",
+            events_scraped=len(events),
+            sample_titles=sample,
+            reason=f"probe ok but registry write failed: {e}",
+        )
+
+    return SpecOnboardingResult(
+        site_id=site_id, accepted=True,
+        spec_class="planetbids",
+        confidence="high",
+        events_scraped=len(events),
+        pdfs_observed=pdfs,
+        sample_titles=sample,
+        onboarded_at=datetime.utcnow().isoformat(),
+    )
+
+
+def _route_known_bidsync(
+    *, url: str, agency_name: str
+) -> Optional[SpecOnboardingResult]:
+    """BidSync coverage is non-per-portal.
+
+    `bidsync_all_ca` already scrapes every CA agency via one Advanced
+    Search query, attributing each event to its agency by name. If
+    exploration emits a BidSync candidate, the agency is already
+    covered — we just record that fact so the candidate isn't
+    re-onboarded and isn't passed to the investigation agent (which
+    would waste budget).
+
+    Returns an `accepted` result with `spec_class=bidsync_covered`
+    and no events scraped — the actual scraping continues happening
+    inside `bidsync_all_ca`.
+    """
+    safe_name = _re.sub(r"[^a-z0-9]+", "_", agency_name.lower()).strip("_") or "agency"
+    site_id = f"bidsync_covered_{safe_name}"
+    return SpecOnboardingResult(
+        site_id=site_id,
+        accepted=True,
+        spec_class="bidsync_covered",
+        confidence="high",
+        events_scraped=0,
+        reason="agency already covered by bidsync_all_ca aggregate scraper",
+        onboarded_at=datetime.utcnow().isoformat(),
+    )
+
+
 async def smart_route_and_onboard(
     *,
     url: str,
@@ -354,9 +508,15 @@ async def smart_route_and_onboard(
 ) -> SpecOnboardingResult:
     """Route by platform_guess, falling back to investigation on failure.
 
-    Today this only short-circuits OpenGov (the only platform with a
-    public unauth API discovery path). PlanetBids/BidSync would need
-    a slug-extract + auth probe — additive work, same shape.
+    Cheap paths (no investigation cost):
+      - opengov:   extract slug, hand to `agents.onboarding` (uses
+                   the unauth OpenGov API to verify + register).
+      - planetbids: extract portal_id, probe with `PlanetBidsScraper`,
+                   register in `scrapes/v2/registry/planetbids.json`.
+      - bidsync:   record as covered by `bidsync_all_ca` aggregator;
+                   no per-portal scraping needed.
+
+    Fall-through: investigation agent + spec_sites/.
     """
     pg = (platform_guess or "").lower()
 
@@ -365,10 +525,6 @@ async def smart_route_and_onboard(
         if cheap is not None and cheap.accepted:
             return cheap
         if cheap is not None and not cheap.accepted:
-            # Cheap route ran but rejected (probe returned no events,
-            # etc.). Fall through to investigation — exploration may
-            # have classified wrong, or the OpenGov portal might be
-            # uniquely shaped.
             try:
                 from webscraping.v2 import issues as _issues
                 _issues.record_issue(
@@ -382,6 +538,33 @@ async def smart_route_and_onboard(
                 )
             except Exception:
                 pass
+
+    elif pg == "planetbids":
+        cheap = await _route_known_planetbids(url=url, agency_name=agency_name)
+        if cheap is not None and cheap.accepted:
+            return cheap
+        if cheap is not None and not cheap.accepted:
+            try:
+                from webscraping.v2 import issues as _issues
+                _issues.record_issue(
+                    category=_issues.CATEGORY_ROUTING_FALLBACK,
+                    severity=_issues.SEVERITY_INFO,
+                    source=f"smart_route:{url}",
+                    summary=(
+                        f"PlanetBids cheap route rejected ({cheap.reason}); "
+                        f"falling back to investigation agent"
+                    ),
+                )
+            except Exception:
+                pass
+
+    elif pg == "bidsync":
+        # BidSync agencies are already covered by `bidsync_all_ca`.
+        # Short-circuit without burning any budget. (No fall-through —
+        # BidSync per-agency scraping is intentionally not a thing.)
+        bidsync_result = _route_known_bidsync(url=url, agency_name=agency_name)
+        if bidsync_result is not None:
+            return bidsync_result
 
     # Fall-through: investigation agent (handles unknown / custom /
     # known-platform-cheap-route-failed). Slug for {slug} substitution

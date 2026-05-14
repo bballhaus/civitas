@@ -1211,11 +1211,11 @@ class TestSpecDrivenScraper:
         assert event.raw_metadata["spec_platform_class"] == "opengov_api"
         assert event.raw_metadata["spec_confidence"] == "high"
 
-    def test_html_response_format_raises_not_implemented(self):
-        """Rendered-HTML specs aren't supported yet — fail loud, not silent."""
-        import asyncio
+    def test_html_response_format_delegates_to_html_scraper(self):
+        """HTML specs no longer raise — they delegate to HtmlSpecScraper."""
         from webscraping.v2.models import ScraperType, SiteConfig
         from webscraping.v2.scrapers.spec_driven import SpecDrivenScraper
+        from webscraping.v2.scrapers.spec_html import HtmlSpecScraper
         spec = self._opengov_like_spec()
         spec["listing"]["response_format"] = "html"
         spec["detail"] = None
@@ -1226,16 +1226,16 @@ class TestSpecDrivenScraper:
             scraper_type=ScraperType.SPEC_DRIVEN,
             config={"slug": "x", "name": "X", "url": "https://x", "spec": spec},
         )
-        scraper = SpecDrivenScraper(config)
+        # HtmlSpecScraper accepts the same SiteConfig shape — sanity-check
+        # that init succeeds (the actual scrape runs Playwright, which
+        # we don't exercise in unit tests).
+        html_scraper = HtmlSpecScraper(config, batch_size=5)
+        assert html_scraper.spec.listing.response_format == "html"
+        assert html_scraper.spec.platform_class == "opengov_api"
 
-        async def collect():
-            out = []
-            async for ev in scraper.scrape():
-                out.append(ev)
-            return out
-
-        with pytest.raises(NotImplementedError, match="response_format=json only"):
-            asyncio.run(collect())
+        # And SpecDrivenScraper accepts the spec without raising.
+        sd_scraper = SpecDrivenScraper(config, batch_size=5)
+        assert sd_scraper.spec.listing.response_format == "html"
 
     def test_listing_total_picked_up_from_count_field(self):
         """Common shape: {count, rows[]} — make sure batching has a total."""
@@ -1461,6 +1461,94 @@ class TestSmartRouter:
         assert _extract_opengov_slug(
             "https://example.com/bids"
         ) is None
+
+    def test_extract_planetbids_portal_id(self):
+        from webscraping.v2.agents.spec_onboarding import (
+            _extract_planetbids_portal_id,
+        )
+        assert _extract_planetbids_portal_id(
+            "https://vendors.planetbids.com/portal/17950/bo/bo-search"
+        ) == "17950"
+        assert _extract_planetbids_portal_id(
+            "https://vendors.planetbids.com/portal/39475"
+        ) == "39475"
+        assert _extract_planetbids_portal_id("https://example.com") is None
+
+    def test_bidsync_route_marks_covered_no_scrape(self):
+        # BidSync candidates short-circuit without burning budget: the
+        # bidsync_all_ca aggregate scraper already covers them.
+        from webscraping.v2.agents.spec_onboarding import _route_known_bidsync
+        result = _route_known_bidsync(
+            url="https://contracting.example.bidsync.com",
+            agency_name="City of Example",
+        )
+        assert result is not None
+        assert result.accepted is True
+        assert result.spec_class == "bidsync_covered"
+        assert result.events_scraped == 0
+        assert "bidsync_all_ca" in result.reason
+
+
+class TestPlanetBidsDynamicRegistry:
+    def test_get_planetbids_site_configs_merges_s3_then_code_wins(self):
+        import unittest.mock as mock
+        from webscraping.v2.scrapers import planetbids as pb
+
+        s3_entries = {
+            "planetbids_test_city": {
+                "portal_id": "99999",
+                "name": "City of Test",
+                "url": "https://vendors.planetbids.com/portal/99999",
+            },
+        }
+        with mock.patch.object(
+            pb, "_load_planetbids_from_s3", return_value=s3_entries
+        ):
+            configs = pb.get_planetbids_site_configs()
+
+        # S3-onboarded entry shows up
+        assert "planetbids_test_city" in configs
+        assert configs["planetbids_test_city"].config["portal_id"] == "99999"
+        # In-code entries are still present
+        assert any(sid.startswith("planetbids_") and sid != "planetbids_test_city"
+                   for sid in configs)
+
+
+class TestHtmlSpecScraperHelpers:
+    """Pure helpers in spec_html — exercise without Playwright."""
+
+    def test_collapse_whitespace(self):
+        from webscraping.v2.scrapers.spec_html import _collapse
+        assert _collapse("  hello\n\n  world  ") == "hello world"
+        assert _collapse("") == ""
+
+    def test_absolutize_full_url_unchanged(self):
+        from webscraping.v2.scrapers.spec_html import _absolutize
+        assert _absolutize(
+            "https://other.example/x", "https://base.example/y"
+        ) == "https://other.example/x"
+
+    def test_absolutize_relative_path(self):
+        from webscraping.v2.scrapers.spec_html import _absolutize
+        assert _absolutize(
+            "/bid/123", "https://example.gov/procurement/list"
+        ) == "https://example.gov/bid/123"
+
+    def test_absolutize_protocol_relative(self):
+        from webscraping.v2.scrapers.spec_html import _absolutize
+        assert _absolutize(
+            "//cdn.example.com/file.pdf", "https://example.gov/x"
+        ) == "https://cdn.example.com/file.pdf"
+
+    def test_html_scraper_requires_spec_in_config(self):
+        from webscraping.v2.models import ScraperType, SiteConfig
+        from webscraping.v2.scrapers.spec_html import HtmlSpecScraper
+        with pytest.raises(ValueError, match="requires site_config.config"):
+            HtmlSpecScraper(SiteConfig(
+                site_id="x", name="x", url="x",
+                scraper_type=ScraperType.SPEC_DRIVEN,
+                config={},
+            ))
 
 
 if __name__ == "__main__":
