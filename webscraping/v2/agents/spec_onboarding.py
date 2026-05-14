@@ -214,6 +214,25 @@ async def investigate_and_onboard(
     """End-to-end: run the agent → probe the spec → register on success."""
     logger.info(f"=== Investigation+onboard: {url} (slug={slug}) ===")
 
+    try:
+        from webscraping.v2 import budget as _budget
+        _budget.ensure_budget(0.50, source="investigation")
+    except ImportError:
+        pass
+    except Exception as e:
+        from webscraping.v2 import issues as _issues
+        _issues.record_issue(
+            category=_issues.CATEGORY_BUDGET_EXCEEDED,
+            severity=_issues.SEVERITY_WARN,
+            source=f"investigate_and_onboard:{url}",
+            summary=str(e),
+        )
+        return SpecOnboardingResult(
+            site_id=_site_id_for(slug, "unknown"),
+            accepted=False,
+            reason=f"budget exhausted before investigation: {e}",
+        )
+
     spec = await run_investigation(url, model=model, max_turns=max_turns)
     if spec is None:
         result = SpecOnboardingResult(
@@ -249,6 +268,219 @@ async def investigate_and_onboard(
         })
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Smart router: known platforms skip the investigation agent
+# ---------------------------------------------------------------------------
+#
+# The exploration agent guesses a `platform_guess` for each candidate
+# (opengov / planetbids / bidsync / ...). For platforms we already
+# know how to scrape, we can bypass the expensive investigation agent
+# entirely:
+#
+#   - opengov: extract slug from the URL, hand to `agents.onboarding`
+#     which probes via `OpenGovScraper` and writes to the per-platform
+#     S3 registry. ~$0.001 per candidate vs ~$0.50 for investigation.
+#
+#   - planetbids / bidsync: ditto pattern; the per-platform scrapers
+#     are already there.
+#
+# If the cheap route fails (URL doesn't match the expected pattern,
+# slug 404s the platform API, probe returns no events), we fall back
+# to the full investigation agent. That guarantees coverage even if
+# the exploration agent's classification was wrong.
+
+import re as _re
+
+
+_OPENGOV_SLUG_RE = _re.compile(
+    r"procurement\.opengov\.com/portal/([^/?#]+)", _re.I
+)
+
+
+def _extract_opengov_slug(url: str) -> Optional[str]:
+    m = _OPENGOV_SLUG_RE.search(url or "")
+    return m.group(1) if m else None
+
+
+async def _route_known_opengov(
+    *, url: str, agency_name: str
+) -> Optional[SpecOnboardingResult]:
+    """Try the cheap OpenGov path. Returns None to fall through to investigation."""
+    slug = _extract_opengov_slug(url)
+    if not slug:
+        return None
+
+    from webscraping.v2.agents.discovery import Candidate as DiscoveryCandidate
+    from webscraping.v2.agents.onboarding import onboard_one
+
+    site_id = f"opengov_{_re.sub(r'[^a-z0-9]+', '_', slug.lower()).strip('_')}"
+    discovery_candidate = DiscoveryCandidate(
+        platform="opengov",
+        site_id=site_id,
+        slug=slug,
+        name=agency_name,
+        url=url,
+        verified=True,  # exploration found it; discovery probe is the real check
+    )
+    try:
+        onboarding_result = await onboard_one(discovery_candidate)
+    except Exception as e:
+        logger.warning(f"OpenGov cheap-route failed for {url}: {e}")
+        return None
+
+    result = SpecOnboardingResult(
+        site_id=site_id,
+        accepted=onboarding_result.accepted,
+        spec_class="opengov_api",
+        confidence="high",  # cheap-route only accepts on real-API probe
+        events_scraped=onboarding_result.events_scraped,
+        pdfs_observed=onboarding_result.pdfs_observed,
+        sample_titles=onboarding_result.sample_titles,
+        reason=onboarding_result.reason,
+        onboarded_at=onboarding_result.onboarded_at,
+    )
+    return result
+
+
+async def smart_route_and_onboard(
+    *,
+    url: str,
+    agency_name: str,
+    platform_guess: str,
+    model: str = DEFAULT_MODEL,
+    max_turns: int = DEFAULT_MAX_TURNS,
+) -> SpecOnboardingResult:
+    """Route by platform_guess, falling back to investigation on failure.
+
+    Today this only short-circuits OpenGov (the only platform with a
+    public unauth API discovery path). PlanetBids/BidSync would need
+    a slug-extract + auth probe — additive work, same shape.
+    """
+    pg = (platform_guess or "").lower()
+
+    if pg == "opengov":
+        cheap = await _route_known_opengov(url=url, agency_name=agency_name)
+        if cheap is not None and cheap.accepted:
+            return cheap
+        if cheap is not None and not cheap.accepted:
+            # Cheap route ran but rejected (probe returned no events,
+            # etc.). Fall through to investigation — exploration may
+            # have classified wrong, or the OpenGov portal might be
+            # uniquely shaped.
+            try:
+                from webscraping.v2 import issues as _issues
+                _issues.record_issue(
+                    category=_issues.CATEGORY_ROUTING_FALLBACK,
+                    severity=_issues.SEVERITY_INFO,
+                    source=f"smart_route:{url}",
+                    summary=(
+                        f"OpenGov cheap route rejected ({cheap.reason}); "
+                        f"falling back to investigation agent"
+                    ),
+                )
+            except Exception:
+                pass
+
+    # Fall-through: investigation agent (handles unknown / custom /
+    # known-platform-cheap-route-failed). Slug for {slug} substitution
+    # is the URL's last path segment if nothing better is available.
+    slug = _extract_opengov_slug(url) or _re.sub(
+        r"[^a-z0-9-]", "-", (url.rstrip("/").rsplit("/", 1)[-1] or "site").lower()
+    )
+    return await investigate_and_onboard(
+        url=url, slug=slug, name=agency_name,
+        model=model, max_turns=max_turns,
+    )
+
+
+async def onboard_explored(
+    *,
+    category: Optional[str] = None,
+    max_candidates: int = 10,
+    model: str = DEFAULT_MODEL,
+    max_turns: int = DEFAULT_MAX_TURNS,
+) -> list[SpecOnboardingResult]:
+    """Drain the exploration backlog for `category` (or all categories).
+
+    Iterates candidates discovered by `agents.exploration`, skipping any
+    URL already onboarded. Each candidate runs through `smart_route_and_onboard`.
+    Loop terminates early on `BudgetExceeded`.
+    """
+    from webscraping.v2.agents.exploration import (
+        ExplorationCandidate,
+        _exploration_key,
+        _known_skip_set,
+        CATEGORIES,
+    )
+
+    s3 = get_s3_client()
+    cats = [category] if category else list(CATEGORIES.keys())
+    skip = _known_skip_set()
+
+    results: list[SpecOnboardingResult] = []
+    spent_candidates = 0
+
+    for cat in cats:
+        try:
+            resp = s3.get_object(Bucket=S3_BUCKET, Key=_exploration_key(cat))
+            data = json.loads(resp["Body"].read())
+            candidates = data.get("candidates") or []
+        except Exception:
+            candidates = []
+
+        for c in candidates:
+            if spent_candidates >= max_candidates:
+                return results
+            url = (c.get("url") or "").rstrip("/")
+            if not url or url in skip:
+                continue
+
+            try:
+                from webscraping.v2 import budget as _budget
+                # Cheap-route candidates need much less ($0.001); reserve
+                # the worst case so we don't start an investigation we
+                # can't afford to finish.
+                _budget.ensure_budget(0.50, source="onboard_explored")
+            except ImportError:
+                pass
+            except Exception as e:
+                from webscraping.v2 import issues as _issues
+                _issues.record_issue(
+                    category=_issues.CATEGORY_BUDGET_EXCEEDED,
+                    severity=_issues.SEVERITY_WARN,
+                    source="onboard_explored",
+                    summary=str(e),
+                    context={"category": cat, "processed": spent_candidates},
+                )
+                return results
+
+            try:
+                result = await smart_route_and_onboard(
+                    url=url,
+                    agency_name=c.get("agency_name", url),
+                    platform_guess=c.get("platform_guess", "unknown"),
+                    model=model,
+                    max_turns=max_turns,
+                )
+                results.append(result)
+                spent_candidates += 1
+                # Add the URL to skip so a downstream candidate that
+                # somehow points to the same portal doesn't double-onboard.
+                skip.add(url)
+            except Exception as e:
+                logger.error(f"onboard_explored failed for {url}: {e}")
+                from webscraping.v2 import issues as _issues
+                _issues.record_issue(
+                    category=_issues.CATEGORY_INVESTIGATION_FAILED,
+                    severity=_issues.SEVERITY_ERROR,
+                    source=f"onboard_explored:{url}",
+                    summary=str(e),
+                    context={"category": cat},
+                )
+
+    return results
 
 
 # ---------------------------------------------------------------------------

@@ -840,15 +840,70 @@ async def run_investigation(
                 }
             ]
 
+            # Prompt caching: the system prompt + tool schemas repeat on
+            # every turn (~5 KB). Marking the last tool with
+            # cache_control caches BOTH the tools list and the preceding
+            # system block, so each turn pays ~1/10th the input rate on
+            # those tokens. ~3× total cost reduction on long agent loops.
+            cached_tools = [dict(t) for t in TOOL_SCHEMAS]
+            cached_tools[-1] = {
+                **cached_tools[-1],
+                "cache_control": {"type": "ephemeral"},
+            }
+            cached_system = [
+                {
+                    "type": "text",
+                    "text": SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+
             for turn in range(max_turns):
                 logger.info("--- Turn %d/%d ---", turn + 1, max_turns)
+
+                # Budget gate: reserve a turn's worth before calling.
+                # Pessimistic estimate ($0.20) handles the worst-case
+                # late-turn invocation where history is largest.
+                try:
+                    from webscraping.v2 import budget as _budget
+                    _budget.ensure_budget(0.20, source="investigation")
+                except ImportError:
+                    _budget = None
+                except Exception as e:
+                    # Budget exceeded → emit whatever spec we have and stop.
+                    logger.warning(
+                        "Investigation halted by budget at turn %d: %s",
+                        turn + 1, e,
+                    )
+                    try:
+                        from webscraping.v2 import issues as _issues
+                        _issues.record_issue(
+                            category=_issues.CATEGORY_BUDGET_EXCEEDED,
+                            severity=_issues.SEVERITY_WARN,
+                            source=f"investigation:{portal_url}",
+                            summary=str(e),
+                            context={"turn": turn + 1, "max_turns": max_turns},
+                        )
+                    except Exception:
+                        pass
+                    return toolbox.spec_received
+
                 response = client.messages.create(
                     model=model,
                     max_tokens=max_tokens,
-                    system=SYSTEM_PROMPT,
-                    tools=TOOL_SCHEMAS,
+                    system=cached_system,
+                    tools=cached_tools,
                     messages=messages,
                 )
+
+                # Cost-track this turn. Best-effort — never blocks the loop.
+                if _budget is not None:
+                    try:
+                        _budget.record_response(
+                            response, model, source="investigation"
+                        )
+                    except Exception as e:
+                        logger.debug(f"budget.record_response failed: {e}")
 
                 messages.append(
                     {
