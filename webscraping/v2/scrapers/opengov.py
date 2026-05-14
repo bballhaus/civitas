@@ -200,6 +200,15 @@ class OpenGovScraper(BaseScraper):
         rows = data.get("rows") or []
         if slice_locally:
             rows = rows[self.batch_offset:self.batch_offset + self.batch_size]
+        # OpenGov listing-level `status=open` is a category filter ("opportunities
+        # the agency considers open") and includes projects whose per-project
+        # status is `review`, `closed`, etc. The detail endpoint
+        # GET /api/v1/project/{id} 404s for anything where the per-project
+        # status isn't `open` — so an unfiltered list silently loses a chunk
+        # of detail fetches every run. Live probe on 2026-05-14 against
+        # Pasadena saw 2/5 returned rows in `review` state; filtering here
+        # is cheaper than logging a warning per dropped row downstream.
+        rows = [r for r in rows if (r.get("status") or "").lower() == "open"]
         return rows
 
     def _fetch_detail(self, project_id: int) -> dict:
