@@ -89,6 +89,7 @@ export async function GET(request: Request) {
           kind: w.kind,
           name: w.name,
           isHard: w.isHard,
+          radiusMiles: w.radiusMiles ?? null,
         })),
         agencyRelationships: profile.agencyRelationships.map((a) => ({
           id: a.id,
