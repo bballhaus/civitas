@@ -7,6 +7,7 @@ export type SecurityEventType =
   | "login_success"
   | "login_failure"
   | "signup"
+  | "signup_verification_sent"
   | "password_change"
   | "password_reset_request"
   | "password_reset_complete"

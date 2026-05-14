@@ -2,9 +2,6 @@
 
 import { useState, useMemo } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { setCachedUser, clearCachedUser } from "@/lib/api";
-import { clearCachedEvents } from "@/lib/events-cache";
 import { MeshBackground } from "@/components/MeshBackground";
 
 const PASSWORD_RULES = [
@@ -15,12 +12,12 @@ const PASSWORD_RULES = [
 ] as const;
 
 export default function SignupPage() {
-  const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
 
   const passwordChecks = useMemo(
     () => PASSWORD_RULES.map((r) => ({ ...r, passed: r.test(password) })),
@@ -53,13 +50,9 @@ export default function SignupPage() {
         return;
       }
 
-      // Auth cookie is set by the server (HttpOnly) — no client-side token handling needed
-      clearCachedUser();
-      clearCachedEvents();
-      if (data?.username) {
-        setCachedUser({ username: data.username, email: data.email });
-      }
-      router.push("/upload");
+      // Account is not real yet — the user must click the link in the
+      // verification email. Show the check-your-inbox view.
+      setPendingEmail(data.email || email);
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("fetch")) {
         setError(
@@ -72,6 +65,36 @@ export default function SignupPage() {
       setIsLoading(false);
     }
   };
+
+  if (pendingEmail) {
+    return (
+      <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff] flex items-center justify-center p-4">
+        <MeshBackground />
+        <div className="relative w-full max-w-md">
+          <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-8">
+            <h1 className="text-2xl font-semibold text-slate-800 mb-2">
+              Check your inbox
+            </h1>
+            <p className="text-slate-600 text-sm mb-4">
+              We sent a verification link to{" "}
+              <span className="font-medium text-slate-800">{pendingEmail}</span>.
+              Click it to activate your account.
+            </p>
+            <p className="text-slate-500 text-xs mb-6">
+              The link expires in 24 hours. If you don&apos;t see the email, check
+              your spam folder.
+            </p>
+            <Link
+              href="/login"
+              className="block w-full py-2.5 px-4 bg-[#3C89C6] text-white font-medium rounded-lg text-center hover:bg-[#2d6da3] transition-colors"
+            >
+              Back to sign in
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff] flex items-center justify-center p-4">
