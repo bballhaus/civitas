@@ -151,25 +151,46 @@ def _handle_onboard(event: dict) -> dict:
 
 
 def _handle_investigate_and_onboard(event: dict) -> dict:
-    """Run the investigation agent on a URL and onboard the spec on success."""
+    """Smart-routed onboarding for a single URL.
+
+    Routes by platform_guess (auto-detected from the URL if not given):
+      - opengov / planetbids / bidsync → cheap path (~$0.001)
+      - unknown / custom               → investigation agent (~$0.50)
+
+    Payload:
+      {"mode":"investigate_and_onboard",
+       "url": "https://...",
+       "name": "Agency Name",            # required
+       "platform_guess": "opengov",     # optional; auto-classified from URL otherwise
+       "slug": "...",                   # optional; legacy, ignored by the cheap path
+       "max_turns": 35}
+    """
     url = event.get("url")
-    slug = event.get("slug")
     name = event.get("name")
-    if not (url and slug and name):
+    if not (url and name):
         return {
             "statusCode": 400,
             "body": json.dumps({
                 "mode": "investigate_and_onboard",
-                "error": "url, slug, and name are all required",
+                "error": "url and name are required",
             }),
         }
+
+    platform_guess = (event.get("platform_guess") or "").lower().strip()
+    if not platform_guess:
+        try:
+            from webscraping.v2.agents.exploration import classify_url
+            platform_guess = classify_url(url)
+        except Exception:
+            platform_guess = "unknown"
+
     try:
-        from webscraping.v2.agents.spec_onboarding import investigate_and_onboard
+        from webscraping.v2.agents.spec_onboarding import smart_route_and_onboard
         result = asyncio.get_event_loop().run_until_complete(
-            investigate_and_onboard(
+            smart_route_and_onboard(
                 url=url,
-                slug=slug,
-                name=name,
+                agency_name=name,
+                platform_guess=platform_guess,
                 max_turns=int(event.get("max_turns", 35)),
             )
         )
@@ -177,6 +198,7 @@ def _handle_investigate_and_onboard(event: dict) -> dict:
             "statusCode": 200,
             "body": json.dumps({
                 "mode": "investigate_and_onboard",
+                "platform_guess": platform_guess,
                 "site_id": result.site_id,
                 "accepted": result.accepted,
                 "spec_class": result.spec_class,
