@@ -30,10 +30,13 @@ const BATCH_SIZE = 96;
 export class EmbeddingConfigError extends Error {}
 
 function requireApiKey(): string {
-  const key = process.env.VOYAGE_API_KEY;
+  // Accept either VOYAGE_API_KEY (Voyage SDK convention) or the shorter
+  // VOYAGE_KEY some deployments use. Prefer the SDK-conventional name when
+  // both are set so behavior matches upstream docs.
+  const key = process.env.VOYAGE_API_KEY ?? process.env.VOYAGE_KEY;
   if (!key) {
     throw new EmbeddingConfigError(
-      "VOYAGE_API_KEY is not set — cannot embed. Set it in the runtime env.",
+      "Neither VOYAGE_API_KEY nor VOYAGE_KEY is set — cannot embed.",
     );
   }
   return key;
