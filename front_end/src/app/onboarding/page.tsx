@@ -113,7 +113,13 @@ export default function OnboardingPage() {
         setError("Failed to finalize onboarding");
         return;
       }
-      router.replace("/home");
+      // Drop the user into the past-proposals/contracts uploader after the
+      // wizard. The /upload page lets them either drag in past work (which
+      // backfills profile fields the wizard didn't ask about — strategic
+      // goals, past performance, contract count/value, …) or skip straight
+      // through to /profile. Either way it's a continuation of onboarding,
+      // not a detour.
+      router.replace("/upload");
     } finally {
       setFinishing(false);
     }
