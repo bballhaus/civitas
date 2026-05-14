@@ -59,7 +59,10 @@ export default function SignupPage() {
       if (data?.username) {
         setCachedUser({ username: data.username, email: data.email });
       }
-      router.push("/upload");
+      // v2 (Architecture-v2 § 5): new users go through the guided interview
+      // before they ever see RFPs. The old upload-first path is preserved on
+      // the dashboard for evidence backfill but is no longer the entry point.
+      router.push("/onboarding");
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("fetch")) {
         setError(
