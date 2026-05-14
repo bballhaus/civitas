@@ -49,6 +49,8 @@ Account creation is a two-phase process (email-verify-before-create). Each stage
 
 `signup_verification_sent` payload carries `{ emailSent: boolean }` — `false` indicates `CIVITAS_FROM_EMAIL` was unset and the email helper fell back to console logging (no SES call). Use this to catch env-var drift between Vercel scopes.
 
+**Bypass flag**: when env var `SKIP_EMAIL_VERIFICATION=true` is set on the signup route, the email step is skipped entirely. The signup route creates the user immediately, sets the auth cookie, and returns `{ bypassed: true }`; the signup page reads that and redirects straight to `/onboarding`. In this mode only `signup_form_submitted` and `signup` fire (with `signup` carrying `{ verificationBypassed: true, emailVerified: true }`); `signup_verification_sent` and `signup_verification_clicked` are skipped because they didn't happen. Intended for use while SES is in sandbox; flip back to default once production access lands.
+
 ### Onboarding stages (client)
 
 The v2 guided interview has 9 screens (see [Architecture-v2 § 5](Architecture-v2.md#5-onboarding-flow)). Per-stage telemetry comes from the wizard UI:

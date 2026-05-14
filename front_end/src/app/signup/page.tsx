@@ -2,6 +2,9 @@
 
 import { useState, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { setCachedUser, clearCachedUser } from "@/lib/api";
+import { clearCachedEvents } from "@/lib/events-cache";
 import { MeshBackground } from "@/components/MeshBackground";
 
 const PASSWORD_RULES = [
@@ -12,6 +15,7 @@ const PASSWORD_RULES = [
 ] as const;
 
 export default function SignupPage() {
+  const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
@@ -50,10 +54,24 @@ export default function SignupPage() {
         return;
       }
 
-      // Account is not real yet — the user must click the link in the
-      // verification email. The verify-email route promotes pending→users
-      // and then redirects into /onboarding (Architecture-v2 § 5). Show the
-      // check-your-inbox view in the meantime.
+      // Two response shapes depending on SKIP_EMAIL_VERIFICATION on the
+      // server:
+      //   bypass on  → status 201, { username, email_verified: true,
+      //                bypassed: true } and the auth cookie is already set.
+      //                Skip the check-inbox view and drop straight into
+      //                /onboarding (Architecture-v2 § 5).
+      //   bypass off → status 202, { pending: true, email, emailSent }.
+      //                Account is not real yet; the verify-email route
+      //                creates it when the user clicks the email link.
+      if (data?.bypassed) {
+        clearCachedUser();
+        clearCachedEvents();
+        if (data.username) {
+          setCachedUser({ username: data.username, email: data.email });
+        }
+        router.push("/onboarding");
+        return;
+      }
       setPendingEmail(data.email || email);
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("fetch")) {
