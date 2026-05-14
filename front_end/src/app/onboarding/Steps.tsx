@@ -19,7 +19,11 @@ import {
   GOV_EXPERIENCE,
   COMMON_AGENCIES,
 } from "@/lib/onboarding-data";
-import { CALIFORNIA_CITIES, CALIFORNIA_COUNTIES } from "@/data/filter-options";
+import {
+  CALIFORNIA_CITIES,
+  CALIFORNIA_COUNTIES,
+  NAICS_ENTRIES,
+} from "@/data/filter-options";
 
 interface StepProps {
   snapshot: OnboardingSnapshot;
@@ -128,6 +132,90 @@ function EmptyHint({ children }: { children: React.ReactNode }) {
   return (
     <div className="text-sm text-slate-400 italic py-1.5">
       {children}
+    </div>
+  );
+}
+
+// NAICS-backed picker used by Specialties + Capabilities. The 1,012 NAICS
+// titles are what RFPs reference verbatim when listing required scopes, so
+// using them here also lifts matching accuracy.
+//
+// We render up to MAX_OPTIONS results, filtered by the user's substring
+// query, so the <select> stays interactive instead of dragging in 1k DOM
+// nodes at once. Substring match is case-insensitive across both code and
+// title; "541" surfaces all IT-related entries; "concrete" surfaces all
+// 6 concrete-related codes.
+const NAICS_PICKER_LIMIT = 200;
+
+function NaicsPicker({
+  label,
+  onPick,
+}: {
+  label: string;
+  onPick: (title: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [selection, setSelection] = useState("");
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? NAICS_ENTRIES.filter(
+        (e) =>
+          e.title.toLowerCase().includes(q) || e.code.includes(q),
+      ).slice(0, NAICS_PICKER_LIMIT)
+    : NAICS_ENTRIES.slice(0, NAICS_PICKER_LIMIT);
+
+  const handleAdd = () => {
+    if (!selection) return;
+    const entry = NAICS_ENTRIES.find((e) => e.code === selection);
+    if (!entry) return;
+    // Store the title (not the code) so the embedding picks up the
+    // semantic content and substring fallback matches RFP text.
+    onPick(entry.title);
+    setSelection("");
+    setQuery("");
+  };
+
+  return (
+    <div className="border-t border-slate-100 pt-4">
+      <label className={labelClass}>{label}</label>
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search NAICS (e.g. concrete, 541, software)"
+          className={inputClass}
+        />
+        <select
+          value={selection}
+          onChange={(e) => setSelection(e.target.value)}
+          className={selectClass}
+        >
+          <option value="">
+            {filtered.length === NAICS_PICKER_LIMIT && q
+              ? `${filtered.length}+ matches — pick one…`
+              : `${filtered.length} ${q ? "matches" : "entries"} — pick one…`}
+          </option>
+          {filtered.map((e) => (
+            <option key={e.code} value={e.code}>
+              {e.code} · {e.title}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={handleAdd}
+          disabled={!selection}
+          className={`${addBtnClass} disabled:opacity-50`}
+        >
+          Add
+        </button>
+      </div>
+      <p className="text-xs text-slate-400 italic mt-1">
+        From the federal NAICS catalog (1,012 codes) — RFPs reference these
+        directly, so picking the closest match tightens the score.
+      </p>
     </div>
   );
 }
@@ -338,6 +426,7 @@ function StepSpecialties({ snapshot, onChange }: StepProps) {
             ))}
         </div>
       </div>
+      <NaicsPicker label="Or pick from the NAICS catalog" onPick={add} />
     </div>
   );
 }
@@ -396,6 +485,7 @@ function StepCapabilities({ snapshot, onChange }: StepProps) {
           Add
         </button>
       </div>
+      <NaicsPicker label="Or pick from the NAICS catalog" onPick={add} />
     </div>
   );
 }
