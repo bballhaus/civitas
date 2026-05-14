@@ -15,6 +15,7 @@ import { MarkdownContent } from "@/components/MarkdownContent";
 import { getCurrentUser, getGeneratedPoe, updateUserRfpStatus, listContracts } from "@/lib/api";
 import { getCachedEvents } from "@/lib/events-cache";
 import { trackEvent } from "@/lib/event-tracker";
+import { portalLabel } from "@/lib/rfp-portal";
 
 // Feature flag: AI Proposal and Plan-of-Execution generation are hidden from
 // the UI for the v-0.1 test-user launch. The backend routes
@@ -57,6 +58,14 @@ export default function RFPDetailPage() {
   const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(new Set());
   const [userRfpStatusLoaded, setUserRfpStatusLoaded] = useState(false);
   const [viewMode, setViewMode] = useState<"match" | "generated">("match");
+  // Match feedback (thumbs up/down + optional "why" reason). Mirrors the
+  // sidebar widget in /dashboard. The reason text is only shown / saved
+  // for "bad" ratings, matching the dashboard UX.
+  const [matchRating, setMatchRating] = useState<"good" | "bad" | null>(null);
+  const [matchReason, setMatchReason] = useState<string>("");
+  const [savedMatchReason, setSavedMatchReason] = useState<string>("");
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
   const rfp: RFPWithMatch | null = rfpData && profileLoaded
     ? { ...rfpData, match: computeMatch(rfpData, profile) }
@@ -104,9 +113,15 @@ export default function RFPDetailPage() {
       if (full) {
         setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
         setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+        const fb = full.match_feedback_by_rfp?.[id];
+        if (fb) {
+          setMatchRating(fb.rating);
+          setSavedMatchReason(fb.reason ?? "");
+          setMatchReason(fb.reason ?? "");
+        }
       }
     });
-  }, []);
+  }, [id]);
 
   useEffect(() => {
     if (!id) return;
@@ -641,6 +656,89 @@ export default function RFPDetailPage() {
     }
   }, [id, appliedRfpIds, inProgressRfpIds]);
 
+  // Match feedback — submit / change rating. "good" persists immediately
+  // with no reason. "bad" persists immediately too; the reason input shows
+  // up underneath and is saved separately on blur so the user isn't forced
+  // to type before the rating sticks.
+  const handleSubmitMatchFeedback = useCallback(
+    async (rating: "good" | "bad") => {
+      if (!id || !rfpData) return;
+      const previousRating = matchRating;
+      const previousReason = savedMatchReason;
+      setMatchRating(rating);
+      setFeedbackError(null);
+      if (rating === "good") {
+        setMatchReason("");
+        setSavedMatchReason("");
+      }
+      setFeedbackSaving(true);
+      try {
+        await updateUserRfpStatus({
+          submit_match_feedback: {
+            rfp_id: id,
+            rating,
+            reason: rating === "bad" ? matchReason.trim() || undefined : undefined,
+            match_score: rfp?.match?.score ?? 0,
+            match_tier: rfp?.match?.tier ?? "low",
+          },
+        });
+      } catch (err) {
+        setMatchRating(previousRating);
+        setSavedMatchReason(previousReason);
+        setMatchReason(previousReason);
+        setFeedbackError(err instanceof Error ? err.message : "Failed to save feedback");
+      } finally {
+        setFeedbackSaving(false);
+      }
+    },
+    [id, rfpData, matchRating, savedMatchReason, matchReason, rfp?.match?.score, rfp?.match?.tier],
+  );
+
+  const handleRemoveMatchFeedback = useCallback(async () => {
+    if (!id) return;
+    const previousRating = matchRating;
+    const previousReason = savedMatchReason;
+    setMatchRating(null);
+    setMatchReason("");
+    setSavedMatchReason("");
+    setFeedbackError(null);
+    try {
+      await updateUserRfpStatus({ remove_match_feedback: id });
+    } catch (err) {
+      setMatchRating(previousRating);
+      setSavedMatchReason(previousReason);
+      setMatchReason(previousReason);
+      setFeedbackError(err instanceof Error ? err.message : "Failed to remove feedback");
+    }
+  }, [id, matchRating, savedMatchReason]);
+
+  // Re-save the reason text when the user edits it on a "bad" rating. We
+  // wait until blur so we don't fire a write per keystroke; the rating
+  // itself is already persisted by the time this runs.
+  const handleSaveReason = useCallback(async () => {
+    if (!id || matchRating !== "bad") return;
+    const trimmed = matchReason.trim();
+    if (trimmed === savedMatchReason.trim()) return;
+    setFeedbackSaving(true);
+    setFeedbackError(null);
+    try {
+      await updateUserRfpStatus({
+        submit_match_feedback: {
+          rfp_id: id,
+          rating: "bad",
+          reason: trimmed || undefined,
+          match_score: rfp?.match?.score ?? 0,
+          match_tier: rfp?.match?.tier ?? "low",
+        },
+      });
+      setSavedMatchReason(trimmed);
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : "Failed to save reason");
+    } finally {
+      setFeedbackSaving(false);
+    }
+  }, [id, matchRating, matchReason, savedMatchReason, rfp?.match?.score, rfp?.match?.tier]);
+
   const handleGeneratePlanOfExecution = async (feedbackText?: string) => {
     if (!rfpData || planLoading) return;
     const trimmed = String(feedbackText ?? "").trim();
@@ -850,6 +948,51 @@ export default function RFPDetailPage() {
                   </button>
                 </>
               )}
+              <span className="w-px h-5 bg-slate-200 mx-1" aria-hidden="true" />
+              <button
+                type="button"
+                title="Good match"
+                aria-pressed={matchRating === "good"}
+                onClick={() =>
+                  matchRating === "good"
+                    ? void handleRemoveMatchFeedback()
+                    : void handleSubmitMatchFeedback("good")
+                }
+                disabled={feedbackSaving}
+                className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors disabled:opacity-60 ${
+                  matchRating === "good"
+                    ? "bg-emerald-600 text-white"
+                    : "text-slate-500 hover:text-emerald-600 hover:bg-emerald-50"
+                }`}
+              >
+                <svg className="w-4 h-4 shrink-0" fill={matchRating === "good" ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3" />
+                </svg>
+                Good match
+              </button>
+              <button
+                type="button"
+                title="Bad match"
+                aria-pressed={matchRating === "bad"}
+                onClick={() =>
+                  matchRating === "bad"
+                    ? void handleRemoveMatchFeedback()
+                    : void handleSubmitMatchFeedback("bad")
+                }
+                disabled={feedbackSaving}
+                className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors disabled:opacity-60 ${
+                  matchRating === "bad"
+                    ? "bg-red-600 text-white"
+                    : "text-slate-500 hover:text-red-600 hover:bg-red-50"
+                }`}
+              >
+                <svg className="w-4 h-4 shrink-0" fill={matchRating === "bad" ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 15V19a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 2h3a2 2 0 012 2v7a2 2 0 01-2 2h-3" />
+                </svg>
+                Bad match
+              </button>
               {(rfp.eventUrl || rfp.id) && (
                 <a
                   href={rfp.eventUrl || "#"}
@@ -857,7 +1000,7 @@ export default function RFPDetailPage() {
                   rel="noopener noreferrer"
                   className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                 >
-                  View on Cal eProcure
+                  View on {portalLabel(rfp.sourceId)}
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                   </svg>
@@ -869,6 +1012,27 @@ export default function RFPDetailPage() {
                 </span>
               )}
             </div>
+            {/* Bad-match reason capture — appears only after the user marks
+                bad, lets them tell us why so the matcher can use the signal.
+                Saved on blur to avoid one write per keystroke. */}
+            {matchRating === "bad" && (
+              <div className="mb-4">
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Why is this a bad match? <span className="text-slate-400">(optional, helps tune your matches)</span>
+                </label>
+                <textarea
+                  value={matchReason}
+                  onChange={(e) => setMatchReason(e.target.value)}
+                  onBlur={() => void handleSaveReason()}
+                  placeholder="e.g. Wrong region, contract type we don't bid on, license class we don't hold…"
+                  rows={2}
+                  className="w-full px-3 py-2 text-sm text-slate-800 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-transparent placeholder:text-slate-400 resize-none"
+                />
+                {feedbackError && (
+                  <p className="mt-1 text-xs text-red-600">{feedbackError}</p>
+                )}
+              </div>
+            )}
             <div className="flex flex-wrap gap-2 mb-4">
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-50 text-blue-600">
                 {rfp.location}

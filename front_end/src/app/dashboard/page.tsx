@@ -31,6 +31,7 @@ import {
 } from "@/lib/api";
 import { getCachedEvents, setCachedEvents, clearCachedEvents } from "@/lib/events-cache";
 import { trackEvent } from "@/lib/event-tracker";
+import { portalLabel } from "@/lib/rfp-portal";
 
 // Feature flag: AI Proposal and Plan-of-Execution generation are hidden from
 // the UI for the v-0.1 test-user launch. The backend routes remain available;
@@ -2042,7 +2043,7 @@ function RFPDetailPanel({
             )}
             {(rfp.eventUrl || rfp.id) && (
               <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 bg-amber-50 text-amber-700 hover:bg-amber-100">
-                View on Cal eProcure <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                View on {portalLabel(rfp.sourceId)} <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
               </a>
             )}
           </div>
