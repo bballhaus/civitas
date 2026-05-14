@@ -62,6 +62,8 @@ def handler(event, context):
         return _handle_discover(event)
     if mode == "onboard":
         return _handle_onboard(event)
+    if mode == "investigate_and_onboard":
+        return _handle_investigate_and_onboard(event)
     if mode == "monitor":
         return _handle_monitor(event)
 
@@ -139,6 +141,53 @@ def _handle_onboard(event: dict) -> dict:
         return {
             "statusCode": 500,
             "body": json.dumps({"mode": "onboard", "error": str(e)}),
+        }
+
+
+def _handle_investigate_and_onboard(event: dict) -> dict:
+    """Run the investigation agent on a URL and onboard the spec on success."""
+    url = event.get("url")
+    slug = event.get("slug")
+    name = event.get("name")
+    if not (url and slug and name):
+        return {
+            "statusCode": 400,
+            "body": json.dumps({
+                "mode": "investigate_and_onboard",
+                "error": "url, slug, and name are all required",
+            }),
+        }
+    try:
+        from webscraping.v2.agents.spec_onboarding import investigate_and_onboard
+        result = asyncio.get_event_loop().run_until_complete(
+            investigate_and_onboard(
+                url=url,
+                slug=slug,
+                name=name,
+                max_turns=int(event.get("max_turns", 35)),
+            )
+        )
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "mode": "investigate_and_onboard",
+                "site_id": result.site_id,
+                "accepted": result.accepted,
+                "spec_class": result.spec_class,
+                "confidence": result.confidence,
+                "events_scraped": result.events_scraped,
+                "pdfs_observed": result.pdfs_observed,
+                "reason": result.reason,
+            }),
+        }
+    except Exception as e:
+        logger.error(f"investigate_and_onboard failed: {traceback.format_exc()}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({
+                "mode": "investigate_and_onboard",
+                "error": str(e),
+            }),
         }
 
 
@@ -462,12 +511,23 @@ def _handle_run_all(event, context):
     # Group 5: Agentic (disabled by default) — multi-site batch
     planetbids_sites = [s for s in all_sites if s.startswith("planetbids_")]
     opengov_sites = [s for s in all_sites if s.startswith("opengov_")]
+
+    # Spec-driven sites identified by scraper_type rather than site_id
+    # prefix — they're platform-agnostic and onboarded via S3 spec JSON.
+    from webscraping.v2.models import ScraperType
+    from webscraping.v2.orchestrator.runner import SITE_REGISTRY as _REG
+    spec_driven_sites = [
+        sid for sid in all_sites
+        if _REG[sid].scraper_type == ScraperType.SPEC_DRIVEN
+    ]
+
     agentic_sites = [
         sid for sid in all_sites
         if sid != "caleprocure"
         and not sid.startswith("bidsync_")
         and not sid.startswith("planetbids_")
         and not sid.startswith("opengov_")
+        and sid not in spec_driven_sites
     ]
 
     dispatched = []
@@ -549,6 +609,34 @@ def _handle_run_all(event, context):
             f"(stagger {OPENGOV_STAGGER_SECONDS}s, batch size {OPENGOV_BATCH_SIZE} events)"
         )
 
+    # Dispatch each spec-driven portal as its own chained batch — same
+    # pattern as OpenGov. These are onboarded by the investigation agent
+    # via S3 (scrapes/v2/spec_sites/*.json) with no code deploy.
+    SPEC_DRIVEN_BATCH_SIZE = 8
+    SPEC_DRIVEN_STAGGER_SECONDS = 60
+    spec_offset = (
+        opengov_offset
+        + len(opengov_sites) * OPENGOV_STAGGER_SECONDS
+        + SPEC_DRIVEN_STAGGER_SECONDS
+    )
+    for i, site_id in enumerate(spec_driven_sites):
+        try:
+            _invoke_async(context, {
+                "site_id": site_id,
+                "batch_offset": 0,
+                "batch_size": SPEC_DRIVEN_BATCH_SIZE,
+                "skip_enrich": skip_enrich,
+                "delay_before_start": spec_offset + i * SPEC_DRIVEN_STAGGER_SECONDS,
+            })
+            dispatched.append(site_id)
+        except Exception as e:
+            logger.error(f"Failed to dispatch {site_id}: {e}")
+    if spec_driven_sites:
+        logger.info(
+            f"Dispatched {len(spec_driven_sites)} spec-driven portals "
+            f"(stagger {SPEC_DRIVEN_STAGGER_SECONDS}s, batch size {SPEC_DRIVEN_BATCH_SIZE} events)"
+        )
+
     # Dispatch agentic sites as a chain-first multi-site batch (no pagination).
     if agentic_sites:
         first_batch = agentic_sites[:1]
@@ -572,6 +660,7 @@ def _handle_run_all(event, context):
             "total_sites": len(all_sites),
             "planetbids_portals": len(planetbids_sites),
             "opengov_portals": len(opengov_sites),
+            "spec_driven_portals": len(spec_driven_sites),
             "agentic_portals": len(agentic_sites),
             "note": "Sites dispatched as async invocations. Check CloudWatch logs for progress.",
         }),

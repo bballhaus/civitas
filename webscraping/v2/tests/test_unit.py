@@ -1067,5 +1067,221 @@ class TestNetworkCaptureFilter:
         assert "opengov" in og[0].url
 
 
+class TestSpecDrivenHelpers:
+    """Pure-function helpers — exercise without network."""
+
+    def test_fill_template_substitutes_known_placeholders(self):
+        from webscraping.v2.scrapers.spec_driven import fill_template
+        out = fill_template(
+            "https://api.example.com/{slug}/projects?page={page}&limit={limit}",
+            slug="long-beach", page=2, limit=25,
+        )
+        assert out == "https://api.example.com/long-beach/projects?page=2&limit=25"
+
+    def test_fill_template_preserves_unknown_placeholders(self):
+        # `{id}` is a per-row substitution that happens at detail time;
+        # the listing-time call should leave it intact.
+        from webscraping.v2.scrapers.spec_driven import fill_template
+        out = fill_template(
+            "https://api.example.com/project/{id}",
+            slug="x", page=1, limit=10,
+        )
+        assert out == "https://api.example.com/project/{id}"
+
+    def test_fill_template_works_inside_json_body(self):
+        # The reason fill_template uses regex instead of str.format —
+        # JSON braces would otherwise collide with `.format()` syntax.
+        from webscraping.v2.scrapers.spec_driven import fill_template
+        out = fill_template(
+            '{"status":"open","page":{page},"limit":{limit}}',
+            page=3, limit=10,
+        )
+        import json as _json
+        parsed = _json.loads(out)
+        assert parsed == {"status": "open", "page": 3, "limit": 10}
+
+    def test_traverse_root_returns_data_unchanged(self):
+        from webscraping.v2.scrapers.spec_driven import traverse
+        data = {"rows": [1, 2, 3]}
+        assert traverse(data, "") is data
+
+    def test_traverse_dotted_path_descends(self):
+        from webscraping.v2.scrapers.spec_driven import traverse
+        data = {"data": {"projects": [{"id": 1}]}}
+        assert traverse(data, "data.projects") == [{"id": 1}]
+
+    def test_traverse_missing_key_returns_none(self):
+        from webscraping.v2.scrapers.spec_driven import traverse
+        assert traverse({"a": 1}, "missing.path") is None
+
+    def test_strip_html_collapses_whitespace(self):
+        from webscraping.v2.scrapers.spec_driven import strip_html
+        html = "<p>Hello   <b>world</b>.</p>\n<p>Second  para.</p>"
+        assert strip_html(html) == "Hello world. Second para."
+
+
+class TestSpecDrivenScraper:
+    """Spec → SiteConfig → scraper, with HTTP mocked."""
+
+    def _opengov_like_spec(self) -> dict:
+        # The worked example baked into the agent's system prompt — same
+        # shape the agent emits for OpenGov-class portals.
+        return {
+            "portal_url": "https://procurement.opengov.com/portal/{slug}",
+            "platform_class": "opengov_api",
+            "confidence": "high",
+            "listing": {
+                "method": "POST",
+                "url_template": "https://api.example.com/api/v1/government/{slug}/project/public",
+                "body_template": '{"status":"open","page":{page},"limit":{limit}}',
+                "headers_required": {},
+                "response_format": "json",
+                "rows_path": "rows",
+                "row_id_field": "id",
+                "row_title_field": "title",
+            },
+            "detail": {
+                "method": "GET",
+                "url_template": "https://api.example.com/api/v1/project/{id}",
+                "headers_required": {},
+                "response_format": "json",
+                "summary_field": "summary",
+                "attachment_array_path": "attachments",
+                "attachment_url_field": "url",
+                "attachment_filename_field": "filename",
+                "contact_email_field": "contactEmail",
+                "contact_name_field": "contactDisplayName",
+                "contact_phone_field": "contactPhone",
+            },
+            "notes": "API 403s default UA; needs browser UA",
+        }
+
+    def _make_scraper(self):
+        from webscraping.v2.models import ScraperType, SiteConfig
+        from webscraping.v2.scrapers.spec_driven import SpecDrivenScraper
+        config = SiteConfig(
+            site_id="spec_opengov_api_long_beach",
+            name="City of Long Beach",
+            url="https://procurement.opengov.com/portal/long-beach",
+            scraper_type=ScraperType.SPEC_DRIVEN,
+            config={
+                "slug": "long-beach",
+                "name": "City of Long Beach",
+                "url": "https://procurement.opengov.com/portal/long-beach",
+                "spec": self._opengov_like_spec(),
+            },
+        )
+        return SpecDrivenScraper(config, batch_offset=0, batch_size=5)
+
+    def test_init_requires_spec_in_config(self):
+        from webscraping.v2.models import ScraperType, SiteConfig
+        from webscraping.v2.scrapers.spec_driven import SpecDrivenScraper
+        with pytest.raises(ValueError, match="requires site_config.config"):
+            SpecDrivenScraper(SiteConfig(
+                site_id="x", name="x", url="x",
+                scraper_type=ScraperType.SPEC_DRIVEN,
+                config={},
+            ))
+
+    def test_build_event_from_row_and_detail(self):
+        scraper = self._make_scraper()
+        row = {"id": 42, "title": "RFP for traffic study", "financialId": "2026-RFP-0123"}
+        detail = {
+            "id": 42,
+            "title": "RFP for traffic study",
+            "summary": "<p>Find a vendor to do <b>traffic study</b>.</p>",
+            "contactEmail": "buyer@longbeach.gov",
+            "contactDisplayName": "Jane Doe",
+            "contactPhone": "555-1212",
+            "attachments": [
+                {"url": "https://s3.example/rfp.pdf", "filename": "rfp.pdf"},
+            ],
+        }
+        event = scraper._build_event(row, "42", "RFP for traffic study", detail)
+        assert event.source_event_id == "42"
+        assert event.title == "RFP for traffic study"
+        assert event.issuing_agency == "City of Long Beach"
+        assert event.description == "Find a vendor to do traffic study."
+        assert event.contact.email == "buyer@longbeach.gov"
+        assert event.contact.name == "Jane Doe"
+        assert event.contact.phone == "555-1212"
+        assert event.source_url == (
+            "https://procurement.opengov.com/portal/long-beach/projects/42"
+        )
+        assert event.raw_metadata["spec_platform_class"] == "opengov_api"
+        assert event.raw_metadata["spec_confidence"] == "high"
+
+    def test_html_response_format_raises_not_implemented(self):
+        """Rendered-HTML specs aren't supported yet — fail loud, not silent."""
+        import asyncio
+        from webscraping.v2.models import ScraperType, SiteConfig
+        from webscraping.v2.scrapers.spec_driven import SpecDrivenScraper
+        spec = self._opengov_like_spec()
+        spec["listing"]["response_format"] = "html"
+        spec["detail"] = None
+        config = SiteConfig(
+            site_id="spec_html_demo",
+            name="X",
+            url="https://x",
+            scraper_type=ScraperType.SPEC_DRIVEN,
+            config={"slug": "x", "name": "X", "url": "https://x", "spec": spec},
+        )
+        scraper = SpecDrivenScraper(config)
+
+        async def collect():
+            out = []
+            async for ev in scraper.scrape():
+                out.append(ev)
+            return out
+
+        with pytest.raises(NotImplementedError, match="response_format=json only"):
+            asyncio.run(collect())
+
+    def test_listing_total_picked_up_from_count_field(self):
+        """Common shape: {count, rows[]} — make sure batching has a total."""
+        import unittest.mock as mock
+        scraper = self._make_scraper()
+        fake_response = mock.Mock()
+        fake_response.json.return_value = {
+            "count": 257,
+            "rows": [{"id": i, "title": f"Bid {i}"} for i in range(5)],
+        }
+        fake_response.raise_for_status = lambda: None
+        with mock.patch("webscraping.v2.scrapers.spec_driven.requests.post",
+                        return_value=fake_response) as post:
+            rows = scraper._fetch_listing()
+        assert len(rows) == 5
+        assert scraper.total_available == 257
+        call_args = post.call_args
+        assert call_args.args[0] == (
+            "https://api.example.com/api/v1/government/long-beach/project/public"
+        )
+        assert call_args.kwargs["json"] == {"status": "open", "page": 1, "limit": 5}
+
+    def test_listing_fallback_total_when_no_count(self):
+        """Some platforms don't expose a total — fall back to len(rows)."""
+        import unittest.mock as mock
+        scraper = self._make_scraper()
+        fake_response = mock.Mock()
+        fake_response.json.return_value = {
+            "rows": [{"id": 1, "title": "A"}, {"id": 2, "title": "B"}],
+        }
+        fake_response.raise_for_status = lambda: None
+        with mock.patch("webscraping.v2.scrapers.spec_driven.requests.post",
+                        return_value=fake_response):
+            rows = scraper._fetch_listing()
+        assert len(rows) == 2
+        assert scraper.total_available == 2
+
+
+class TestSpecDrivenRegistry:
+    def test_site_id_format_combines_platform_and_slug(self):
+        from webscraping.v2.agents.spec_onboarding import _site_id_for
+        assert _site_id_for("long-beach", "opengov_api") == "spec_opengov_api_long_beach"
+        assert _site_id_for("Long Beach!", "Salesforce Aura") == (
+            "spec_salesforce_aura_long_beach"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
