@@ -72,6 +72,26 @@ export default function LoginPage() {
       setCachedUser({
         username: typeof data?.username === "string" ? data.username : username,
       });
+
+      // v2 (Architecture-v2 § 5): if the user hasn't finished the guided
+      // interview yet, drop them back into it on the earliest unfinished
+      // step. The endpoint computes the resume step from current profile
+      // state, so partially-completed signups continue cleanly.
+      try {
+        const onboardingRes = await fetch("/api/onboarding/state/", {
+          cache: "no-store",
+        });
+        if (onboardingRes.ok) {
+          const onboardingData = await onboardingRes.json();
+          if (!onboardingData?.onboardedAt) {
+            router.push("/onboarding");
+            return;
+          }
+        }
+      } catch {
+        // Best-effort. If the resume probe fails for any reason fall through
+        // to the dashboard rather than blocking the user at the login screen.
+      }
       router.push("/home");
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("fetch")) {

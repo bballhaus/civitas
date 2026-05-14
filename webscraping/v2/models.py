@@ -23,6 +23,7 @@ class ScraperType(str, Enum):
     API = "api"
     STRUCTURED = "structured"
     AGENTIC = "agentic"
+    SPEC_DRIVEN = "spec_driven"
 
 
 class SiteHealthStatus(str, Enum):

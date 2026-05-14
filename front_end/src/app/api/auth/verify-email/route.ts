@@ -62,7 +62,10 @@ export async function GET(request: Request) {
   void recordEvent(user.username, "signup", { emailVerified: true });
   void recordEvent(user.username, "email_verified");
 
-  const response = NextResponse.redirect(new URL("/upload", request.url));
+  // Send the newly-verified user into the v2 guided interview
+  // (Architecture-v2 § 5). Direct signups on main go to /onboarding too;
+  // the destinations now match.
+  const response = NextResponse.redirect(new URL("/onboarding", request.url));
   setAuthCookie(response, jwt);
   return response;
 }

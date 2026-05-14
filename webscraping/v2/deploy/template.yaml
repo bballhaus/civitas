@@ -60,6 +60,18 @@ Resources:
             Description: Scheduled RFP scraping run
             Input: '{"site_id": "caleprocure"}'
             Enabled: true
+        DailyPipeline:
+          # Once-daily autonomous loop: rotating exploration category +
+          # smart-routed onboarding for the candidate backlog. Hard-
+          # capped by webscraping/v2/budget.py ($25/day for the first
+          # week, then $5/day). 13:00 UTC = 06:00 PT — off the hour so
+          # it doesn't collide with the every-4-hour Cal eProcure rule.
+          Type: Schedule
+          Properties:
+            Schedule: 'cron(0 13 * * ? *)'
+            Description: Daily exploration + smart-routed portal onboarding
+            Input: '{"mode": "daily_pipeline"}'
+            Enabled: true
 
   # ------------------------------------------------------------------
   # Per-site scheduled rules (add more as sites come online)

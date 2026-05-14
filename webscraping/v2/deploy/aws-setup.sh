@@ -302,6 +302,39 @@ aws lambda add-permission \
 echo "  Schedule created: Cal eProcure every 4 hours"
 echo ""
 
+# ----------------------------------------------------------------------------
+# Daily autonomous pipeline (exploration + smart-routed onboarding)
+# ----------------------------------------------------------------------------
+# Fires `{"mode":"daily_pipeline"}` once a day at 13:00 UTC (06:00 PT —
+# off-hours to keep the EventBridge / Lambda free for the on-the-hour
+# Cal eProcure scrape). The handler rotates through the 9 exploration
+# categories and drains up to N onboarding candidates per run. Hard
+# capped by webscraping/v2/budget.py ($25/day → $5/day after week one).
+PIPELINE_RULE="civitas-daily-pipeline"
+aws events put-rule \
+    --name "$PIPELINE_RULE" \
+    --schedule-expression "cron(0 13 * * ? *)" \
+    --state ENABLED \
+    --description "Daily exploration + smart-routed portal onboarding" \
+    --region "$REGION" \
+    --output text --query 'RuleArn'
+
+aws events put-targets \
+    --rule "$PIPELINE_RULE" \
+    --targets "[{\"Id\":\"1\",\"Arn\":\"${LAMBDA_ARN}\",\"Input\":\"{\\\"mode\\\":\\\"daily_pipeline\\\"}\"}]" \
+    --region "$REGION" > /dev/null
+
+aws lambda add-permission \
+    --function-name "$LAMBDA_FUNCTION" \
+    --statement-id "eventbridge-daily-pipeline" \
+    --action "lambda:InvokeFunction" \
+    --principal "events.amazonaws.com" \
+    --source-arn "arn:aws:events:${REGION}:${ACCOUNT_ID}:rule/${PIPELINE_RULE}" \
+    2>/dev/null || true
+
+echo "  Schedule created: daily exploration+onboarding pipeline (13:00 UTC)"
+echo ""
+
 # ============================================================================
 # Done
 # ============================================================================

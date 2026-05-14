@@ -51,7 +51,9 @@ export default function SignupPage() {
       }
 
       // Account is not real yet — the user must click the link in the
-      // verification email. Show the check-your-inbox view.
+      // verification email. The verify-email route promotes pending→users
+      // and then redirects into /onboarding (Architecture-v2 § 5). Show the
+      // check-your-inbox view in the meantime.
       setPendingEmail(data.email || email);
     } catch (err) {
       if (err instanceof TypeError && err.message.includes("fetch")) {

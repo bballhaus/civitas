@@ -3,6 +3,7 @@ import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { normalizeCapability } from "@/lib/capabilities";
 import { getS3Client, getBucket, getObjectJSON } from "@/lib/s3";
 import { config } from "@/lib/config";
+import { mirrorManifestsToCache } from "@/lib/rfp-cache-populator";
 
 interface ScrapedEvent {
   event_id: string;
@@ -108,8 +109,10 @@ interface V2EnrichedEvent {
   contract_duration: string | null;
   evaluation_criteria: string[];
   attachment_rollup: { summary: string; text: string; pdfsProcessed: string[] } | null;
-  incumbent_vendor: string | null;
-  incumbent_contract_end: string | null;
+  // Optional on the wire — Pydantic emits null/missing depending on source.
+  // Shape kept compatible with the V2EnrichedEvent in lib/rfp-cache-populator.ts.
+  incumbent_vendor?: string;
+  incumbent_contract_end?: string;
   posted_date: string | null;
   scraped_at: string;
 }
@@ -150,6 +153,16 @@ async function loadV2Manifests(): Promise<V2Manifest[]> {
     }
 
     v2Cache = { manifests, timestamp: now };
+
+    // Architecture-v2 § 11: /api/events is S3-backed but populates rfp_cache
+    // on read so the v2 matcher always has fresh data. Fire-and-forget so
+    // we don't slow down the events response; errors get logged but don't
+    // block the read path. The CLI `npm run rfp-cache:populate` remains
+    // the source of truth for cold-start backfills.
+    void mirrorManifestsToCache(manifests).catch((err) => {
+      console.warn("[events] rfp_cache write-through failed:", err);
+    });
+
     return manifests;
   } catch (err) {
     console.warn("Could not load v2 manifests:", err);

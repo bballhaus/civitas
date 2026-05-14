@@ -62,6 +62,14 @@ def handler(event, context):
         return _handle_discover(event)
     if mode == "onboard":
         return _handle_onboard(event)
+    if mode == "investigate_and_onboard":
+        return _handle_investigate_and_onboard(event)
+    if mode == "explore":
+        return _handle_explore(event)
+    if mode == "onboard_explored":
+        return _handle_onboard_explored(event)
+    if mode == "daily_pipeline":
+        return _handle_daily_pipeline(event, context)
     if mode == "monitor":
         return _handle_monitor(event)
 
@@ -142,29 +150,226 @@ def _handle_onboard(event: dict) -> dict:
         }
 
 
-def _handle_monitor(event: dict) -> dict:
-    """Roll up per-source health and return the list of stale/failing sources."""
-    stale_hours = int(event.get("stale_hours", 72))
+def _handle_investigate_and_onboard(event: dict) -> dict:
+    """Run the investigation agent on a URL and onboard the spec on success."""
+    url = event.get("url")
+    slug = event.get("slug")
+    name = event.get("name")
+    if not (url and slug and name):
+        return {
+            "statusCode": 400,
+            "body": json.dumps({
+                "mode": "investigate_and_onboard",
+                "error": "url, slug, and name are all required",
+            }),
+        }
     try:
-        from webscraping.v2.pipeline.health import write_summary
-        summary = write_summary(stale_hours=stale_hours)
+        from webscraping.v2.agents.spec_onboarding import investigate_and_onboard
+        result = asyncio.get_event_loop().run_until_complete(
+            investigate_and_onboard(
+                url=url,
+                slug=slug,
+                name=name,
+                max_turns=int(event.get("max_turns", 35)),
+            )
+        )
         return {
             "statusCode": 200,
             "body": json.dumps({
-                "mode": "monitor",
-                "stale_hours": stale_hours,
-                "stale_count": summary.get("stale_count", 0),
-                "stale_sources": [
-                    s.get("source_id") for s in summary.get("stale", [])
-                ],
+                "mode": "investigate_and_onboard",
+                "site_id": result.site_id,
+                "accepted": result.accepted,
+                "spec_class": result.spec_class,
+                "confidence": result.confidence,
+                "events_scraped": result.events_scraped,
+                "pdfs_observed": result.pdfs_observed,
+                "reason": result.reason,
             }),
         }
     except Exception as e:
-        logger.error(f"Monitor failed: {traceback.format_exc()}")
+        logger.error(f"investigate_and_onboard failed: {traceback.format_exc()}")
         return {
             "statusCode": 500,
-            "body": json.dumps({"mode": "monitor", "error": str(e)}),
+            "body": json.dumps({
+                "mode": "investigate_and_onboard",
+                "error": str(e),
+            }),
         }
+
+
+def _handle_explore(event: dict) -> dict:
+    """Run the exploration agent for one category."""
+    category = event.get("category")
+    if not category:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({
+                "mode": "explore",
+                "error": "category is required",
+            }),
+        }
+    try:
+        from webscraping.v2.agents.exploration import run_exploration
+        candidates = asyncio.get_event_loop().run_until_complete(
+            run_exploration(
+                category,
+                max_turns=int(event.get("max_turns", 40)),
+            )
+        )
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "mode": "explore",
+                "category": category,
+                "new_candidates": len(candidates),
+            }),
+        }
+    except Exception as e:
+        logger.error(f"Explore failed: {traceback.format_exc()}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"mode": "explore", "error": str(e)}),
+        }
+
+
+def _handle_onboard_explored(event: dict) -> dict:
+    """Drain exploration candidates through smart-routed onboarding."""
+    category = event.get("category")  # None = all categories
+    max_candidates = int(event.get("max_candidates", 10))
+    try:
+        from webscraping.v2.agents.spec_onboarding import onboard_explored
+        results = asyncio.get_event_loop().run_until_complete(
+            onboard_explored(
+                category=category,
+                max_candidates=max_candidates,
+                max_turns=int(event.get("max_turns", 35)),
+            )
+        )
+        accepted = sum(1 for r in results if r.accepted)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "mode": "onboard_explored",
+                "category": category,
+                "probed": len(results),
+                "accepted": accepted,
+                "rejected": len(results) - accepted,
+            }),
+        }
+    except Exception as e:
+        logger.error(f"onboard_explored failed: {traceback.format_exc()}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"mode": "onboard_explored", "error": str(e)}),
+        }
+
+
+# Categories rotate so each is freshly explored once every 9 days. The
+# daily pipeline picks `EXPLORATION_CATEGORIES[day_of_year % len(...)]`.
+EXPLORATION_CATEGORIES = [
+    "ca_counties",
+    "ca_cities",
+    "uc_system",
+    "csu_system",
+    "community_colleges",
+    "judicial",
+    "state_agencies",
+    "transit_utility",
+    "emerging_platforms",
+]
+
+
+def _handle_daily_pipeline(event: dict, context) -> dict:
+    """One Lambda invocation = one day's exploration + onboarding pass.
+
+    Sequence:
+      1. Explore one rotating category (cheap; ~$1).
+      2. Drain `max_candidates` of the candidate backlog via smart
+         routing (cheap for known platforms, expensive for unknowns).
+
+    The budget meter (webscraping/v2/budget.py) hard-caps total spend
+    today. Either step can abort early on BudgetExceeded — pipeline
+    returns partial results, surfaced via mode=monitor.
+    """
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+    cat = event.get("category") or EXPLORATION_CATEGORIES[
+        now.timetuple().tm_yday % len(EXPLORATION_CATEGORIES)
+    ]
+    max_candidates = int(event.get("max_candidates", 10))
+
+    summary = {"mode": "daily_pipeline", "date": now.date().isoformat(),
+               "category": cat}
+
+    try:
+        from webscraping.v2.agents.exploration import run_exploration
+        candidates = asyncio.get_event_loop().run_until_complete(
+            run_exploration(cat, max_turns=int(event.get("max_turns", 40)))
+        )
+        summary["new_candidates"] = len(candidates)
+    except Exception as e:
+        logger.error(f"daily_pipeline explore failed: {traceback.format_exc()}")
+        summary["explore_error"] = str(e)
+
+    try:
+        from webscraping.v2.agents.spec_onboarding import onboard_explored
+        results = asyncio.get_event_loop().run_until_complete(
+            onboard_explored(
+                category=None,  # drain across all categories
+                max_candidates=max_candidates,
+                max_turns=int(event.get("onboard_max_turns", 35)),
+            )
+        )
+        accepted = sum(1 for r in results if r.accepted)
+        summary["onboarded_probed"] = len(results)
+        summary["onboarded_accepted"] = accepted
+    except Exception as e:
+        logger.error(f"daily_pipeline onboard failed: {traceback.format_exc()}")
+        summary["onboard_error"] = str(e)
+
+    # Surface budget state so the monitor can tell at a glance how much
+    # of today's cap got consumed.
+    try:
+        from webscraping.v2 import budget as _budget
+        summary["budget_spent_usd"] = _budget.spent_today_usd()
+        summary["budget_remaining_usd"] = _budget.remaining_today_usd()
+    except Exception:
+        pass
+
+    return {"statusCode": 200, "body": json.dumps(summary)}
+
+
+def _handle_monitor(event: dict) -> dict:
+    """Roll up per-source health and onboarding-pipeline state."""
+    stale_hours = int(event.get("stale_hours", 72))
+    out: dict = {"mode": "monitor", "stale_hours": stale_hours}
+    try:
+        from webscraping.v2.pipeline.health import write_summary
+        summary = write_summary(stale_hours=stale_hours)
+        out["stale_count"] = summary.get("stale_count", 0)
+        out["stale_sources"] = [
+            s.get("source_id") for s in summary.get("stale", [])
+        ]
+    except Exception as e:
+        logger.error(f"Health summary failed: {traceback.format_exc()}")
+        out["health_error"] = str(e)
+
+    # Pipeline observability: today's issues + budget state.
+    try:
+        from webscraping.v2 import budget as _budget
+        out["budget_spent_usd"] = _budget.spent_today_usd()
+        out["budget_remaining_usd"] = _budget.remaining_today_usd()
+        out["budget_cap_usd"] = _budget.daily_cap_usd()
+    except Exception as e:
+        out["budget_error"] = str(e)
+    try:
+        from webscraping.v2 import issues as _issues
+        today_issues = _issues.load_today_issues()
+        out["issues"] = _issues.summarise_issues(today_issues)
+    except Exception as e:
+        out["issues_error"] = str(e)
+
+    return {"statusCode": 200, "body": json.dumps(out)}
 
 
 def _cleanup_tmp():
@@ -462,12 +667,23 @@ def _handle_run_all(event, context):
     # Group 5: Agentic (disabled by default) — multi-site batch
     planetbids_sites = [s for s in all_sites if s.startswith("planetbids_")]
     opengov_sites = [s for s in all_sites if s.startswith("opengov_")]
+
+    # Spec-driven sites identified by scraper_type rather than site_id
+    # prefix — they're platform-agnostic and onboarded via S3 spec JSON.
+    from webscraping.v2.models import ScraperType
+    from webscraping.v2.orchestrator.runner import SITE_REGISTRY as _REG
+    spec_driven_sites = [
+        sid for sid in all_sites
+        if _REG[sid].scraper_type == ScraperType.SPEC_DRIVEN
+    ]
+
     agentic_sites = [
         sid for sid in all_sites
         if sid != "caleprocure"
         and not sid.startswith("bidsync_")
         and not sid.startswith("planetbids_")
         and not sid.startswith("opengov_")
+        and sid not in spec_driven_sites
     ]
 
     dispatched = []
@@ -549,6 +765,34 @@ def _handle_run_all(event, context):
             f"(stagger {OPENGOV_STAGGER_SECONDS}s, batch size {OPENGOV_BATCH_SIZE} events)"
         )
 
+    # Dispatch each spec-driven portal as its own chained batch — same
+    # pattern as OpenGov. These are onboarded by the investigation agent
+    # via S3 (scrapes/v2/spec_sites/*.json) with no code deploy.
+    SPEC_DRIVEN_BATCH_SIZE = 8
+    SPEC_DRIVEN_STAGGER_SECONDS = 60
+    spec_offset = (
+        opengov_offset
+        + len(opengov_sites) * OPENGOV_STAGGER_SECONDS
+        + SPEC_DRIVEN_STAGGER_SECONDS
+    )
+    for i, site_id in enumerate(spec_driven_sites):
+        try:
+            _invoke_async(context, {
+                "site_id": site_id,
+                "batch_offset": 0,
+                "batch_size": SPEC_DRIVEN_BATCH_SIZE,
+                "skip_enrich": skip_enrich,
+                "delay_before_start": spec_offset + i * SPEC_DRIVEN_STAGGER_SECONDS,
+            })
+            dispatched.append(site_id)
+        except Exception as e:
+            logger.error(f"Failed to dispatch {site_id}: {e}")
+    if spec_driven_sites:
+        logger.info(
+            f"Dispatched {len(spec_driven_sites)} spec-driven portals "
+            f"(stagger {SPEC_DRIVEN_STAGGER_SECONDS}s, batch size {SPEC_DRIVEN_BATCH_SIZE} events)"
+        )
+
     # Dispatch agentic sites as a chain-first multi-site batch (no pagination).
     if agentic_sites:
         first_batch = agentic_sites[:1]
@@ -572,6 +816,7 @@ def _handle_run_all(event, context):
             "total_sites": len(all_sites),
             "planetbids_portals": len(planetbids_sites),
             "opengov_portals": len(opengov_sites),
+            "spec_driven_portals": len(spec_driven_sites),
             "agentic_portals": len(agentic_sites),
             "note": "Sites dispatched as async invocations. Check CloudWatch logs for progress.",
         }),
