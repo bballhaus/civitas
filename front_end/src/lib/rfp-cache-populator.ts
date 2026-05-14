@@ -179,6 +179,30 @@ export interface PopulatorResult {
   biddersInserted: number;
 }
 
+// Mirror an in-memory manifest list to rfp_cache + rfp_bidders. Pulled out
+// from `populateRfpCacheFromV2Manifests` so the live read path on
+// /api/events/ can write through without re-fetching the same S3 objects
+// twice.
+export async function mirrorManifestsToCache(
+  manifests: V2Manifest[],
+): Promise<PopulatorResult> {
+  let manifestsRead = 0;
+  let eventsTotal = 0;
+  let rowsUpserted = 0;
+  let biddersInserted = 0;
+
+  for (const manifest of manifests) {
+    if (!Array.isArray(manifest.events)) continue;
+    manifestsRead += 1;
+    eventsTotal += manifest.events.length;
+    const result = await mirrorOneManifest(manifest);
+    rowsUpserted += result.rowsUpserted;
+    biddersInserted += result.biddersInserted;
+  }
+
+  return { manifestsRead, eventsTotal, rowsUpserted, biddersInserted };
+}
+
 export async function populateRfpCacheFromV2Manifests(): Promise<PopulatorResult> {
   const s3 = getS3Client();
   const bucket = getBucket();
@@ -196,101 +220,119 @@ export async function populateRfpCacheFromV2Manifests(): Promise<PopulatorResult
     manifestsRead += 1;
     eventsTotal += manifest.events.length;
 
-    // Upsert in batches of 50 so very large manifests don't blow up the
-    // INSERT statement size limits.
-    const BATCH = 50;
-    for (let i = 0; i < manifest.events.length; i += BATCH) {
-      const slice = manifest.events.slice(i, i + BATCH);
-      const rows = slice.map(eventToCacheRow);
-
-      await db
-        .insert(rfpCache)
-        .values(rows)
-        .onConflictDoUpdate({
-          target: rfpCache.id,
-          set: {
-            sourceId: sql`excluded.source_id`,
-            title: sql`excluded.title`,
-            description: sql`excluded.description`,
-            agency: sql`excluded.agency`,
-            location: sql`excluded.location`,
-            deadline: sql`excluded.deadline`,
-            estimatedValueUsd: sql`excluded.estimated_value_usd`,
-            capabilities: sql`excluded.capabilities`,
-            naicsCodes: sql`excluded.naics_codes`,
-            certificationsRequired: sql`excluded.certifications_required`,
-            licensesRequired: sql`excluded.licenses_required`,
-            setAsideLockout: sql`excluded.set_aside_lockout`,
-            deliverables: sql`excluded.deliverables`,
-            requiresPastGovExp: sql`excluded.requires_past_gov_exp`,
-            incumbentVendor: sql`excluded.incumbent_vendor`,
-            prospectiveBidderCount: sql`excluded.prospective_bidder_count`,
-            bidCount: sql`excluded.bid_count`,
-            bidAmountsCents: sql`excluded.bid_amounts_cents`,
-            winningBidCents: sql`excluded.winning_bid_cents`,
-            raw: sql`excluded.raw`,
-            refreshedAt: sql`excluded.refreshed_at`,
-            // Note: embedding is NOT replaced — keep prior value until
-            // refreshRfpEmbeddings() recomputes it.
-          },
-        });
-      rowsUpserted += rows.length;
-
-      // Fan out bidders for the cross-event signal table.
-      const bidderRows = [];
-      for (const e of slice) {
-        for (const b of e.prospective_bidders ?? []) {
-          bidderRows.push({
-            rfpId: e.id,
-            vendorFingerprint: null,
-            vendorName: b.name,
-            role: "prospective" as const,
-            bidAmountCents: null,
-            responsive: null,
-            classification: b.classification ?? null,
-          });
-        }
-        for (const b of e.bid_results ?? []) {
-          bidderRows.push({
-            rfpId: e.id,
-            vendorFingerprint: null,
-            vendorName: b.name,
-            role: "bidder" as const,
-            bidAmountCents: dollarsToCents(b.bid_amount),
-            responsive: b.responsive ?? null,
-            classification: null,
-          });
-        }
-        if (e.award?.winner) {
-          bidderRows.push({
-            rfpId: e.id,
-            vendorFingerprint: null,
-            vendorName: e.award.winner,
-            role: "winner" as const,
-            bidAmountCents: dollarsToCents(e.award.winning_bid),
-            responsive: true,
-            classification: null,
-          });
-        }
-      }
-      if (bidderRows.length > 0) {
-        // Bidders are append-only — we don't have a stable unique key per
-        // bidder beyond (rfp_id, vendor_name, role) and the matcher tolerates
-        // duplicates. To avoid runaway growth on repeated runs, we delete
-        // the previous fan-out for this batch's RFPs first.
-        await db.delete(rfpBidders).where(
-          sql`${rfpBidders.rfpId} IN (${sql.join(
-            slice.map((e) => sql`${e.id}`),
-            sql`, `,
-          )})`,
-        );
-        await db.insert(rfpBidders).values(bidderRows);
-        biddersInserted += bidderRows.length;
-      }
-    }
+    const result = await mirrorOneManifest(manifest);
+    rowsUpserted += result.rowsUpserted;
+    biddersInserted += result.biddersInserted;
   }
 
   return { manifestsRead, eventsTotal, rowsUpserted, biddersInserted };
+}
+
+// One manifest worth of upserts. Extracted so both the CLI populator and
+// the live `/api/events/` write-through can share the same SQL — and so
+// the per-manifest loop above stays readable.
+async function mirrorOneManifest(
+  manifest: V2Manifest,
+): Promise<{ rowsUpserted: number; biddersInserted: number }> {
+  let rowsUpserted = 0;
+  let biddersInserted = 0;
+
+  const BATCH = 50;
+  for (let i = 0; i < manifest.events.length; i += BATCH) {
+    const slice = manifest.events.slice(i, i + BATCH);
+    const rows = slice.map(eventToCacheRow);
+
+    await db
+      .insert(rfpCache)
+      .values(rows)
+      .onConflictDoUpdate({
+        target: rfpCache.id,
+        set: {
+          sourceId: sql`excluded.source_id`,
+          title: sql`excluded.title`,
+          description: sql`excluded.description`,
+          agency: sql`excluded.agency`,
+          location: sql`excluded.location`,
+          deadline: sql`excluded.deadline`,
+          estimatedValueUsd: sql`excluded.estimated_value_usd`,
+          capabilities: sql`excluded.capabilities`,
+          naicsCodes: sql`excluded.naics_codes`,
+          certificationsRequired: sql`excluded.certifications_required`,
+          licensesRequired: sql`excluded.licenses_required`,
+          setAsideLockout: sql`excluded.set_aside_lockout`,
+          deliverables: sql`excluded.deliverables`,
+          requiresPastGovExp: sql`excluded.requires_past_gov_exp`,
+          incumbentVendor: sql`excluded.incumbent_vendor`,
+          prospectiveBidderCount: sql`excluded.prospective_bidder_count`,
+          bidCount: sql`excluded.bid_count`,
+          bidAmountsCents: sql`excluded.bid_amounts_cents`,
+          winningBidCents: sql`excluded.winning_bid_cents`,
+          raw: sql`excluded.raw`,
+          refreshedAt: sql`excluded.refreshed_at`,
+          // Embedding is NOT replaced — keep prior value until
+          // refreshRfpEmbeddings() recomputes it. Stops the cache write
+          // from invalidating expensive embedding work.
+        },
+      });
+    rowsUpserted += rows.length;
+
+    const bidderRows: {
+      rfpId: string;
+      vendorFingerprint: string | null;
+      vendorName: string;
+      role: "prospective" | "bidder" | "winner";
+      bidAmountCents: number | null;
+      responsive: boolean | null;
+      classification: string | null;
+    }[] = [];
+    for (const e of slice) {
+      for (const b of e.prospective_bidders ?? []) {
+        bidderRows.push({
+          rfpId: e.id,
+          vendorFingerprint: null,
+          vendorName: b.name,
+          role: "prospective",
+          bidAmountCents: null,
+          responsive: null,
+          classification: b.classification ?? null,
+        });
+      }
+      for (const b of e.bid_results ?? []) {
+        bidderRows.push({
+          rfpId: e.id,
+          vendorFingerprint: null,
+          vendorName: b.name,
+          role: "bidder",
+          bidAmountCents: dollarsToCents(b.bid_amount),
+          responsive: b.responsive ?? null,
+          classification: null,
+        });
+      }
+      if (e.award?.winner) {
+        bidderRows.push({
+          rfpId: e.id,
+          vendorFingerprint: null,
+          vendorName: e.award.winner,
+          role: "winner",
+          bidAmountCents: dollarsToCents(e.award.winning_bid),
+          responsive: true,
+          classification: null,
+        });
+      }
+    }
+    if (bidderRows.length > 0) {
+      await db.delete(rfpBidders).where(
+        sql`${rfpBidders.rfpId} IN (${sql.join(
+          slice.map((e) => sql`${e.id}`),
+          sql`, `,
+        )})`,
+      );
+      await db.insert(rfpBidders).values(bidderRows);
+      biddersInserted += bidderRows.length;
+    }
+  }
+
+  return { rowsUpserted, biddersInserted };
 }
 
 // CLI entry — `npx tsx src/lib/rfp-cache-populator.ts`
