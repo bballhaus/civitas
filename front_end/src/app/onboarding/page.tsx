@@ -10,8 +10,15 @@ import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
 import { TOTAL_STEPS, STEP_META } from "@/lib/onboarding-data";
+import { trackEvent } from "@/lib/event-tracker";
 import { OnboardingStep } from "./Steps";
 import type { OnboardingSnapshot } from "./types";
+
+// Helper: stable, lowercase step label suitable for grouping in KPI queries.
+// Falls back to "step_N" if META is missing (shouldn't happen but defensive).
+function stepLabel(n: number): string {
+  return STEP_META[n - 1]?.short ?? `step_${n}`;
+}
 
 interface OnboardingStateResponse {
   nextStep: number;
@@ -71,16 +78,31 @@ export default function OnboardingPage() {
     setCompleteness(data.completenessScore);
   };
 
+  // Fire a step-view event whenever the active step changes (incl. the
+  // resume on mount, after the state fetch resolves the user's nextStep).
+  // Guarded on `loading` so we don't double-fire during the initial fetch.
+  useEffect(() => {
+    if (loading) return;
+    trackEvent("onboarding_step_viewed", { step, stepName: stepLabel(step) });
+  }, [step, loading]);
+
   const goNext = async () => {
+    trackEvent("onboarding_step_advanced", { step, stepName: stepLabel(step) });
     await refreshSnapshot();
     if (step < TOTAL_STEPS) setStep(step + 1);
   };
   const goBack = () => {
-    if (step > 1) setStep(step - 1);
+    if (step > 1) {
+      trackEvent("onboarding_step_back", { step, stepName: stepLabel(step) });
+      setStep(step - 1);
+    }
   };
   const skip = () => {
     if (step === 1) return;
-    if (step < TOTAL_STEPS) setStep(step + 1);
+    if (step < TOTAL_STEPS) {
+      trackEvent("onboarding_step_skipped", { step, stepName: stepLabel(step) });
+      setStep(step + 1);
+    }
   };
 
   const finish = async () => {

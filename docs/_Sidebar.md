@@ -9,6 +9,9 @@
 ## Security
 - [Security & Optimization](Security)
 
+## Analytics
+- [KPIs](KPIs)
+
 ## Operations
 - [TODO](TODO)
 

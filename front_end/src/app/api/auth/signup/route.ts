@@ -7,19 +7,31 @@
 //
 // This closes the gap from Security.md where signup created a real user
 // before email ownership was proven.
+//
+// Feature flag: set env var SKIP_EMAIL_VERIFICATION=true to bypass the
+// pending_users + email flow entirely and create the account immediately.
+// Intended for use while SES is in sandbox and individual recipient
+// verification is too slow for testing — flip back to default once SES
+// production access lands.
 
 import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
-import { hashPassword, validatePassword } from "@/lib/auth";
-import { getUserByUsername, getUserByEmail } from "@/db/queries/users";
+import { hashPassword, validatePassword, signJwt, setAuthCookie } from "@/lib/auth";
+import { createUser, getUserByUsername, getUserByEmail } from "@/db/queries/users";
+import { setEmailVerified } from "@/db/queries/users";
 import { upsertPendingUser } from "@/db/queries/pending-users";
 import { sendVerificationEmail } from "@/lib/email";
 import { logSecurityEvent } from "@/lib/security-log";
+import { recordEvent } from "@/lib/event-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 const SIGNUP_MAX_REQUESTS = 5;
 const SIGNUP_WINDOW_MS = 15 * 60 * 1000;
 const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+function emailVerificationBypassed(): boolean {
+  return process.env.SKIP_EMAIL_VERIFICATION === "true";
+}
 
 export async function POST(request: Request) {
   const ip = getClientIp(request);
@@ -74,7 +86,50 @@ export async function POST(request: Request) {
       );
     }
 
+    // KPI funnel stage 1: form passed validation + uniqueness checks. Keyed
+    // on the prospective username (matches the username stored in
+    // pending_users and later promoted into users) so the whole funnel
+    // joins on the same id.
+    void recordEvent(username, "signup_form_submitted");
+
     const passwordHash = await hashPassword(password);
+
+    // ---- Bypass branch ----
+    // Create the user immediately, mark verified, set the auth cookie, and
+    // return the same shape the v2 main flow returns so the client can
+    // redirect into /onboarding. KPI events still fire for the funnel; we
+    // mark `verificationBypassed: true` on `signup` so downstream queries
+    // can distinguish bypassed accounts from email-verified ones.
+    if (emailVerificationBypassed()) {
+      const user = await createUser({ username, email, passwordHash });
+      await setEmailVerified(user.id);
+      const token = await signJwt(user.id, user.username);
+
+      logSecurityEvent({
+        type: "signup",
+        username,
+        ip: request.headers.get("x-forwarded-for") || undefined,
+        details: "email_verification_bypassed",
+      });
+      void recordEvent(user.username, "signup", {
+        verificationBypassed: true,
+        emailVerified: true,
+      });
+
+      const response = NextResponse.json(
+        {
+          username: user.username,
+          email: user.email,
+          email_verified: true,
+          bypassed: true,
+        },
+        { status: 201, headers: { "Cache-Control": "no-store" } },
+      );
+      setAuthCookie(response, token);
+      return response;
+    }
+
+    // ---- Default branch (email-verify-before-create) ----
     const verificationToken = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + VERIFICATION_TTL_MS);
 
@@ -101,6 +156,11 @@ export async function POST(request: Request) {
       username,
       ip: request.headers.get("x-forwarded-for") || undefined,
     });
+    // KPI funnel stage 2: SES called (success-or-fallback) and pending row
+    // exists. `emailSent=false` means CIVITAS_FROM_EMAIL wasn't set so the
+    // helper logged to console — still record the event so we can see the
+    // gap between sends and SES-actual-delivery downstream.
+    void recordEvent(username, "signup_verification_sent", { emailSent });
 
     return NextResponse.json(
       {

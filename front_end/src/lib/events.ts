@@ -13,6 +13,12 @@
  */
 
 export const SERVER_EVENT_TYPES = [
+  // Signup funnel stages. `signup` (below) is the account-created milestone;
+  // the three before it capture intent, email dispatch, and email return so
+  // we can measure drop-off and time-to-verify per attempt.
+  "signup_form_submitted",
+  "signup_verification_sent",
+  "signup_verification_clicked",
   "signup",
   "login",
   "login_failure",
@@ -40,6 +46,16 @@ export const SERVER_EVENT_TYPES = [
 ] as const;
 
 export const CLIENT_EVENT_TYPES = [
+  // Per-step onboarding telemetry. Each event payload carries:
+  //   step:     number  // 1..TOTAL_STEPS
+  //   stepName: string  // STEP_META.short ("Identity", "Specialties", ...)
+  // Per-stage breakdowns come from filtering the event log by
+  // payload.step (via the byEventType GSI); the user-level counters below
+  // are just totals across all stages.
+  "onboarding_step_viewed",
+  "onboarding_step_advanced",
+  "onboarding_step_skipped",
+  "onboarding_step_back",
   "rfp_viewed",
   // Saved is currently a client-only signal because the Saved-RFPs persistence
   // layer is being migrated to Postgres (see project memory:
@@ -114,6 +130,13 @@ export interface TrackedEvent {
  * just not counted.
  */
 export const EVENT_COUNTER: Partial<Record<EventType, string>> = {
+  signup_form_submitted: "counter_signup_form_submits",
+  signup_verification_sent: "counter_signup_verification_sends",
+  signup_verification_clicked: "counter_signup_verification_clicks",
+  onboarding_step_viewed: "counter_onboarding_step_views",
+  onboarding_step_advanced: "counter_onboarding_step_advances",
+  onboarding_step_skipped: "counter_onboarding_step_skips",
+  onboarding_step_back: "counter_onboarding_step_backs",
   login: "counter_logins",
   login_failure: "counter_login_failures",
   rfp_viewed: "counter_rfps_viewed",
@@ -143,7 +166,14 @@ export const EVENT_COUNTER: Partial<Record<EventType, string>> = {
  * is recorded — subsequent firings don't overwrite.
  */
 export const EVENT_FUNNEL: Partial<Record<EventType, string>> = {
+  signup_form_submitted: "funnel_signup_form_submitted_at",
+  signup_verification_sent: "funnel_signup_verification_sent_at",
+  signup_verification_clicked: "funnel_signup_verification_clicked_at",
   signup: "funnel_signup_at",
+  // First step_viewed event marks onboarding entry. The completion timestamp
+  // is captured by `onboarding_completed` (already fires from /api/onboarding
+  // state POST). Time-per-step is derived from the event log, not stored here.
+  onboarding_step_viewed: "funnel_onboarding_started_at",
   login: "funnel_first_login_at",
   rfp_viewed: "funnel_first_rfp_view_at",
   rfp_saved: "funnel_first_save_at",

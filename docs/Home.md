@@ -15,6 +15,9 @@
 ### Security
 - **[Security & Optimization](Security)** — Full security audit results, all implemented controls (nonce CSP, HttpOnly cookies, rate limiting, SSRF protection, LLM safety, SES email), and remaining work
 
+### Analytics
+- **[KPIs](KPIs)** — Event taxonomy, DynamoDB schema, signup + onboarding funnel definitions, and the `npm run kpi:funnel` CLI report
+
 ### Operations
 - **[TODO](TODO)** — Remaining work for market readiness
 
