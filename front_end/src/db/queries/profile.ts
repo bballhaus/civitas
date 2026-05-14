@@ -266,6 +266,9 @@ export interface AddWorkAreaInput {
   kind: "city" | "county" | "metro" | "state";
   name: string;
   isHard?: boolean;
+  // Radius in miles. Only meaningful when isHard=true — the matcher uses
+  // it as "won't travel more than N miles from <name>". null = unbounded.
+  radiusMiles?: number | null;
 }
 
 export async function addWorkArea(input: AddWorkAreaInput): Promise<WorkArea> {
@@ -276,10 +279,11 @@ export async function addWorkArea(input: AddWorkAreaInput): Promise<WorkArea> {
       kind: input.kind,
       name: input.name,
       isHard: input.isHard ?? false,
+      radiusMiles: input.radiusMiles ?? null,
     })
     .onConflictDoUpdate({
       target: [workAreas.userId, workAreas.kind, workAreas.name],
-      set: { isHard: input.isHard ?? false },
+      set: { isHard: input.isHard ?? false, radiusMiles: input.radiusMiles ?? null },
     })
     .returning();
   return row;

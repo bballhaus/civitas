@@ -1588,5 +1588,183 @@ class TestHtmlSpecScraperHelpers:
             ))
 
 
+class TestExplorationPauseTurn:
+    """Make sure the agent loop continues when Anthropic returns
+    stop_reason=pause_turn from a web_search call."""
+
+    def test_loop_continues_on_pause_turn_then_completes(self):
+        """Simulate: turn 1 = web_search → pause_turn (no client tools);
+        turn 2 = report_candidate + mark_category_complete."""
+        import asyncio
+        import unittest.mock as mock
+        from webscraping.v2.agents import exploration
+
+        # Fake Anthropic responses
+        class FakeBlock:
+            def __init__(self, **kw):
+                for k, v in kw.items():
+                    setattr(self, k, v)
+            def model_dump(self, **_): return self.__dict__
+
+        class FakeUsage:
+            input_tokens = 100; output_tokens = 50
+            cache_creation_input_tokens = 0; cache_read_input_tokens = 0
+
+        # Turn 1: server tool only, stop_reason=pause_turn
+        r1 = mock.Mock()
+        r1.content = [
+            FakeBlock(type="server_tool_use", name="web_search",
+                      input={"query": "CA judicial procurement"}),
+            FakeBlock(type="web_search_tool_result", tool_use_id="srv_1",
+                      content=[]),
+        ]
+        r1.stop_reason = "pause_turn"
+        r1.usage = FakeUsage()
+
+        # Turn 2: one report_candidate + one mark_category_complete (terminal)
+        report_call = FakeBlock(
+            type="tool_use", id="tu_1", name="report_candidate",
+            input={"url": "https://courts.example.gov/bids",
+                   "agency_name": "Example Court",
+                   "platform_guess": "custom",
+                   "reasoning": "agency site"},
+        )
+        complete_call = FakeBlock(
+            type="tool_use", id="tu_2", name="mark_category_complete",
+            input={"note": "ok"},
+        )
+        r2 = mock.Mock()
+        r2.content = [report_call, complete_call]
+        r2.stop_reason = "tool_use"
+        r2.usage = FakeUsage()
+
+        fake_client = mock.Mock()
+        fake_client.messages.create.side_effect = [r1, r2]
+
+        with mock.patch.object(exploration, "anthropic") as anth_mock, \
+             mock.patch.object(exploration, "ANTHROPIC_API_KEY", "fake-key"), \
+             mock.patch.object(exploration, "_known_skip_set", return_value=set()), \
+             mock.patch.object(exploration, "_existing_urls_for_category",
+                               return_value=set()), \
+             mock.patch.object(exploration, "save_candidates",
+                               return_value="s3://fake"), \
+             mock.patch.object(exploration.budget, "ensure_budget"), \
+             mock.patch.object(exploration.budget, "record_response"), \
+             mock.patch.object(exploration.budget, "record_web_search"):
+            anth_mock.Anthropic.return_value = fake_client
+            candidates = asyncio.run(
+                exploration.run_exploration("judicial", max_turns=5)
+            )
+
+        # Loop ran twice (didn't bail on pause_turn), candidate captured.
+        # That's the load-bearing proof: before the fix the loop exited
+        # after call_count==1 with 0 candidates.
+        assert fake_client.messages.create.call_count == 2
+        assert len(candidates) == 1
+        assert candidates[0].agency_name == "Example Court"
+
+
+    def test_loop_exits_on_end_turn_with_no_tool_use(self):
+        """Sanity: non-pause_turn stops still exit cleanly (no infinite loop)."""
+        import asyncio
+        import unittest.mock as mock
+        from webscraping.v2.agents import exploration
+
+        class FakeUsage:
+            input_tokens = 50; output_tokens = 10
+            cache_creation_input_tokens = 0; cache_read_input_tokens = 0
+
+        # stop_reason=end_turn with only a text block — no tools at all.
+        # Loop should break, not continue.
+        text_only = mock.Mock()
+        text_only.content = [type("B", (), {"type": "text", "text": "done",
+                                              "model_dump": lambda self, **_: {}})()]
+        text_only.stop_reason = "end_turn"
+        text_only.usage = FakeUsage()
+
+        fake_client = mock.Mock()
+        fake_client.messages.create.return_value = text_only
+
+        with mock.patch.object(exploration, "anthropic") as anth_mock, \
+             mock.patch.object(exploration, "ANTHROPIC_API_KEY", "fake-key"), \
+             mock.patch.object(exploration, "_known_skip_set", return_value=set()), \
+             mock.patch.object(exploration, "_existing_urls_for_category",
+                               return_value=set()), \
+             mock.patch.object(exploration.budget, "ensure_budget"), \
+             mock.patch.object(exploration.budget, "record_response"), \
+             mock.patch.object(exploration.budget, "record_web_search"):
+            anth_mock.Anthropic.return_value = fake_client
+            candidates = asyncio.run(
+                exploration.run_exploration("judicial", max_turns=5)
+            )
+
+        # Should exit after 1 call, no infinite loop, no candidates.
+        assert fake_client.messages.create.call_count == 1
+        assert candidates == []
+
+
+class TestLambdaInvestigateAndOnboardRouting:
+    """The handler should smart-route by platform_guess and only invoke
+    the (expensive) investigation agent for unknown / custom URLs."""
+
+    def test_handler_classifies_opengov_when_platform_not_provided(self):
+        """Auto-classification fills `platform_guess` from the URL when
+        the caller omits it — confirms the cheap path is selected."""
+        import asyncio
+        import unittest.mock as mock
+        from webscraping.v2.deploy import lambda_handler
+
+        # Prior asyncio.run() calls in this file close the default loop.
+        # The Lambda handler uses asyncio.get_event_loop().run_until_complete()
+        # which then RuntimeErrors on Python 3.13+ without a current loop.
+        # Establish a fresh one for this test (Lambda's runtime maintains
+        # its own loop, so production isn't affected).
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+        captured = {}
+
+        async def fake_smart_route(**kwargs):
+            captured.update(kwargs)
+            from webscraping.v2.agents.spec_onboarding import SpecOnboardingResult
+            return SpecOnboardingResult(
+                site_id="opengov_pasadena",
+                accepted=True,
+                spec_class="opengov_api",
+                confidence="high",
+                events_scraped=5,
+                pdfs_observed=2,
+                reason="",
+            )
+
+        # Patch the import target so the inline `from ... import` in the
+        # handler resolves to our fake.
+        import webscraping.v2.agents.spec_onboarding as so_mod
+        with mock.patch.object(so_mod, "smart_route_and_onboard",
+                               side_effect=fake_smart_route):
+            event = {
+                "url": "https://procurement.opengov.com/portal/pasadena",
+                "name": "City of Pasadena",
+                # platform_guess intentionally omitted
+            }
+            resp = lambda_handler._handle_investigate_and_onboard(event)
+
+        import json as _json
+        body = _json.loads(resp["body"])
+        assert resp["statusCode"] == 200
+        assert body["platform_guess"] == "opengov"
+        assert body["accepted"] is True
+        assert body["spec_class"] == "opengov_api"
+        # The handler invoked the SMART router (not bare investigate_and_onboard)
+        assert captured["platform_guess"] == "opengov"
+        assert captured["agency_name"] == "City of Pasadena"
+
+    def test_handler_rejects_missing_url_or_name(self):
+        from webscraping.v2.deploy import lambda_handler
+        resp = lambda_handler._handle_investigate_and_onboard(
+            {"url": "https://x"}
+        )
+        assert resp["statusCode"] == 400
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

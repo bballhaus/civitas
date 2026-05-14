@@ -630,6 +630,26 @@ async def run_exploration(
             if getattr(b, "type", None) == "tool_use"
         ]
         if not tool_uses:
+            # `stop_reason=pause_turn` means the model used `web_search`
+            # (a server tool — Anthropic runs the search and embeds the
+            # `web_search_tool_result` in the same assistant message) and
+            # paused before deciding what to do with the results. The
+            # results are already in the message history; we just need to
+            # let the model continue. Send a continue prompt and loop.
+            #
+            # Without this branch the agent exits after its first turn
+            # the moment it does any web_search — observed in the wild
+            # on 2026-05-14 during the second judicial run.
+            if response.stop_reason == "pause_turn":
+                logger.info(
+                    "Exploration: web_search paused turn (stop_reason="
+                    "pause_turn); continuing"
+                )
+                messages.append({
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Continue."}],
+                })
+                continue
             logger.warning(
                 "Exploration: no client-tool calls (stop_reason=%s) — stopping",
                 response.stop_reason,
