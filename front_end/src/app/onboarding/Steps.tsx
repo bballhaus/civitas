@@ -223,7 +223,11 @@ function NaicsPicker({
     // substring fallback finds matches against RFP descriptions.
     onPick(entry.title);
     setQuery("");
-    setOpen(false);
+    // Intentionally keep the dropdown open so the user can rapid-add several
+    // codes without re-clicking the input. The empty query reverts the list
+    // to the default head of NAICS_ENTRIES. Reset the highlight so Enter
+    // doesn't pick whatever row was last hovered.
+    setHighlighted(0);
     inputRef.current?.focus();
   };
 
