@@ -1,6 +1,6 @@
 {
-  "id": "ddc97027-9a4f-46c4-9c8a-8bd9dc6b3f17",
-  "prevId": "d2b1586b-8931-43fb-9faa-e6a151aa26ae",
+  "id": "be4321f0-58e1-4694-bad2-aabf9a156ebf",
+  "prevId": "ddc97027-9a4f-46c4-9c8a-8bd9dc6b3f17",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1142,6 +1142,12 @@
         },
         "embedding_updated_at": {
           "name": "embedding_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_dashboard_viewed_at": {
+          "name": "last_dashboard_viewed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

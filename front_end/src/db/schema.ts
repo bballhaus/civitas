@@ -35,6 +35,23 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Holds signup attempts that have not yet clicked the verification link.
+// On verify, the row is promoted into `users` (in a transaction) and deleted.
+// On expiry, a cleanup job (or the next signup with the same email) removes it.
+export const pendingUsers = pgTable(
+  "pending_users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    username: text("username").notNull().unique(),
+    email: text("email").notNull().unique(),
+    passwordHash: text("password_hash").notNull(),
+    verificationToken: text("verification_token").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_pending_users_token").on(t.verificationToken)],
+);
+
 // ---------------------------------------------------------------------------
 // Profile (1:1 with users) — the asserted truth about a contractor
 // ---------------------------------------------------------------------------
@@ -63,6 +80,7 @@ export const profiles = pgTable(
     completenessScore: real("completeness_score").default(0),
     onboardedAt: timestamp("onboarded_at", { withTimezone: true }),
     embeddingUpdatedAt: timestamp("embedding_updated_at", { withTimezone: true }),
+    lastDashboardViewedAt: timestamp("last_dashboard_viewed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -446,6 +464,9 @@ export const vendors = pgTable("vendors", {
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+
+export type PendingUser = typeof pendingUsers.$inferSelect;
+export type NewPendingUser = typeof pendingUsers.$inferInsert;
 
 export type Profile = typeof profiles.$inferSelect;
 export type NewProfile = typeof profiles.$inferInsert;

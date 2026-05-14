@@ -1,18 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { setCachedUser, clearCachedUser } from "@/lib/api";
 import { clearCachedEvents } from "@/lib/events-cache";
 import { MeshBackground } from "@/components/MeshBackground";
 
+const VERIFY_ERROR_MESSAGES: Record<string, string> = {
+  missing_token: "That verification link was missing a token. Please sign up again.",
+  invalid_token: "That verification link is invalid or has already been used.",
+  expired: "That verification link has expired. Please sign up again to receive a new one.",
+  username_taken: "That username was claimed before you verified. Please sign up again.",
+  email_taken: "That email was claimed before you verified. Please sign up again.",
+};
+
 export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const verifyError = params.get("verify_error");
+    if (verifyError) {
+      setError(VERIFY_ERROR_MESSAGES[verifyError] || "Verification failed.");
+    } else if (params.get("verified") === "1") {
+      setNotice("Email verified. Please sign in.");
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,6 +163,12 @@ export default function LoginPage() {
                 placeholder="Enter your password"
               />
             </div>
+
+            {notice && !error && (
+              <div className="p-3 rounded-lg bg-green-50 text-green-700 text-sm">
+                {notice}
+              </div>
+            )}
 
             {error && (
               <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">

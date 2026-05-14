@@ -1,6 +1,6 @@
 {
-  "id": "ddc97027-9a4f-46c4-9c8a-8bd9dc6b3f17",
-  "prevId": "d2b1586b-8931-43fb-9faa-e6a151aa26ae",
+  "id": "0409bb67-c872-43ad-a98f-f8bbd79d8229",
+  "prevId": "be4321f0-58e1-4694-bad2-aabf9a156ebf",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1146,6 +1146,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "last_dashboard_viewed_at": {
+          "name": "last_dashboard_viewed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1852,6 +1858,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "radius_miles": {
+          "name": "radius_miles",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",

@@ -47,6 +47,7 @@ def _build_site_registry() -> dict[str, SiteConfig]:
     from webscraping.v2.scrapers.bidsync import get_bidsync_site_configs
     from webscraping.v2.scrapers.opengov import get_opengov_site_configs
     from webscraping.v2.scrapers.planetbids import get_planetbids_site_configs
+    from webscraping.v2.scrapers.spec_driven import get_spec_driven_site_configs
 
     registry: dict[str, SiteConfig] = {
         "caleprocure": SiteConfig(
@@ -68,6 +69,11 @@ def _build_site_registry() -> dict[str, SiteConfig]:
 
     # Add OpenGov agencies (Pasadena seed; more added by discovery agent)
     registry.update(get_opengov_site_configs())
+
+    # Add spec-driven sites — onboarded by the investigation agent and
+    # stored as JSON in s3://.../scrapes/v2/spec_sites/{site_id}.json.
+    # No code deploy needed to add a new platform here.
+    registry.update(get_spec_driven_site_configs())
 
     # Agentic sites (custom portals that aren't on PlanetBids/BidSync).
     # San Diego + Sacramento are now on PlanetBids; Oakland uses iSupplier (not scrapable).
@@ -114,6 +120,10 @@ def get_scraper(site_config: SiteConfig, include_awarded: bool = False) -> BaseS
     if site_config.site_id.startswith("opengov_"):
         from webscraping.v2.scrapers.opengov import OpenGovScraper
         return OpenGovScraper(site_config)
+
+    if site_config.scraper_type == ScraperType.SPEC_DRIVEN:
+        from webscraping.v2.scrapers.spec_driven import SpecDrivenScraper
+        return SpecDrivenScraper(site_config)
 
     if site_config.scraper_type in (ScraperType.STRUCTURED, ScraperType.API):
         from webscraping.v2.scrapers.planetbids import PlanetBidsScraper
@@ -387,6 +397,11 @@ async def run_site_batch(
     elif site_id.startswith("opengov_"):
         from webscraping.v2.scrapers.opengov import OpenGovScraper
         scraper = OpenGovScraper(
+            config, batch_offset=batch_offset, batch_size=batch_size
+        )
+    elif config.scraper_type == ScraperType.SPEC_DRIVEN:
+        from webscraping.v2.scrapers.spec_driven import SpecDrivenScraper
+        scraper = SpecDrivenScraper(
             config, batch_offset=batch_offset, batch_size=batch_size
         )
     else:

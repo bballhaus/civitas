@@ -1232,10 +1232,41 @@ class PlanetBidsScraper(BaseScraper):
 # Helper: generate SiteConfig entries
 # ---------------------------------------------------------------------------
 
+_PB_S3_REGISTRY_KEY = "scrapes/v2/registry/planetbids.json"
+
+
+def _load_planetbids_from_s3() -> dict[str, dict]:
+    """Load PlanetBids agencies onboarded dynamically (smart-router path).
+
+    Same pattern as OpenGov's S3 registry: the smart router writes a
+    `{site_id: {portal_id, name, url}}` dict here when an exploration
+    candidate verifies as PlanetBids. Reads are best-effort.
+    """
+    try:
+        import json as _json
+        from webscraping.v2.config import S3_BUCKET, get_s3_client
+        s3 = get_s3_client()
+        resp = s3.get_object(Bucket=S3_BUCKET, Key=_PB_S3_REGISTRY_KEY)
+        data = _json.loads(resp["Body"].read())
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
 def get_planetbids_site_configs() -> dict[str, SiteConfig]:
-    """Generate SiteConfig entries for all known PlanetBids agencies."""
+    """Generate SiteConfig entries for all known PlanetBids agencies.
+
+    In-code (`PLANETBIDS_AGENCIES`) wins over S3-onboarded entries on
+    site_id collisions, so manual overrides via deploy still hold.
+    """
+    merged: dict[str, dict] = {}
+    merged.update(_load_planetbids_from_s3())
+    merged.update(PLANETBIDS_AGENCIES)  # code wins
+
     configs = {}
-    for site_id, agency in PLANETBIDS_AGENCIES.items():
+    for site_id, agency in merged.items():
         configs[site_id] = SiteConfig(
             site_id=site_id,
             name=agency["name"],

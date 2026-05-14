@@ -33,6 +33,7 @@ function makeProfile(overrides: Partial<FullProfile> = {}): FullProfile {
     completenessScore: 80,
     onboardedAt: new Date(),
     embeddingUpdatedAt: null,
+    lastDashboardViewedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     specialties: [],
