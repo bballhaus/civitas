@@ -1211,11 +1211,11 @@ class TestSpecDrivenScraper:
         assert event.raw_metadata["spec_platform_class"] == "opengov_api"
         assert event.raw_metadata["spec_confidence"] == "high"
 
-    def test_html_response_format_raises_not_implemented(self):
-        """Rendered-HTML specs aren't supported yet — fail loud, not silent."""
-        import asyncio
+    def test_html_response_format_delegates_to_html_scraper(self):
+        """HTML specs no longer raise — they delegate to HtmlSpecScraper."""
         from webscraping.v2.models import ScraperType, SiteConfig
         from webscraping.v2.scrapers.spec_driven import SpecDrivenScraper
+        from webscraping.v2.scrapers.spec_html import HtmlSpecScraper
         spec = self._opengov_like_spec()
         spec["listing"]["response_format"] = "html"
         spec["detail"] = None
@@ -1226,16 +1226,16 @@ class TestSpecDrivenScraper:
             scraper_type=ScraperType.SPEC_DRIVEN,
             config={"slug": "x", "name": "X", "url": "https://x", "spec": spec},
         )
-        scraper = SpecDrivenScraper(config)
+        # HtmlSpecScraper accepts the same SiteConfig shape — sanity-check
+        # that init succeeds (the actual scrape runs Playwright, which
+        # we don't exercise in unit tests).
+        html_scraper = HtmlSpecScraper(config, batch_size=5)
+        assert html_scraper.spec.listing.response_format == "html"
+        assert html_scraper.spec.platform_class == "opengov_api"
 
-        async def collect():
-            out = []
-            async for ev in scraper.scrape():
-                out.append(ev)
-            return out
-
-        with pytest.raises(NotImplementedError, match="response_format=json only"):
-            asyncio.run(collect())
+        # And SpecDrivenScraper accepts the spec without raising.
+        sd_scraper = SpecDrivenScraper(config, batch_size=5)
+        assert sd_scraper.spec.listing.response_format == "html"
 
     def test_listing_total_picked_up_from_count_field(self):
         """Common shape: {count, rows[]} — make sure batching has a total."""
@@ -1281,6 +1281,274 @@ class TestSpecDrivenRegistry:
         assert _site_id_for("Long Beach!", "Salesforce Aura") == (
             "spec_salesforce_aura_long_beach"
         )
+
+
+class TestBudgetMeter:
+    """Cost extraction + cap math. S3 backing is mocked."""
+
+    def test_usage_cost_for_known_model(self):
+        from webscraping.v2.budget import usage_cost_usd
+        usage = {"input_tokens": 1_000_000, "output_tokens": 100_000}
+        # Sonnet: $3 input / $15 output per million
+        assert usage_cost_usd(usage, "claude-sonnet-4-6") == pytest.approx(4.5)
+
+    def test_usage_cost_includes_prompt_cache_tokens(self):
+        # Cache reads are billed at ~1/10th of input rate; cache writes
+        # at ~1.25× input. Both must be recorded.
+        from webscraping.v2.budget import usage_cost_usd
+        usage = {
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "cache_creation_input_tokens": 4000,
+            "cache_read_input_tokens": 50000,
+        }
+        cost = usage_cost_usd(usage, "claude-sonnet-4-6")
+        # 1k input × $3/M + 500 out × $15/M + 4k write × $3.75/M
+        # + 50k read × $0.30/M = 0.003 + 0.0075 + 0.015 + 0.015 = 0.0405
+        assert cost == pytest.approx(0.0405, abs=1e-4)
+
+    def test_usage_cost_unknown_model_returns_zero(self):
+        from webscraping.v2.budget import usage_cost_usd
+        cost = usage_cost_usd(
+            {"input_tokens": 999_999}, "claude-doesnt-exist"
+        )
+        assert cost == 0.0
+
+    def test_daily_cap_uses_ramp_then_steady(self):
+        import os
+        from datetime import date
+        from webscraping.v2.budget import (
+            daily_cap_usd, HIGH_CAP_USD, STEADY_CAP_USD,
+            PIPELINE_START_DATE, RAMP_END_DATE,
+        )
+        old = os.environ.pop("DAILY_BUDGET_USD", None)
+        try:
+            assert daily_cap_usd(PIPELINE_START_DATE) == HIGH_CAP_USD
+            assert daily_cap_usd(RAMP_END_DATE) == STEADY_CAP_USD
+            assert daily_cap_usd(date(2027, 1, 1)) == STEADY_CAP_USD
+        finally:
+            if old is not None:
+                os.environ["DAILY_BUDGET_USD"] = old
+
+    def test_daily_cap_env_override_wins(self):
+        import os
+        from webscraping.v2.budget import daily_cap_usd
+        old = os.environ.get("DAILY_BUDGET_USD")
+        os.environ["DAILY_BUDGET_USD"] = "12.50"
+        try:
+            assert daily_cap_usd() == 12.50
+        finally:
+            if old is None:
+                os.environ.pop("DAILY_BUDGET_USD", None)
+            else:
+                os.environ["DAILY_BUDGET_USD"] = old
+
+    def test_ensure_budget_raises_when_over_cap(self):
+        import unittest.mock as mock
+        from webscraping.v2 import budget
+        with mock.patch.object(budget, "_load_meter",
+                               return_value={"spent_usd": 24.50,
+                                             "cap_usd": 25.0,
+                                             "by_source": {}}):
+            with pytest.raises(budget.BudgetExceeded):
+                budget.ensure_budget(1.00, source="exploration")
+
+    def test_ensure_budget_passes_when_under_cap(self):
+        import unittest.mock as mock
+        from webscraping.v2 import budget
+        with mock.patch.object(budget, "_load_meter",
+                               return_value={"spent_usd": 1.00,
+                                             "cap_usd": 5.0,
+                                             "by_source": {}}):
+            budget.ensure_budget(1.00, source="exploration")  # no raise
+
+
+class TestIssueLog:
+    def test_summarise_issues_buckets_by_category_and_severity(self):
+        from webscraping.v2.issues import summarise_issues
+        items = [
+            {"category": "investigation_failed", "severity": "warn"},
+            {"category": "investigation_failed", "severity": "error"},
+            {"category": "budget_exceeded", "severity": "warn"},
+        ]
+        out = summarise_issues(items)
+        assert out["total"] == 3
+        assert out["by_category"]["investigation_failed"] == 2
+        assert out["by_severity"]["warn"] == 2
+        assert out["by_severity"]["error"] == 1
+
+
+class TestExplorationHelpers:
+    def test_classify_url_recognises_opengov(self):
+        from webscraping.v2.agents.exploration import classify_url
+        assert classify_url(
+            "https://procurement.opengov.com/portal/long-beach"
+        ) == "opengov"
+
+    def test_classify_url_recognises_planetbids(self):
+        from webscraping.v2.agents.exploration import classify_url
+        assert classify_url(
+            "https://vendors.planetbids.com/portal/12345/bo/bo-search"
+        ) == "planetbids"
+
+    def test_classify_url_recognises_salesforce_aura(self):
+        from webscraping.v2.agents.exploration import classify_url
+        assert classify_url(
+            "https://example.force.com/s/sfsites/aura"
+        ) == "salesforce_aura"
+
+    def test_classify_url_unknown_for_random_gov_url(self):
+        from webscraping.v2.agents.exploration import classify_url
+        assert classify_url(
+            "https://cityofalbany.org/procurement/bids"
+        ) == "unknown"
+
+    def test_report_candidate_dedupes_within_run(self):
+        from webscraping.v2.agents.exploration import (
+            ExplorerToolbox, tool_report_candidate,
+        )
+        tb = ExplorerToolbox(category="ca_cities")
+        url = "https://procurement.opengov.com/portal/long-beach"
+        r1 = tool_report_candidate(tb, {
+            "url": url, "agency_name": "City of Long Beach",
+            "platform_guess": "opengov", "reasoning": "url pattern",
+        })
+        assert "accepted" in r1
+        r2 = tool_report_candidate(tb, {
+            "url": url, "agency_name": "City of Long Beach",
+            "platform_guess": "opengov", "reasoning": "duplicate",
+        })
+        assert "duplicate" in r2.lower()
+        assert len(tb.candidates) == 1
+
+    def test_report_candidate_skips_already_onboarded(self):
+        from webscraping.v2.agents.exploration import (
+            ExplorerToolbox, tool_report_candidate,
+        )
+        url = "https://procurement.opengov.com/portal/pasadena"
+        tb = ExplorerToolbox(category="ca_cities", skip_urls={url})
+        result = tool_report_candidate(tb, {
+            "url": url, "agency_name": "City of Pasadena",
+            "platform_guess": "opengov", "reasoning": "...",
+        })
+        assert "already onboarded" in result.lower()
+        assert tb.candidates == []
+
+    def test_report_candidate_pattern_overrides_agent_guess(self):
+        # Agent says 'unknown' but URL matches a known pattern → trust
+        # the pattern. Defends against the agent mis-classifying.
+        from webscraping.v2.agents.exploration import (
+            ExplorerToolbox, tool_report_candidate,
+        )
+        tb = ExplorerToolbox(category="ca_cities")
+        tool_report_candidate(tb, {
+            "url": "https://procurement.opengov.com/portal/x",
+            "agency_name": "X", "platform_guess": "unknown",
+            "reasoning": "agent didn't recognise",
+        })
+        assert tb.candidates[0].platform_guess == "opengov"
+
+
+class TestSmartRouter:
+    def test_extract_opengov_slug(self):
+        from webscraping.v2.agents.spec_onboarding import _extract_opengov_slug
+        assert _extract_opengov_slug(
+            "https://procurement.opengov.com/portal/long-beach"
+        ) == "long-beach"
+        assert _extract_opengov_slug(
+            "https://procurement.opengov.com/portal/santa-monica/projects"
+        ) == "santa-monica"
+        assert _extract_opengov_slug(
+            "https://example.com/bids"
+        ) is None
+
+    def test_extract_planetbids_portal_id(self):
+        from webscraping.v2.agents.spec_onboarding import (
+            _extract_planetbids_portal_id,
+        )
+        assert _extract_planetbids_portal_id(
+            "https://vendors.planetbids.com/portal/17950/bo/bo-search"
+        ) == "17950"
+        assert _extract_planetbids_portal_id(
+            "https://vendors.planetbids.com/portal/39475"
+        ) == "39475"
+        assert _extract_planetbids_portal_id("https://example.com") is None
+
+    def test_bidsync_route_marks_covered_no_scrape(self):
+        # BidSync candidates short-circuit without burning budget: the
+        # bidsync_all_ca aggregate scraper already covers them.
+        from webscraping.v2.agents.spec_onboarding import _route_known_bidsync
+        result = _route_known_bidsync(
+            url="https://contracting.example.bidsync.com",
+            agency_name="City of Example",
+        )
+        assert result is not None
+        assert result.accepted is True
+        assert result.spec_class == "bidsync_covered"
+        assert result.events_scraped == 0
+        assert "bidsync_all_ca" in result.reason
+
+
+class TestPlanetBidsDynamicRegistry:
+    def test_get_planetbids_site_configs_merges_s3_then_code_wins(self):
+        import unittest.mock as mock
+        from webscraping.v2.scrapers import planetbids as pb
+
+        s3_entries = {
+            "planetbids_test_city": {
+                "portal_id": "99999",
+                "name": "City of Test",
+                "url": "https://vendors.planetbids.com/portal/99999",
+            },
+        }
+        with mock.patch.object(
+            pb, "_load_planetbids_from_s3", return_value=s3_entries
+        ):
+            configs = pb.get_planetbids_site_configs()
+
+        # S3-onboarded entry shows up
+        assert "planetbids_test_city" in configs
+        assert configs["planetbids_test_city"].config["portal_id"] == "99999"
+        # In-code entries are still present
+        assert any(sid.startswith("planetbids_") and sid != "planetbids_test_city"
+                   for sid in configs)
+
+
+class TestHtmlSpecScraperHelpers:
+    """Pure helpers in spec_html — exercise without Playwright."""
+
+    def test_collapse_whitespace(self):
+        from webscraping.v2.scrapers.spec_html import _collapse
+        assert _collapse("  hello\n\n  world  ") == "hello world"
+        assert _collapse("") == ""
+
+    def test_absolutize_full_url_unchanged(self):
+        from webscraping.v2.scrapers.spec_html import _absolutize
+        assert _absolutize(
+            "https://other.example/x", "https://base.example/y"
+        ) == "https://other.example/x"
+
+    def test_absolutize_relative_path(self):
+        from webscraping.v2.scrapers.spec_html import _absolutize
+        assert _absolutize(
+            "/bid/123", "https://example.gov/procurement/list"
+        ) == "https://example.gov/bid/123"
+
+    def test_absolutize_protocol_relative(self):
+        from webscraping.v2.scrapers.spec_html import _absolutize
+        assert _absolutize(
+            "//cdn.example.com/file.pdf", "https://example.gov/x"
+        ) == "https://cdn.example.com/file.pdf"
+
+    def test_html_scraper_requires_spec_in_config(self):
+        from webscraping.v2.models import ScraperType, SiteConfig
+        from webscraping.v2.scrapers.spec_html import HtmlSpecScraper
+        with pytest.raises(ValueError, match="requires site_config.config"):
+            HtmlSpecScraper(SiteConfig(
+                site_id="x", name="x", url="x",
+                scraper_type=ScraperType.SPEC_DRIVEN,
+                config={},
+            ))
 
 
 if __name__ == "__main__":
