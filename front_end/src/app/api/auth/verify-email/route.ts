@@ -33,6 +33,12 @@ export async function GET(request: Request) {
     );
   }
 
+  // KPI funnel stage 3: user came back from the email. Fire as soon as we
+  // resolve the pending row so we capture the click even if downstream
+  // (expiry, race-condition) bounces them. Keyed on the prospective username
+  // so it joins the prior funnel events.
+  void recordEvent(pending.username, "signup_verification_clicked");
+
   if (pending.expiresAt.getTime() < Date.now()) {
     return NextResponse.redirect(
       new URL("/login?verify_error=expired", request.url),

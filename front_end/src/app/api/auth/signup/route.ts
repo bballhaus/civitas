@@ -15,6 +15,7 @@ import { getUserByUsername, getUserByEmail } from "@/db/queries/users";
 import { upsertPendingUser } from "@/db/queries/pending-users";
 import { sendVerificationEmail } from "@/lib/email";
 import { logSecurityEvent } from "@/lib/security-log";
+import { recordEvent } from "@/lib/event-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 const SIGNUP_MAX_REQUESTS = 5;
@@ -74,6 +75,12 @@ export async function POST(request: Request) {
       );
     }
 
+    // KPI funnel stage 1: form passed validation + uniqueness checks. Keyed
+    // on the prospective username (matches the username stored in
+    // pending_users and later promoted into users) so the whole funnel
+    // joins on the same id.
+    void recordEvent(username, "signup_form_submitted");
+
     const passwordHash = await hashPassword(password);
     const verificationToken = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + VERIFICATION_TTL_MS);
@@ -101,6 +108,11 @@ export async function POST(request: Request) {
       username,
       ip: request.headers.get("x-forwarded-for") || undefined,
     });
+    // KPI funnel stage 2: SES called (success-or-fallback) and pending row
+    // exists. `emailSent=false` means CIVITAS_FROM_EMAIL wasn't set so the
+    // helper logged to console — still record the event so we can see the
+    // gap between sends and SES-actual-delivery downstream.
+    void recordEvent(username, "signup_verification_sent", { emailSent });
 
     return NextResponse.json(
       {
