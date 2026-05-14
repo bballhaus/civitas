@@ -920,5 +920,152 @@ class TestOpenGovDiscoveryProbe:
         assert "404" in c.verification_notes
 
 
+# ============================================================================
+# Site investigation agent — pure-helper tests (no browser, no Anthropic API)
+# ============================================================================
+
+class TestInvestigationSpec:
+    def test_valid_spec_roundtrips(self):
+        from webscraping.v2.agents.site_investigation import (
+            InvestigationSpec, ListingEndpoint, DetailEndpoint,
+        )
+        s = InvestigationSpec(
+            portal_url="https://procurement.opengov.com/portal/pasadena",
+            platform_class="opengov_api",
+            confidence="high",
+            listing=ListingEndpoint(
+                method="POST",
+                url_template="https://api.procurement.opengov.com/api/v1/government/{slug}/project/public",
+                body_template='{"status":"open","page":1,"limit":50}',
+                headers_required={"User-Agent": "Mozilla/5.0 ..."},
+                response_format="json",
+                rows_path="rows",
+                row_id_field="id",
+                row_title_field="title",
+            ),
+            detail=DetailEndpoint(
+                method="GET",
+                url_template="https://api.procurement.opengov.com/api/v1/project/{id}",
+                response_format="json",
+                summary_field="summary",
+                attachment_array_path="attachments",
+                attachment_url_field="url",
+                attachment_filename_field="filename",
+                contact_email_field="contactEmail",
+            ),
+            notes="API 403s default python-requests UA",
+        )
+        d = s.model_dump()
+        assert d["platform_class"] == "opengov_api"
+        assert d["listing"]["row_id_field"] == "id"
+        assert d["detail"]["attachment_url_field"] == "url"
+
+    def test_missing_required_listing_field_raises(self):
+        from pydantic import ValidationError
+        from webscraping.v2.agents.site_investigation import InvestigationSpec
+        with pytest.raises(ValidationError):
+            InvestigationSpec(
+                portal_url="x",
+                platform_class="opengov_api",
+                confidence="high",
+                # listing missing
+            )
+
+
+class TestToolSchemaIntegrity:
+    def test_handler_names_match_schema_names(self):
+        from webscraping.v2.agents.site_investigation import (
+            TOOL_HANDLERS, TOOL_SCHEMAS,
+        )
+        schema_names = {s["name"] for s in TOOL_SCHEMAS}
+        handler_names = set(TOOL_HANDLERS.keys())
+        assert schema_names == handler_names, (
+            f"diff: {schema_names ^ handler_names}"
+        )
+
+    def test_every_schema_is_well_formed(self):
+        from webscraping.v2.agents.site_investigation import TOOL_SCHEMAS
+        for s in TOOL_SCHEMAS:
+            assert "name" in s
+            assert "description" in s and len(s["description"]) > 20
+            assert "input_schema" in s
+            assert s["input_schema"]["type"] == "object"
+
+
+class TestTerminalTools:
+    def test_report_accepts_valid_spec(self):
+        import asyncio
+        from webscraping.v2.agents.site_investigation import (
+            Toolbox, tool_report,
+        )
+        tb = Toolbox(page=None, capture=None)  # type: ignore[arg-type]
+        spec_args = {
+            "portal_url": "https://x",
+            "platform_class": "opengov_api",
+            "confidence": "high",
+            "listing": {
+                "method": "GET",
+                "url_template": "https://x/api",
+                "response_format": "json",
+            },
+        }
+        result = asyncio.run(tool_report(tb, spec_args))
+        assert "spec accepted" in result
+        assert tb.spec_received is not None
+        assert tb.spec_received.platform_class == "opengov_api"
+
+    def test_report_rejects_invalid_spec(self):
+        import asyncio
+        from webscraping.v2.agents.site_investigation import (
+            Toolbox, tool_report,
+        )
+        tb = Toolbox(page=None, capture=None)  # type: ignore[arg-type]
+        result = asyncio.run(tool_report(tb, {"portal_url": "x"}))
+        assert result.startswith("ERROR")
+        assert tb.spec_received is None
+
+    def test_give_up_records_reason(self):
+        import asyncio
+        from webscraping.v2.agents.site_investigation import (
+            Toolbox, tool_give_up,
+        )
+        tb = Toolbox(page=None, capture=None)  # type: ignore[arg-type]
+        asyncio.run(tool_give_up(tb, {"reason": "site requires login"}))
+        assert tb.failure_reason == "site requires login"
+
+
+class TestNetworkCaptureFilter:
+    def test_filtered_drops_noise_hosts(self):
+        from webscraping.v2.agents.site_investigation import (
+            CapturedRequest, NetworkCapture,
+        )
+
+        # Bypass the constructor (it wires page event handlers); we only
+        # exercise the filter logic.
+        capture = NetworkCapture.__new__(NetworkCapture)
+        capture.requests = [
+            CapturedRequest(method="GET", url="https://api.procurement.opengov.com/api/v1/project/1", post_data=None, resource_type="xhr", timestamp=0),
+            CapturedRequest(method="POST", url="https://api.segment.io/v1/p", post_data="x", resource_type="fetch", timestamp=0),
+            CapturedRequest(method="POST", url="https://events.launchdarkly.com/events", post_data="x", resource_type="xhr", timestamp=0),
+            CapturedRequest(method="GET", url="https://faro-collector-prod-us-central-0.grafana.net/collect", post_data=None, resource_type="fetch", timestamp=0),
+        ]
+        out = capture.filtered()
+        assert len(out) == 1
+        assert "opengov.com" in out[0].url
+
+    def test_filtered_with_host_filter(self):
+        from webscraping.v2.agents.site_investigation import (
+            CapturedRequest, NetworkCapture,
+        )
+        capture = NetworkCapture.__new__(NetworkCapture)
+        capture.requests = [
+            CapturedRequest(method="GET", url="https://api.procurement.opengov.com/api/v1/x", post_data=None, resource_type="xhr", timestamp=0),
+            CapturedRequest(method="GET", url="https://www.rampla.org/s/sfsites/aura", post_data=None, resource_type="xhr", timestamp=0),
+        ]
+        og = capture.filtered("opengov")
+        assert len(og) == 1
+        assert "opengov" in og[0].url
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

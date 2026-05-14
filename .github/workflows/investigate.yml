@@ -20,7 +20,7 @@ on:
       max_turns:
         description: "Max agent turns before giving up"
         required: false
-        default: "25"
+        default: "35"
         type: string
 
 env:
