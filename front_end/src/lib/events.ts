@@ -36,6 +36,7 @@ export const SERVER_EVENT_TYPES = [
   "contract_updated",
   "profile_extracted",
   "profile_updated",
+  "onboarding_completed",
 ] as const;
 
 export const CLIENT_EVENT_TYPES = [
