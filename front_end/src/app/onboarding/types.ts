@@ -32,6 +32,7 @@ export interface OnboardingSnapshot {
     kind: string;
     name: string;
     isHard: boolean;
+    radiusMiles: number | null;
   }[];
   agencyRelationships: {
     id: string;

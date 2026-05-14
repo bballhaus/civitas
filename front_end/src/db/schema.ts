@@ -179,6 +179,10 @@ export const workAreas = pgTable(
     kind: text("kind").notNull(), // 'city' | 'county' | 'metro' | 'state'
     name: text("name").notNull(),
     isHard: boolean("is_hard").notNull().default(false), // "won't travel outside this"
+    // Radius in miles. Only meaningful when isHard=true — encodes "won't
+    // travel more than N miles outside <name>". null = no radius asserted
+    // (the gate becomes a simple substring check on rfp.location).
+    radiusMiles: integer("radius_miles"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

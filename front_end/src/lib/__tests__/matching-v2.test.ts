@@ -114,7 +114,7 @@ test("hard work area blocks RFP outside the lock", () => {
   const profile = makeProfile({
     workAreas: [{
       id: "w1", userId: "u1", kind: "city", name: "San Diego",
-      isHard: true, createdAt: new Date(),
+      isHard: true, radiusMiles: null, createdAt: new Date(),
     }],
   });
   const rfp = makeRfp({ location: "Sacramento, CA" });
