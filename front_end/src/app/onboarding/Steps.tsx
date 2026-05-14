@@ -1,10 +1,8 @@
 "use client";
 
 // Per-step renderers for the onboarding wizard (Architecture-v2 § 5).
-//
-// One small component per screen, plus shared chip/input primitives. Each
-// component owns its own input state but writes through the existing
-// /api/profile/* collection routes so the source of truth stays in Postgres.
+// Visual vocabulary mirrors the home/profile pages: rounded-xl, slate text
+// tiers, glass-style hover states, and the #3C89C6 primary blue.
 
 import { useState } from "react";
 import type { OnboardingSnapshot } from "./types";
@@ -58,24 +56,47 @@ export function OnboardingStep({
 }
 
 // ---------------------------------------------------------------------------
-// Shared primitives
+// Shared primitives — visual style matches the home/profile pages.
 // ---------------------------------------------------------------------------
+
+const inputClass =
+  "w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent transition-colors";
+
+const selectClass =
+  "w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent transition-colors";
+
+const labelClass = "block text-sm font-semibold text-slate-700 mb-1.5";
+
+const addBtnClass =
+  "shrink-0 px-4 py-2 text-sm font-semibold text-slate-700 border border-slate-300 rounded-lg bg-white hover:bg-slate-50 transition-colors";
+
+const saveLinkClass =
+  "inline-flex items-center gap-1 text-sm font-semibold text-[#3C89C6] hover:text-[#2d6fa0] hover:underline transition-colors";
 
 function Chip({
   children,
   onRemove,
+  variant = "blue",
 }: {
   children: React.ReactNode;
   onRemove?: () => void;
+  variant?: "blue" | "emerald" | "violet" | "amber" | "slate";
 }) {
+  const palettes = {
+    blue: "bg-blue-50 border-blue-200 text-blue-800 hover:bg-blue-100",
+    emerald: "bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100",
+    violet: "bg-violet-50 border-violet-200 text-violet-800 hover:bg-violet-100",
+    amber: "bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100",
+    slate: "bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200",
+  } as const;
   return (
-    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-sm text-blue-800">
+    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-sm font-medium transition-colors ${palettes[variant]}`}>
       {children}
       {onRemove && (
         <button
           type="button"
           onClick={onRemove}
-          className="text-blue-500 hover:text-blue-800 leading-none"
+          className="leading-none opacity-60 hover:opacity-100 transition-opacity"
           aria-label="Remove"
         >
           ×
@@ -85,47 +106,63 @@ function Chip({
   );
 }
 
-function TextInput({
+function SuggestionPill({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="px-2.5 py-1 text-xs font-medium rounded-full border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 hover:border-[#3C89C6]/40 hover:text-[#3C89C6] transition-colors"
+    >
+      + {children}
+    </button>
+  );
+}
+
+function EmptyHint({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-sm text-slate-400 italic py-1.5">
+      {children}
+    </div>
+  );
+}
+
+function ChoiceGrid({
+  options,
   value,
   onChange,
-  placeholder,
-  type = "text",
+  cols = 3,
 }: {
+  options: readonly { value: string; label: string }[];
   value: string;
   onChange: (v: string) => void;
-  placeholder?: string;
-  type?: string;
+  cols?: 2 | 3 | 4;
 }) {
+  const gridCols = cols === 2 ? "md:grid-cols-2" : cols === 4 ? "md:grid-cols-4" : "md:grid-cols-3";
   return (
-    <input
-      type={type}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3C89C6] focus:border-transparent text-slate-700 placeholder:text-slate-400"
-    />
-  );
-}
-
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <label className="block text-sm font-medium text-slate-700 mb-1.5">
-      {children}
-    </label>
-  );
-}
-
-function StepHeader({
-  title,
-  blurb,
-}: {
-  title: string;
-  blurb: string;
-}) {
-  return (
-    <div className="mb-6">
-      <h2 className="text-xl font-semibold text-slate-800">{title}</h2>
-      <p className="text-sm text-slate-500 mt-1">{blurb}</p>
+    <div className={`grid grid-cols-1 ${gridCols} gap-2`}>
+      {options.map((p) => {
+        const active = value === p.value;
+        return (
+          <button
+            key={p.value}
+            type="button"
+            onClick={() => onChange(p.value)}
+            className={`px-3 py-2.5 text-sm rounded-xl border text-left transition-all ${
+              active
+                ? "border-[#3C89C6] bg-blue-50 text-[#2d6fa0] font-semibold shadow-sm"
+                : "border-slate-200 bg-white text-slate-600 hover:border-[#3C89C6]/40 hover:bg-blue-50/50"
+            }`}
+          >
+            {p.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -143,8 +180,6 @@ function StepIdentity({ snapshot, onChange }: StepProps) {
   const [website, setWebsite] = useState(snapshot.website ?? "");
   const [saving, setSaving] = useState(false);
 
-  // Single PATCH on blur of each field. Keeps the API surface tiny without
-  // adding debounce machinery — the user types, tabs out, save fires.
   const save = async (patch: Record<string, unknown>) => {
     setSaving(true);
     try {
@@ -160,78 +195,77 @@ function StepIdentity({ snapshot, onChange }: StepProps) {
   };
 
   return (
-    <div>
-      <StepHeader
-        title="Tell us about your company"
-        blurb="Just the basics. We use these to filter RFPs by your size and to introduce you on generated proposals."
-      />
-      <div className="space-y-4">
-        <div>
-          <FieldLabel>Company name</FieldLabel>
-          <TextInput
-            value={companyName}
-            onChange={setCompanyName}
-            placeholder="Acme Concrete Inc."
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <FieldLabel>Year founded</FieldLabel>
-            <TextInput
-              type="number"
-              value={yearFounded}
-              onChange={setYearFounded}
-              placeholder="2015"
-            />
-          </div>
-          <div>
-            <FieldLabel>Team size</FieldLabel>
-            <select
-              value={employeeBand}
-              onChange={(e) => {
-                setEmployeeBand(e.target.value);
-                void save({ employeeBand: e.target.value || null });
-              }}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#3C89C6]"
-            >
-              <option value="">Select…</option>
-              {EMPLOYEE_BANDS.map((b) => (
-                <option key={b.value} value={b.value}>
-                  {b.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div>
-          <FieldLabel>Website</FieldLabel>
-          <TextInput
-            value={website}
-            onChange={setWebsite}
-            placeholder="https://example.com"
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() =>
-            save({
-              companyName: companyName.trim() || null,
-              yearFounded: yearFounded ? Number(yearFounded) : null,
-              website: website.trim() || null,
-            })
-          }
-          disabled={saving}
-          className="text-sm font-medium text-[#3C89C6] hover:underline disabled:opacity-50"
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
+    <div className="space-y-5">
+      <div>
+        <label className={labelClass}>Company name</label>
+        <input
+          type="text"
+          value={companyName}
+          onChange={(e) => setCompanyName(e.target.value)}
+          placeholder="Acme Concrete Inc."
+          className={inputClass}
+        />
       </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className={labelClass}>Year founded</label>
+          <input
+            type="number"
+            value={yearFounded}
+            onChange={(e) => setYearFounded(e.target.value)}
+            placeholder="2015"
+            className={inputClass}
+          />
+        </div>
+        <div>
+          <label className={labelClass}>Team size</label>
+          <select
+            value={employeeBand}
+            onChange={(e) => {
+              setEmployeeBand(e.target.value);
+              void save({ employeeBand: e.target.value || null });
+            }}
+            className={selectClass}
+          >
+            <option value="">Select…</option>
+            {EMPLOYEE_BANDS.map((b) => (
+              <option key={b.value} value={b.value}>
+                {b.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div>
+        <label className={labelClass}>Website</label>
+        <input
+          type="url"
+          value={website}
+          onChange={(e) => setWebsite(e.target.value)}
+          placeholder="https://example.com"
+          className={inputClass}
+        />
+      </div>
+      <button
+        type="button"
+        onClick={() =>
+          save({
+            companyName: companyName.trim() || null,
+            yearFounded: yearFounded ? Number(yearFounded) : null,
+            website: website.trim() || null,
+          })
+        }
+        disabled={saving}
+        className={`${saveLinkClass} disabled:opacity-50`}
+      >
+        {saving ? "Saving…" : "Save changes →"}
+      </button>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Specialties (primary) → specialties (weight=primary), 2-3 picks
+// Step 2: Specialties
 // ---------------------------------------------------------------------------
 
 function StepSpecialties({ snapshot, onChange }: StepProps) {
@@ -256,51 +290,47 @@ function StepSpecialties({ snapshot, onChange }: StepProps) {
   const currentValues = new Set(snapshot.specialties.map((s) => s.value.toLowerCase()));
 
   return (
-    <div>
-      <StepHeader
-        title="What's your bread and butter?"
-        blurb="Your two or three core specialties. These are the single biggest signal we use to match you with RFPs — be specific about the actual work you do."
-      />
-      <div className="flex flex-wrap gap-2 min-h-[36px] mb-4">
-        {snapshot.specialties.length === 0 && (
-          <span className="text-sm text-slate-400">
-            Nothing here yet — add a few below.
-          </span>
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 min-h-[40px]">
+        {snapshot.specialties.length === 0 ? (
+          <EmptyHint>Nothing here yet — add a few below.</EmptyHint>
+        ) : (
+          snapshot.specialties.map((s) => (
+            <Chip key={s.id} variant="blue" onRemove={() => remove(s.id)}>
+              {s.value}
+            </Chip>
+          ))
         )}
-        {snapshot.specialties.map((s) => (
-          <Chip key={s.id} onRemove={() => remove(s.id)}>
-            {s.value}
-          </Chip>
-        ))}
       </div>
       <div className="flex gap-2">
-        <TextInput
+        <input
+          type="text"
           value={input}
-          onChange={setInput}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void add(input);
+            }
+          }}
           placeholder="e.g. concrete flatwork installation"
+          className={inputClass}
         />
-        <button
-          type="button"
-          onClick={() => add(input)}
-          className="px-4 py-2 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200"
-        >
+        <button type="button" onClick={() => add(input)} className={addBtnClass}>
           Add
         </button>
       </div>
-      <div className="mt-4">
-        <p className="text-xs font-medium text-slate-500 mb-2">Common picks</p>
+      <div>
+        <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+          Common picks
+        </p>
         <div className="flex flex-wrap gap-1.5">
           {SPECIALTY_SUGGESTIONS.filter((s) => !currentValues.has(s.toLowerCase()))
             .slice(0, 12)
             .map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => add(s)}
-                className="px-2.5 py-1 text-xs rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50"
-              >
-                + {s}
-              </button>
+              <SuggestionPill key={s} onClick={() => add(s)}>
+                {s}
+              </SuggestionPill>
             ))}
         </div>
       </div>
@@ -309,7 +339,7 @@ function StepSpecialties({ snapshot, onChange }: StepProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: Capabilities (broader) → capabilities (multi-select)
+// Step 3: Capabilities
 // ---------------------------------------------------------------------------
 
 function StepCapabilities({ snapshot, onChange }: StepProps) {
@@ -332,32 +362,33 @@ function StepCapabilities({ snapshot, onChange }: StepProps) {
   };
 
   return (
-    <div>
-      <StepHeader
-        title="What else can you do?"
-        blurb="Capabilities are broader than specialties — anything you can take on if the RFP calls for it. Add a few, even ones you only do occasionally."
-      />
-      <div className="flex flex-wrap gap-2 min-h-[36px] mb-4">
-        {snapshot.capabilities.length === 0 && (
-          <span className="text-sm text-slate-400">No capabilities yet.</span>
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 min-h-[40px]">
+        {snapshot.capabilities.length === 0 ? (
+          <EmptyHint>No capabilities yet.</EmptyHint>
+        ) : (
+          snapshot.capabilities.map((c) => (
+            <Chip key={c.id} variant="emerald" onRemove={() => remove(c.id)}>
+              {c.value}
+            </Chip>
+          ))
         )}
-        {snapshot.capabilities.map((c) => (
-          <Chip key={c.id} onRemove={() => remove(c.id)}>
-            {c.value}
-          </Chip>
-        ))}
       </div>
       <div className="flex gap-2">
-        <TextInput
+        <input
+          type="text"
           value={input}
-          onChange={setInput}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void add(input);
+            }
+          }}
           placeholder="e.g. ADA compliance, traffic control, surveying"
+          className={inputClass}
         />
-        <button
-          type="button"
-          onClick={() => add(input)}
-          className="px-4 py-2 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200"
-        >
+        <button type="button" onClick={() => add(input)} className={addBtnClass}>
           Add
         </button>
       </div>
@@ -366,7 +397,7 @@ function StepCapabilities({ snapshot, onChange }: StepProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Licenses → licenses (typed by class)
+// Step 4: Licenses
 // ---------------------------------------------------------------------------
 
 function StepLicenses({ snapshot, onChange }: StepProps) {
@@ -400,46 +431,43 @@ function StepLicenses({ snapshot, onChange }: StepProps) {
     LICENSE_CLASSES.find((c) => c.value === cls)?.label ?? cls;
 
   return (
-    <div>
-      <StepHeader
-        title="Licenses you hold"
-        blurb="The matcher uses license classes for binary disqualification — if an RFP requires a Class A and you don't hold one, we route it to your sub track instead."
-      />
-      <div className="space-y-2 mb-4">
-        {snapshot.licenses.length === 0 && (
-          <span className="text-sm text-slate-400">No licenses added yet.</span>
-        )}
-        {snapshot.licenses.map((l) => (
-          <div
-            key={l.id}
-            className="flex items-center justify-between border border-slate-200 rounded-lg px-3 py-2"
-          >
-            <div>
-              <div className="font-medium text-sm text-slate-800">
-                {labelFor(l.licenseClass)}
-              </div>
-              <div className="text-xs text-slate-500">
-                {l.licenseNumber ? `#${l.licenseNumber}` : "No number on file"}
-                {l.expiresOn ? ` · expires ${l.expiresOn}` : ""}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => remove(l.id)}
-              className="text-slate-400 hover:text-red-600 text-sm"
+    <div className="space-y-4">
+      <div className="space-y-2">
+        {snapshot.licenses.length === 0 ? (
+          <EmptyHint>No licenses added yet.</EmptyHint>
+        ) : (
+          snapshot.licenses.map((l) => (
+            <div
+              key={l.id}
+              className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 bg-white hover:border-violet-200 hover:bg-violet-50/30 transition-colors"
             >
-              Remove
-            </button>
-          </div>
-        ))}
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-900 text-sm truncate">
+                  {labelFor(l.licenseClass)}
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {l.licenseNumber ? `#${l.licenseNumber}` : "No number on file"}
+                  {l.expiresOn ? ` · expires ${l.expiresOn}` : ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => remove(l.id)}
+                className="shrink-0 text-xs font-semibold text-slate-400 hover:text-red-600 transition-colors"
+              >
+                Remove
+              </button>
+            </div>
+          ))
+        )}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
-          <FieldLabel>Class</FieldLabel>
+          <label className={labelClass}>Class</label>
           <select
             value={licenseClass}
             onChange={(e) => setLicenseClass(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#3C89C6]"
+            className={selectClass}
           >
             <option value="">Pick a class…</option>
             {LICENSE_CLASSES.filter((c) => !existingClasses.has(c.value)).map((c) => (
@@ -450,23 +478,30 @@ function StepLicenses({ snapshot, onChange }: StepProps) {
           </select>
         </div>
         <div>
-          <FieldLabel>License number</FieldLabel>
-          <TextInput
+          <label className={labelClass}>License number</label>
+          <input
+            type="text"
             value={licenseNumber}
-            onChange={setLicenseNumber}
+            onChange={(e) => setLicenseNumber(e.target.value)}
             placeholder="1234567"
+            className={inputClass}
           />
         </div>
         <div>
-          <FieldLabel>Expires</FieldLabel>
-          <TextInput type="date" value={expiresOn} onChange={setExpiresOn} />
+          <label className={labelClass}>Expires</label>
+          <input
+            type="date"
+            value={expiresOn}
+            onChange={(e) => setExpiresOn(e.target.value)}
+            className={inputClass}
+          />
         </div>
       </div>
       <button
         type="button"
         onClick={add}
         disabled={!licenseClass}
-        className="mt-3 px-4 py-2 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200 disabled:opacity-50"
+        className="px-4 py-2 text-sm font-semibold text-slate-700 border border-slate-300 rounded-lg bg-white hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         Add license
       </button>
@@ -502,49 +537,57 @@ function StepCertifications({ snapshot, onChange }: StepProps) {
   };
 
   return (
-    <div>
-      <StepHeader
-        title="Certifications"
-        blurb="Hard certifications (like DVBE, 8(a)) are gates — they can disqualify or qualify you outright. Soft certifications (ISO, CMMI) act as bonus signals."
-      />
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Hard / set-aside</h3>
-          <div className="space-y-1.5">
-            {HARD_CERTIFICATIONS.map((c) => (
-              <label
-                key={c.canonicalId}
-                className="flex items-center gap-2 cursor-pointer text-sm text-slate-700"
-              >
-                <input
-                  type="checkbox"
-                  checked={held.has(c.canonicalId)}
-                  onChange={() => toggle(c.canonicalId, c.displayName, "hard")}
-                  className="rounded text-[#3C89C6] focus:ring-[#3C89C6]"
-                />
-                {c.displayName}
-              </label>
-            ))}
-          </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="w-6 h-6 rounded-md bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center text-white shadow-sm">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          </span>
+          <h3 className="text-sm font-bold text-slate-900">Hard / set-aside</h3>
         </div>
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Soft / quality</h3>
-          <div className="space-y-1.5">
-            {SOFT_CERTIFICATIONS.map((c) => (
-              <label
-                key={c.canonicalId}
-                className="flex items-center gap-2 cursor-pointer text-sm text-slate-700"
-              >
-                <input
-                  type="checkbox"
-                  checked={held.has(c.canonicalId)}
-                  onChange={() => toggle(c.canonicalId, c.displayName, "soft")}
-                  className="rounded text-[#3C89C6] focus:ring-[#3C89C6]"
-                />
-                {c.displayName}
-              </label>
-            ))}
-          </div>
+        <div className="space-y-1">
+          {HARD_CERTIFICATIONS.map((c) => (
+            <label
+              key={c.canonicalId}
+              className="flex items-center gap-2 p-2 rounded-lg hover:bg-amber-50/50 cursor-pointer text-sm text-slate-700 transition-colors"
+            >
+              <input
+                type="checkbox"
+                checked={held.has(c.canonicalId)}
+                onChange={() => toggle(c.canonicalId, c.displayName, "hard")}
+                className="rounded text-[#3C89C6] focus:ring-[#3C89C6]"
+              />
+              {c.displayName}
+            </label>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="w-6 h-6 rounded-md bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white shadow-sm">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </span>
+          <h3 className="text-sm font-bold text-slate-900">Soft / quality</h3>
+        </div>
+        <div className="space-y-1">
+          {SOFT_CERTIFICATIONS.map((c) => (
+            <label
+              key={c.canonicalId}
+              className="flex items-center gap-2 p-2 rounded-lg hover:bg-violet-50/50 cursor-pointer text-sm text-slate-700 transition-colors"
+            >
+              <input
+                type="checkbox"
+                checked={held.has(c.canonicalId)}
+                onChange={() => toggle(c.canonicalId, c.displayName, "soft")}
+                className="rounded text-[#3C89C6] focus:ring-[#3C89C6]"
+              />
+              {c.displayName}
+            </label>
+          ))}
         </div>
       </div>
     </div>
@@ -552,7 +595,7 @@ function StepCertifications({ snapshot, onChange }: StepProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 6: Geography → work_areas (with isHard flag)
+// Step 6: Geography
 // ---------------------------------------------------------------------------
 
 function StepGeography({ snapshot, onChange }: StepProps) {
@@ -578,30 +621,27 @@ function StepGeography({ snapshot, onChange }: StepProps) {
   };
 
   return (
-    <div>
-      <StepHeader
-        title="Where do you work?"
-        blurb="Add cities, counties, metros, or whole states. Toggle the lock if you absolutely won't travel outside an area — those become hard filters."
-      />
-      <div className="flex flex-wrap gap-2 min-h-[36px] mb-4">
-        {snapshot.workAreas.length === 0 && (
-          <span className="text-sm text-slate-400">No areas yet.</span>
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 min-h-[40px]">
+        {snapshot.workAreas.length === 0 ? (
+          <EmptyHint>No areas yet.</EmptyHint>
+        ) : (
+          snapshot.workAreas.map((w) => (
+            <Chip key={w.id} variant={w.isHard ? "amber" : "blue"} onRemove={() => remove(w.id)}>
+              {w.isHard && <span aria-label="hard limit">🔒</span>}
+              <span>{w.name}</span>
+              <span className="text-xs opacity-60">· {w.kind}</span>
+            </Chip>
+          ))
         )}
-        {snapshot.workAreas.map((w) => (
-          <Chip key={w.id} onRemove={() => remove(w.id)}>
-            {w.isHard && <span aria-label="hard">🔒 </span>}
-            {w.name}
-            <span className="text-blue-400 text-xs ml-1">({w.kind})</span>
-          </Chip>
-        ))}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-[120px_1fr_auto] gap-2 items-end">
+      <div className="grid grid-cols-1 md:grid-cols-[140px_1fr_auto] gap-3 items-end">
         <div>
-          <FieldLabel>Kind</FieldLabel>
+          <label className={labelClass}>Kind</label>
           <select
             value={kind}
             onChange={(e) => setKind(e.target.value as typeof kind)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#3C89C6]"
+            className={selectClass}
           >
             <option value="city">City</option>
             <option value="county">County</option>
@@ -610,58 +650,58 @@ function StepGeography({ snapshot, onChange }: StepProps) {
           </select>
         </div>
         <div>
-          <FieldLabel>Name</FieldLabel>
-          <TextInput
+          <label className={labelClass}>Name</label>
+          <input
+            type="text"
             value={name}
-            onChange={setName}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void add();
+              }
+            }}
             placeholder={kind === "state" ? "CA" : kind === "metro" ? "Bay Area" : "San Diego"}
+            className={inputClass}
           />
         </div>
-        <button
-          type="button"
-          onClick={() => add()}
-          className="px-4 py-2 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200"
-        >
+        <button type="button" onClick={() => add()} className={addBtnClass}>
           Add
         </button>
       </div>
-      <label className="mt-3 flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+      <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
         <input
           type="checkbox"
           checked={isHard}
           onChange={(e) => setIsHard(e.target.checked)}
           className="rounded text-[#3C89C6] focus:ring-[#3C89C6]"
         />
-        Hard limit — won&apos;t travel outside this
+        <span>
+          <strong className="text-slate-700">Hard limit</strong> — won&apos;t travel outside this
+        </span>
       </label>
-      <div className="mt-5 space-y-3">
+      <div className="space-y-3">
         <div>
-          <p className="text-xs font-medium text-slate-500 mb-1.5">CA metros</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+            CA metros
+          </p>
           <div className="flex flex-wrap gap-1.5">
             {CA_METROS.map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => add("metro", m)}
-                className="px-2.5 py-1 text-xs rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50"
-              >
-                + {m}
-              </button>
+              <SuggestionPill key={m} onClick={() => add("metro", m)}>
+                {m}
+              </SuggestionPill>
             ))}
           </div>
         </div>
         <div>
-          <p className="text-xs font-medium text-slate-500 mb-1.5">States</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+            States
+          </p>
           <div className="flex flex-wrap gap-1.5">
             {US_STATES.slice(0, 12).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => add("state", s)}
-                className="px-2.5 py-1 text-xs rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50"
-              >
-                + {s}
-              </button>
+              <SuggestionPill key={s} onClick={() => add("state", s)}>
+                {s}
+              </SuggestionPill>
             ))}
           </div>
         </div>
@@ -671,7 +711,7 @@ function StepGeography({ snapshot, onChange }: StepProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 7: Scope & duration → profiles.{scope_min_usd, scope_max_usd, duration_pref, complexity_pref}
+// Step 7: Scope & duration
 // ---------------------------------------------------------------------------
 
 function StepScope({ snapshot, onChange }: StepProps) {
@@ -694,31 +734,24 @@ function StepScope({ snapshot, onChange }: StepProps) {
   };
 
   return (
-    <div>
-      <StepHeader
-        title="Scope & duration"
-        blurb="What size jobs do you take? RFPs outside your band get scored lower so they don't crowd your dashboard."
-      />
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <FieldLabel>Minimum contract size (USD)</FieldLabel>
-            <TextInput
-              type="number"
-              value={minUsd}
-              onChange={setMinUsd}
-              placeholder="50000"
-            />
-          </div>
-          <div>
-            <FieldLabel>Maximum contract size (USD)</FieldLabel>
-            <TextInput
-              type="number"
-              value={maxUsd}
-              onChange={setMaxUsd}
-              placeholder="2000000"
-            />
-          </div>
+    <div className="space-y-5">
+      <div>
+        <label className={labelClass}>Contract size band (USD)</label>
+        <div className="grid grid-cols-2 gap-3">
+          <input
+            type="number"
+            value={minUsd}
+            onChange={(e) => setMinUsd(e.target.value)}
+            placeholder="Minimum (e.g. 50000)"
+            className={inputClass}
+          />
+          <input
+            type="number"
+            value={maxUsd}
+            onChange={(e) => setMaxUsd(e.target.value)}
+            placeholder="Maximum (e.g. 2000000)"
+            className={inputClass}
+          />
         </div>
         <button
           type="button"
@@ -728,61 +761,39 @@ function StepScope({ snapshot, onChange }: StepProps) {
               scopeMaxUsd: maxUsd ? Number(maxUsd) : null,
             })
           }
-          className="text-sm font-medium text-[#3C89C6] hover:underline"
+          className={`${saveLinkClass} mt-2`}
         >
-          Save scope range
+          Save scope range →
         </button>
-        <div>
-          <FieldLabel>Duration preference</FieldLabel>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            {DURATION_PREFS.map((p) => (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => {
-                  setDurationPref(p.value);
-                  void save({ durationPref: p.value });
-                }}
-                className={`px-3 py-2 text-sm rounded-lg border ${
-                  durationPref === p.value
-                    ? "border-[#3C89C6] bg-blue-50 text-[#2d6da3]"
-                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <FieldLabel>Complexity preference</FieldLabel>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            {COMPLEXITY_PREFS.map((p) => (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => {
-                  setComplexityPref(p.value);
-                  void save({ complexityPref: p.value });
-                }}
-                className={`px-3 py-2 text-sm rounded-lg border ${
-                  complexityPref === p.value
-                    ? "border-[#3C89C6] bg-blue-50 text-[#2d6da3]"
-                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
+      </div>
+      <div>
+        <label className={labelClass}>Duration preference</label>
+        <ChoiceGrid
+          options={DURATION_PREFS}
+          value={durationPref}
+          onChange={(v) => {
+            setDurationPref(v);
+            void save({ durationPref: v });
+          }}
+        />
+      </div>
+      <div>
+        <label className={labelClass}>Complexity preference</label>
+        <ChoiceGrid
+          options={COMPLEXITY_PREFS}
+          value={complexityPref}
+          onChange={(v) => {
+            setComplexityPref(v);
+            void save({ complexityPref: v });
+          }}
+        />
       </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Step 8: Capacity & history → profiles.{prime_vs_sub, gov_experience} + agency_relationships seeds
+// Step 8: Capacity & history
 // ---------------------------------------------------------------------------
 
 function StepCapacity({ snapshot, onChange }: StepProps) {
@@ -826,111 +837,83 @@ function StepCapacity({ snapshot, onChange }: StepProps) {
   };
 
   return (
-    <div>
-      <StepHeader
-        title="Capacity & history"
-        blurb="How you bid and which agencies you've worked with. We use both to weight matches and to detect open-field vs. incumbent-protected RFPs."
-      />
-      <div className="space-y-5">
-        <div>
-          <FieldLabel>Do you bid as prime, sub, or both?</FieldLabel>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            {PRIME_VS_SUB.map((p) => (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => {
-                  setPrimeVsSub(p.value);
-                  void savePatch({ primeVsSub: p.value });
-                }}
-                className={`px-3 py-2 text-sm rounded-lg border ${
-                  primeVsSub === p.value
-                    ? "border-[#3C89C6] bg-blue-50 text-[#2d6da3]"
-                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                }`}
+    <div className="space-y-5">
+      <div>
+        <label className={labelClass}>Do you bid as prime, sub, or both?</label>
+        <ChoiceGrid
+          options={PRIME_VS_SUB}
+          value={primeVsSub}
+          onChange={(v) => {
+            setPrimeVsSub(v);
+            void savePatch({ primeVsSub: v });
+          }}
+        />
+      </div>
+      <div>
+        <label className={labelClass}>Government contracting experience</label>
+        <ChoiceGrid
+          options={GOV_EXPERIENCE}
+          value={govExperience}
+          onChange={(v) => {
+            setGovExperience(v);
+            void savePatch({ govExperience: v });
+          }}
+          cols={4}
+        />
+      </div>
+      <div>
+        <label className={labelClass}>Agencies you&apos;ve worked with</label>
+        <div className="flex flex-wrap gap-2 min-h-[40px] mb-3">
+          {snapshot.agencyRelationships.length === 0 ? (
+            <EmptyHint>Pick any that apply below.</EmptyHint>
+          ) : (
+            snapshot.agencyRelationships.map((a) => (
+              <Chip
+                key={a.id}
+                variant={a.role === "prime" ? "violet" : "blue"}
+                onRemove={() => removeAgency(a.id)}
               >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <FieldLabel>Government contracting experience</FieldLabel>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            {GOV_EXPERIENCE.map((g) => (
-              <button
-                key={g.value}
-                type="button"
-                onClick={() => {
-                  setGovExperience(g.value);
-                  void savePatch({ govExperience: g.value });
-                }}
-                className={`px-3 py-2 text-sm rounded-lg border ${
-                  govExperience === g.value
-                    ? "border-[#3C89C6] bg-blue-50 text-[#2d6da3]"
-                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                {g.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <FieldLabel>Agencies you&apos;ve worked with</FieldLabel>
-          <div className="flex flex-wrap gap-2 min-h-[36px] mb-3">
-            {snapshot.agencyRelationships.length === 0 && (
-              <span className="text-sm text-slate-400">
-                Pick any that apply below.
-              </span>
-            )}
-            {snapshot.agencyRelationships.map((a) => (
-              <Chip key={a.id} onRemove={() => removeAgency(a.id)}>
-                {a.agencyDisplay}
-                <span className="text-blue-400 text-xs ml-1">({a.role})</span>
+                <span>{a.agencyDisplay}</span>
+                <span className="text-xs opacity-60">· {a.role}</span>
               </Chip>
-            ))}
-          </div>
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-slate-500">
-              Click to add — toggle prime/sub on each
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {COMMON_AGENCIES.map((a) => {
-                const primeHeld = heldAgencies.has(`${a.canonical}:prime`);
-                const subHeld = heldAgencies.has(`${a.canonical}:sub`);
-                if (primeHeld && subHeld) return null;
-                return (
-                  <span
-                    key={a.canonical}
-                    className="inline-flex items-stretch text-xs rounded-full border border-slate-200 overflow-hidden"
+            ))
+          )}
+        </div>
+        <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+          Click to add — choose prime or sub on each
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {COMMON_AGENCIES.map((a) => {
+            const primeHeld = heldAgencies.has(`${a.canonical}:prime`);
+            const subHeld = heldAgencies.has(`${a.canonical}:sub`);
+            if (primeHeld && subHeld) return null;
+            return (
+              <span
+                key={a.canonical}
+                className="inline-flex items-stretch text-xs font-medium rounded-full border border-slate-200 bg-white overflow-hidden"
+              >
+                <span className="px-3 py-1 text-slate-700">{a.display}</span>
+                {!primeHeld && (
+                  <button
+                    type="button"
+                    onClick={() => addAgency(a.canonical, a.display, "prime")}
+                    className="px-2.5 text-violet-700 border-l border-slate-200 hover:bg-violet-50 transition-colors"
                   >
-                    <span className="px-2.5 py-1 text-slate-600 bg-slate-50">
-                      {a.display}
-                    </span>
-                    {!primeHeld && (
-                      <button
-                        type="button"
-                        onClick={() => addAgency(a.canonical, a.display, "prime")}
-                        className="px-2 text-slate-500 border-l border-slate-200 hover:bg-slate-100"
-                      >
-                        + prime
-                      </button>
-                    )}
-                    {!subHeld && (
-                      <button
-                        type="button"
-                        onClick={() => addAgency(a.canonical, a.display, "sub")}
-                        className="px-2 text-slate-500 border-l border-slate-200 hover:bg-slate-100"
-                      >
-                        + sub
-                      </button>
-                    )}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
+                    + prime
+                  </button>
+                )}
+                {!subHeld && (
+                  <button
+                    type="button"
+                    onClick={() => addAgency(a.canonical, a.display, "sub")}
+                    className="px-2.5 text-blue-700 border-l border-slate-200 hover:bg-blue-50 transition-colors"
+                  >
+                    + sub
+                  </button>
+                )}
+              </span>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -938,7 +921,7 @@ function StepCapacity({ snapshot, onChange }: StepProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 9: Done — review & finish (writes profiles.onboarded_at via POST)
+// Step 9: Done — review & finish
 // ---------------------------------------------------------------------------
 
 function StepReview({ snapshot }: { snapshot: OnboardingSnapshot }) {
@@ -983,7 +966,9 @@ function StepReview({ snapshot }: { snapshot: OnboardingSnapshot }) {
       label: "Scope",
       value:
         snapshot.scopeMinUsd || snapshot.scopeMaxUsd
-          ? `$${snapshot.scopeMinUsd ?? 0} – $${snapshot.scopeMaxUsd ?? "∞"}`
+          ? `$${(snapshot.scopeMinUsd ?? 0).toLocaleString()} – $${
+              snapshot.scopeMaxUsd ? snapshot.scopeMaxUsd.toLocaleString() : "∞"
+            }`
           : null,
     },
     {
@@ -995,26 +980,22 @@ function StepReview({ snapshot }: { snapshot: OnboardingSnapshot }) {
   ];
 
   return (
-    <div>
-      <StepHeader
-        title="Almost done"
-        blurb="Here's what we'll use to match you. You can edit any of this from the profile page later."
-      />
-      <div className="space-y-2">
-        {summary.map((s) => (
-          <div
-            key={s.label}
-            className="flex items-baseline gap-3 text-sm border-b border-slate-100 pb-2"
-          >
-            <span className="w-32 shrink-0 font-medium text-slate-600">{s.label}</span>
-            <span className={s.value ? "text-slate-800" : "text-slate-400 italic"}>
-              {s.value ?? "Skipped — you can fill this in later"}
-            </span>
-          </div>
-        ))}
-      </div>
-      <p className="text-xs text-slate-400 mt-6">
-        Hit <strong>Finish &amp; go to dashboard</strong> to start matching against open RFPs.
+    <div className="space-y-2">
+      {summary.map((s) => (
+        <div
+          key={s.label}
+          className="flex items-baseline gap-3 text-sm py-2 border-b border-slate-100 last:border-0"
+        >
+          <span className="w-32 shrink-0 font-semibold text-slate-500 text-xs uppercase tracking-wider">
+            {s.label}
+          </span>
+          <span className={s.value ? "text-slate-800" : "text-slate-400 italic"}>
+            {s.value ?? "Skipped — you can fill this in later"}
+          </span>
+        </div>
+      ))}
+      <p className="text-xs text-slate-400 mt-4">
+        Hit <strong className="text-emerald-700">Finish &amp; view matches</strong> to score open RFPs against your profile.
       </p>
     </div>
   );

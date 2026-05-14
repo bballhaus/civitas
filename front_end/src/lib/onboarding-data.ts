@@ -193,3 +193,73 @@ export const COMMON_AGENCIES = [
 ] as const;
 
 export const TOTAL_STEPS = 9;
+
+// Per-step UI metadata — title shown in the card header, short label in the
+// breadcrumb pip, blurb under the title, and icon key for the StepIcon
+// dispatcher. Per-step page.tsx renders this; per-step Steps.tsx renders
+// only the inputs.
+export const STEP_META = [
+  {
+    short: "Identity",
+    title: "Tell us about your company",
+    blurb:
+      "Just the basics. We use these to filter RFPs by size and to introduce you on generated proposals.",
+    icon: "identity",
+  },
+  {
+    short: "Specialties",
+    title: "What's your bread and butter?",
+    blurb:
+      "Your two or three core specialties — the single biggest signal we use to match RFPs. Be specific.",
+    icon: "specialty",
+  },
+  {
+    short: "Capabilities",
+    title: "What else can you do?",
+    blurb:
+      "Broader than specialties. Anything you can take on if the RFP calls for it.",
+    icon: "capabilities",
+  },
+  {
+    short: "Licenses",
+    title: "Licenses you hold",
+    blurb:
+      "License classes act as binary gates. Missing one routes the RFP to your sub track.",
+    icon: "license",
+  },
+  {
+    short: "Certifications",
+    title: "Certifications",
+    blurb:
+      "Hard certifications (DVBE, 8(a)) can qualify or disqualify outright. Soft certifications (ISO, CMMI) are bonus signals.",
+    icon: "certification",
+  },
+  {
+    short: "Geography",
+    title: "Where do you work?",
+    blurb:
+      "Cities, counties, metros, or whole states. Lock anywhere you absolutely won't travel outside.",
+    icon: "geography",
+  },
+  {
+    short: "Scope",
+    title: "Scope & duration",
+    blurb:
+      "What size jobs do you take? RFPs outside your band get scored lower so they don't crowd your dashboard.",
+    icon: "scope",
+  },
+  {
+    short: "Capacity",
+    title: "Capacity & history",
+    blurb:
+      "How you bid and which agencies you've worked with. Used to weight matches and detect incumbent-protected RFPs.",
+    icon: "capacity",
+  },
+  {
+    short: "Review",
+    title: "Almost done",
+    blurb:
+      "Here's what we'll use to match you. You can edit any of this from your profile later.",
+    icon: "review",
+  },
+] as const;
