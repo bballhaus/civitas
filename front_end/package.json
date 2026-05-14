@@ -12,7 +12,8 @@
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push",
     "rfp-cache:populate": "tsx src/lib/rfp-cache-populator.ts",
-    "rfp-cache:embed": "tsx scripts/embed-rfp-cache.ts"
+    "rfp-cache:embed": "tsx scripts/embed-rfp-cache.ts",
+    "kpi:funnel": "tsx scripts/funnel-report.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.89.0",
