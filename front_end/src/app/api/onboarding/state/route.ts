@@ -19,6 +19,7 @@ import {
   refreshCompletenessScore,
 } from "@/db/queries/profile";
 import { recordEvent } from "@/lib/event-log";
+import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
 
 // Maps spec § 5 step numbers to the readiness check that "moves past" that
 // step. Step 9 is the explicit completion marker (onboarded_at).
@@ -120,5 +121,21 @@ export async function POST(request: Request) {
   }
 
   void recordEvent(auth.username, "onboarding_completed");
+
+  // Kick off embedding of the user's specialties + capabilities so the v2
+  // matcher can score them. Spec § 5 calls for this to be a background job;
+  // until we wire up a queue we run it inline but absorb any failures
+  // (missing VOYAGE_API_KEY in dev, transient network issue) without
+  // blocking the user from reaching the dashboard.
+  try {
+    await refreshProfileEmbeddings(auth.userId);
+  } catch (err) {
+    if (err instanceof EmbeddingConfigError) {
+      console.warn("[onboarding] Skipping embeddings — VOYAGE_API_KEY not set");
+    } else {
+      console.error("[onboarding] Embedding refresh failed:", err);
+    }
+  }
+
   return NextResponse.json({ onboardedAt: row.onboardedAt });
 }
