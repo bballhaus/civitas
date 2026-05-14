@@ -61,6 +61,10 @@ export interface RFP {
   // ISO timestamp: when the scraper first saw this event. Used by the dashboard
   // to render a "New" chip on RFPs that appeared since the user's last visit.
   firstSeenAt?: string | null;
+  // Origin manifest (e.g. "caleprocure", "opengov_pasadena"). Optional so the
+  // matching layer doesn't have to care; UI can use it for source-specific
+  // affordances like the external-link label.
+  sourceId?: string;
 }
 
 export interface ScoreBreakdown {

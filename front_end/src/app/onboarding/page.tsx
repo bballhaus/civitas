@@ -209,9 +209,13 @@ export default function OnboardingPage() {
           })}
         </div>
 
-        {/* Main card */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 border-l-4 border-l-[#3C89C6] overflow-hidden">
-          <div className="px-6 py-5 bg-gradient-to-r from-blue-50/80 to-white/80 border-b border-slate-100 flex items-center gap-3">
+        {/* Main card — `overflow-visible` so the NAICS combobox dropdown
+            (absolute-positioned within the body) can extend past the card's
+            bottom edge instead of getting clipped. Inner panels carry their
+            own rounded corners to preserve the visual mask the parent used
+            to provide via `overflow-hidden`. */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 border-l-4 border-l-[#3C89C6]">
+          <div className="px-6 py-5 bg-gradient-to-r from-blue-50/80 to-white/80 border-b border-slate-100 flex items-center gap-3 rounded-t-2xl">
             <span className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#3C89C6] to-blue-600 flex items-center justify-center text-white shadow-md shrink-0">
               <StepIcon icon={meta.icon} />
             </span>
@@ -233,7 +237,7 @@ export default function OnboardingPage() {
             )}
           </div>
 
-          <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">
+          <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between rounded-b-2xl">
             <button
               type="button"
               onClick={goBack}
