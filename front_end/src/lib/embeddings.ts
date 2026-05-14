@@ -24,8 +24,16 @@ import {
 const VOYAGE_URL = "https://api.voyageai.com/v1/embeddings";
 const MODEL = "voyage-3-large";
 const DIMENSIONS = 1024;
-// Voyage's batch ceiling is 128 per request; we keep a healthy margin.
-const BATCH_SIZE = 96;
+// Voyage's free tier caps at 10K TPM. At ~150 tokens per short text, a batch
+// of 40 lands at ~6K tokens — comfortably under the limit so a single
+// request doesn't get auto-rejected. Paid tiers can comfortably push 96.
+const BATCH_SIZE = Number(process.env.VOYAGE_BATCH_SIZE ?? 40);
+// Free tier is also 3 RPM. Sleep this many ms between batches so a single
+// script run doesn't tripwire the limiter. Set to 0 on paid tiers.
+const INTER_BATCH_DELAY_MS = Number(process.env.VOYAGE_BATCH_DELAY_MS ?? 21_000);
+// 429 retry budget — we retry with exponential backoff in addition to the
+// fixed inter-batch delay so transient throttling self-heals.
+const MAX_RETRIES = 5;
 
 export class EmbeddingConfigError extends Error {}
 
@@ -53,31 +61,55 @@ async function callVoyage(
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
   const apiKey = requireApiKey();
-  const res = await fetch(VOYAGE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      input: texts,
-      model: MODEL,
-      input_type: inputType,
-      output_dimension: DIMENSIONS,
-    }),
-  });
-  if (!res.ok) {
+
+  let attempt = 0;
+  for (;;) {
+    const res = await fetch(VOYAGE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        input: texts,
+        model: MODEL,
+        input_type: inputType,
+        output_dimension: DIMENSIONS,
+      }),
+    });
+
+    if (res.ok) {
+      const json = (await res.json()) as VoyageResponse;
+      // Voyage may return entries out of order; sort by index so the
+      // caller gets vectors aligned with its input array.
+      const out = new Array<number[]>(texts.length);
+      for (const row of json.data) {
+        out[row.index] = row.embedding;
+      }
+      return out;
+    }
+
+    // 429 = rate limit. Respect Retry-After if present; otherwise back off
+    // exponentially. Free tier is 3 RPM so 20-40s waits are normal here.
+    if (res.status === 429 && attempt < MAX_RETRIES) {
+      const retryAfter = Number(res.headers.get("retry-after")) || 0;
+      const backoff = Math.max(
+        retryAfter * 1000,
+        Math.min(60_000, 5_000 * Math.pow(2, attempt)),
+      );
+      console.warn(`[voyage] 429 rate-limited, sleeping ${backoff}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      await sleep(backoff);
+      attempt += 1;
+      continue;
+    }
+
     const errText = await res.text();
     throw new Error(`Voyage embedding request failed (${res.status}): ${errText}`);
   }
-  const json = (await res.json()) as VoyageResponse;
-  // Voyage may return entries out of order; sort by index to keep alignment
-  // with the input array a hard guarantee for callers.
-  const out = new Array<number[]>(texts.length);
-  for (const row of json.data) {
-    out[row.index] = row.embedding;
-  }
-  return out;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -104,6 +136,11 @@ export async function embedBatch(
     const chunk = texts.slice(i, i + BATCH_SIZE);
     const embedded = await callVoyage(chunk, inputType);
     out.push(...embedded);
+    // Stay below the configured RPM ceiling between batches. Skipped for
+    // the last batch — no point sleeping after the final write.
+    if (INTER_BATCH_DELAY_MS > 0 && i + BATCH_SIZE < texts.length) {
+      await sleep(INTER_BATCH_DELAY_MS);
+    }
   }
   return out;
 }
