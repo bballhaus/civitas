@@ -109,6 +109,10 @@ interface V2EnrichedEvent {
   contract_duration: string | null;
   evaluation_criteria: string[];
   attachment_rollup: { summary: string; text: string; pdfsProcessed: string[] } | null;
+  // Optional on the wire — Pydantic emits null/missing depending on source.
+  // Shape kept compatible with the V2EnrichedEvent in lib/rfp-cache-populator.ts.
+  incumbent_vendor?: string;
+  incumbent_contract_end?: string;
   posted_date: string | null;
   scraped_at: string;
 }
@@ -191,6 +195,9 @@ function v2EventToRfp(e: V2EnrichedEvent) {
     contractDuration: e.contract_duration,
     evaluationCriteria: e.evaluation_criteria,
     attachmentRollup: e.attachment_rollup,
+    incumbentVendor: e.incumbent_vendor ?? null,
+    incumbentContractEnd: e.incumbent_contract_end ?? null,
+    firstSeenAt: e.first_seen_at ?? null,
   };
 }
 

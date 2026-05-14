@@ -31,6 +31,11 @@ import {
 } from "@/lib/api";
 import { getCachedEvents, setCachedEvents, clearCachedEvents } from "@/lib/events-cache";
 import { trackEvent } from "@/lib/event-tracker";
+
+// Feature flag: AI Proposal and Plan-of-Execution generation are hidden from
+// the UI for the v-0.1 test-user launch. The backend routes remain available;
+// only the entry points in the UI are removed. Flip back to `true` to restore.
+const SHOW_AI_GENERATION = false;
 import {
   type RFP as RFPType,
   type RFPMatch as RFPMatchType,
@@ -658,6 +663,26 @@ export default function DashboardPage() {
     setNotInterestedRfpIds(loadSet(STORAGE_KEYS.NOT_INTERESTED));
     setExpressedInterestRfpIds(loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
     trackEvent("page_viewed", { pagePath: "/dashboard" });
+  }, []);
+
+  // "New since last visit" threshold. Hit /api/user/dashboard-view on mount —
+  // it returns the user's previous lastDashboardViewedAt and updates the
+  // server-side value to "now" in the same call. First-ever visit returns null
+  // and nothing gets a "New" chip, which is intentional (no noise on day one).
+  const [newSinceThresholdMs, setNewSinceThresholdMs] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/user/dashboard-view/", { method: "POST" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.previous) return;
+        const ms = Date.parse(data.previous);
+        if (Number.isFinite(ms)) setNewSinceThresholdMs(ms);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Keep not-interested/expressed in sync with current RFP list so we don't show counts for stale IDs
@@ -1355,6 +1380,22 @@ export default function DashboardPage() {
                   </div>
                   <p className="text-xs text-slate-500 mb-3 truncate min-w-0" title={[rfp.contractType, rfp.location].filter(Boolean).join(" · ") || undefined}>{rfp.contractType} · {rfp.location}</p>
                   <div className="flex flex-wrap gap-2 mb-3">
+                    {(() => {
+                      const seen = rfp.firstSeenAt ? Date.parse(rfp.firstSeenAt) : NaN;
+                      const isNew =
+                        newSinceThresholdMs !== null &&
+                        Number.isFinite(seen) &&
+                        seen > newSinceThresholdMs;
+                      if (!isNew) return null;
+                      return (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold bg-yellow-100 text-yellow-800 border border-yellow-200">
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 2l2.39 7.36H22l-6.18 4.49L18.21 22 12 17.27 5.79 22l2.39-8.15L2 9.36h7.61z" />
+                          </svg>
+                          New
+                        </span>
+                      );
+                    })()}
                     <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-600">
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
@@ -1404,6 +1445,21 @@ export default function DashboardPage() {
                       <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700">
                         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M10 15V19a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10zM17 2h3a2 2 0 012 2v7a2 2 0 01-2 2h-3V2z" /></svg>
                         Bad match
+                      </span>
+                    )}
+                    {rfp.incumbentVendor && (
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700"
+                        title={
+                          rfp.incumbentContractEnd
+                            ? `Current contract ends ${rfp.incumbentContractEnd}`
+                            : undefined
+                        }
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Incumbent: {rfp.incumbentVendor}
                       </span>
                     )}
                   </div>
@@ -1949,37 +2005,41 @@ function RFPDetailPanel({
             >
               <svg className="w-4 h-4" fill={matchFeedbackRating === "bad" ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 15V19a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 2h3a2 2 0 012 2v7a2 2 0 01-2 2h-3" /></svg>
             </button>
-            <div className="w-px h-6 bg-slate-200 mx-0.5" />
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setProposalDropdownOpen((open) => !open);
-                if (!proposal && !proposalLoading) handleGenerateProposal();
-              }}
-              className={`shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 ${proposal ? "bg-violet-600 text-white" : "bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
-            >
-              {proposalLoading ? (
-                <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
-              ) : (
-                <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Generate Proposal</>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setPoeDropdownOpen((open) => !open);
-                if (!planOfExecution && !planLoading) handleGeneratePlanOfExecution();
-              }}
-              className={`shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 ${planOfExecution ? "bg-purple-600 text-white" : "bg-purple-50 text-purple-700 hover:bg-purple-100"}`}
-            >
-              {planLoading ? (
-                <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
-              ) : (
-                <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Generate POE</>
-              )}
-            </button>
+            {SHOW_AI_GENERATION && (
+              <>
+                <div className="w-px h-6 bg-slate-200 mx-0.5" />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setProposalDropdownOpen((open) => !open);
+                    if (!proposal && !proposalLoading) handleGenerateProposal();
+                  }}
+                  className={`shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 ${proposal ? "bg-violet-600 text-white" : "bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
+                >
+                  {proposalLoading ? (
+                    <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
+                  ) : (
+                    <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Generate Proposal</>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPoeDropdownOpen((open) => !open);
+                    if (!planOfExecution && !planLoading) handleGeneratePlanOfExecution();
+                  }}
+                  className={`shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 ${planOfExecution ? "bg-purple-600 text-white" : "bg-purple-50 text-purple-700 hover:bg-purple-100"}`}
+                >
+                  {planLoading ? (
+                    <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" /><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Generating…</>
+                  ) : (
+                    <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Generate POE</>
+                  )}
+                </button>
+              </>
+            )}
             {(rfp.eventUrl || rfp.id) && (
               <a href={rfp.eventUrl || "#"} target="_blank" rel="noopener noreferrer" className="shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 h-10 bg-amber-50 text-amber-700 hover:bg-amber-100">
                 View on Cal eProcure <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>

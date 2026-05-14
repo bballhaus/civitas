@@ -1,21 +1,25 @@
-// Signup — Postgres-backed (matching-alg / Architecture-v2 § 11).
+// Signup — email-verify-before-account-creation flow.
 //
-// Creates the user + an empty profile in a single transaction (see
-// db/queries/users.ts). Email verification token flow is deferred until the
-// schema gains the verification token columns; for now we auto-verify in
-// dev and skip the email send in prod (signup still works, the user just
-// won't have a verified email until that feature is rebuilt).
+// The user submits the signup form, we write to `pending_users` (NOT `users`)
+// and send a verification email. No auth cookie is set. The account only
+// becomes real when the user clicks the verification link, at which point
+// the verify-email route promotes the pending row into `users`.
+//
+// This closes the gap from Security.md where signup created a real user
+// before email ownership was proven.
 
 import { NextResponse } from "next/server";
-import { hashPassword, validatePassword, signJwt, setAuthCookie } from "@/lib/auth";
-import { createUser, getUserByUsername, getUserByEmail } from "@/db/queries/users";
+import { randomBytes } from "crypto";
+import { hashPassword, validatePassword } from "@/lib/auth";
+import { getUserByUsername, getUserByEmail } from "@/db/queries/users";
+import { upsertPendingUser } from "@/db/queries/pending-users";
+import { sendVerificationEmail } from "@/lib/email";
 import { logSecurityEvent } from "@/lib/security-log";
-import { recordEvent } from "@/lib/event-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
-// 5 signup attempts per 15 minutes per IP
 const SIGNUP_MAX_REQUESTS = 5;
 const SIGNUP_WINDOW_MS = 15 * 60 * 1000;
+const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 export async function POST(request: Request) {
   const ip = getClientIp(request);
@@ -71,30 +75,41 @@ export async function POST(request: Request) {
     }
 
     const passwordHash = await hashPassword(password);
-    const user = await createUser({ username, email, passwordHash });
+    const verificationToken = randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + VERIFICATION_TTL_MS);
 
-    // Email verification token flow is being rebuilt against the new schema.
-    // For now: verified-by-default in dev, unverified in prod (user can still
-    // sign in; verified flag will be flipped via a separate flow once the
-    // token columns and email send paths land).
-    // TODO: add email_verification_token + email_verification_expires_at
-    // columns to the users table and re-enable token-based verification.
+    await upsertPendingUser({
+      username,
+      email,
+      passwordHash,
+      verificationToken,
+      expiresAt,
+    });
 
-    const token = await signJwt(user.id, user.username);
+    const host = request.headers.get("host") || "localhost:3000";
+    const proto = request.headers.get("x-forwarded-proto") || "http";
+    const emailSent = await sendVerificationEmail(
+      email,
+      username,
+      verificationToken,
+      host,
+      proto,
+    );
 
     logSecurityEvent({
-      type: "signup",
+      type: "signup_verification_sent",
       username,
       ip: request.headers.get("x-forwarded-for") || undefined,
     });
-    void recordEvent(user.username, "signup", { emailVerified: user.emailVerified });
 
-    const response = NextResponse.json(
-      { username: user.username, email_verified: user.emailVerified },
-      { status: 201, headers: { "Cache-Control": "no-store" } },
+    return NextResponse.json(
+      {
+        pending: true,
+        email,
+        emailSent,
+      },
+      { status: 202, headers: { "Cache-Control": "no-store" } },
     );
-    setAuthCookie(response, token);
-    return response;
   } catch (err) {
     console.error("Signup error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

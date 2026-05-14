@@ -7,15 +7,17 @@ You will be given:
 1) RFP details (title, agency, industry, capabilities, certifications, NAICS codes, location, description, attachments)
 2) The user's profile (industries, capabilities, certifications, locations, agency experience, contract types, technology stack)
 3) The rule-based score breakdown showing how the user scored in each category
+4) Incumbent context, if available — the current contractor named in the RFP and the date their contract expires
 
-Your task: Write a focused analysis (150–250 words) that covers:
+Your task: Write a focused analysis (150–280 words) that covers:
 - **What your company can fulfill** — Specific RFP requirements that align with your capabilities, certifications, industry experience, technology stack, or past agency work. Reference concrete overlaps.
 - **Potential gaps** — Specific RFP requirements you do not currently demonstrate in your profile (missing certifications, unfamiliar agencies, scope areas not listed in capabilities, etc.)
 - **Scope alignment** — How well the type of work described in the RFP matches your demonstrated experience
+- **Incumbent context** — ONLY include this section if incumbent information is provided. State the incumbent vendor by name, note the contract end date if given, and flag that re-competes against an existing incumbent generally favor the incumbent unless you have a specific edge (named past agency work, lower-cost structure, missing-cert remediation, etc.). Keep it to 1–3 short sentences. Do not invent an incumbent if none is provided.
 
 Format your response in markdown:
 - Do NOT include a title or heading like "Capabilities Analysis" at the top — jump straight into the content
-- Use **bold** for section headings (e.g., **What your company can fulfill**, **Potential gaps**, **Scope alignment**)
+- Use **bold** for section headings (e.g., **What your company can fulfill**, **Potential gaps**, **Scope alignment**, **Incumbent context**)
 - Use bullet points for specific items
 - Always refer to the reader as "you" and their business as "your company". Never use "the company" or "the contractor" in your output.
 - Keep it scannable and factual — no encouragement or advice about improving the profile
@@ -55,6 +57,12 @@ export async function POST(req: Request) {
     const setAsides = Array.isArray(rfp.setAsideTypes) ? (rfp.setAsideTypes as string[]).join(", ") : "";
     const deliverables = Array.isArray(rfp.deliverables) ? (rfp.deliverables as string[]).slice(0, 5).join(", ") : "";
 
+    const incumbentVendor = typeof rfp.incumbentVendor === "string" ? rfp.incumbentVendor : "";
+    const incumbentEnd = typeof rfp.incumbentContractEnd === "string" ? rfp.incumbentContractEnd : "";
+    const incumbentBlock = incumbentVendor
+      ? `Incumbent vendor: ${incumbentVendor}${incumbentEnd ? ` (current contract ends ${incumbentEnd})` : ""}`
+      : "Incumbent vendor: not disclosed";
+
     const input = `RFP:
 Title: ${rfp.title ?? "N/A"}
 Agency: ${rfp.agency ?? "N/A"}
@@ -68,6 +76,8 @@ Clearances required: ${clearances || "N/A"}
 Set-aside types: ${setAsides || "N/A"}
 Deliverables: ${deliverables || "N/A"}
 Estimated value: ${rfp.estimatedValue ?? "N/A"}
+
+${incumbentBlock}
 
 Description (excerpt):
 ${description.slice(0, 3000)}

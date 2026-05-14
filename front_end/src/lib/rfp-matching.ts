@@ -52,6 +52,15 @@ export interface RFP {
     text: string;
     pdfsProcessed: string[];
   } | null;
+  // URLs of downloaded attachment PDFs, served from S3 via /api/attachments/.
+  attachmentUrls?: string[];
+  // LLM-extracted incumbent info (Cal eProcure today; null for other sources).
+  // See docs/Architecture-v2.md § 10 for the full incumbent state machine.
+  incumbentVendor?: string | null;
+  incumbentContractEnd?: string | null;
+  // ISO timestamp: when the scraper first saw this event. Used by the dashboard
+  // to render a "New" chip on RFPs that appeared since the user's last visit.
+  firstSeenAt?: string | null;
 }
 
 export interface ScoreBreakdown {
