@@ -4,7 +4,7 @@
 // Visual vocabulary mirrors the home/profile pages: rounded-xl, slate text
 // tiers, glass-style hover states, and the #3C89C6 primary blue.
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { OnboardingSnapshot } from "./types";
 import {
   EMPLOYEE_BANDS,
@@ -136,16 +136,15 @@ function EmptyHint({ children }: { children: React.ReactNode }) {
   );
 }
 
-// NAICS-backed picker used by Specialties + Capabilities. The 1,012 NAICS
-// titles are what RFPs reference verbatim when listing required scopes, so
-// using them here also lifts matching accuracy.
+// NAICS-backed combobox used by Specialties + Capabilities. The 1,012
+// NAICS titles are what RFPs reference verbatim when listing required
+// scopes, so wiring them here also lifts matching accuracy.
 //
-// We render up to MAX_OPTIONS results, filtered by the user's substring
-// query, so the <select> stays interactive instead of dragging in 1k DOM
-// nodes at once. Substring match is case-insensitive across both code and
-// title; "541" surfaces all IT-related entries; "concrete" surfaces all
-// 6 concrete-related codes.
-const NAICS_PICKER_LIMIT = 200;
+// Implemented as a type-ahead combobox: filtered dropdown opens as the
+// user types, arrow keys move highlight, Enter picks, Esc closes. We
+// cap visible results at NAICS_VISIBLE so the list stays scrollable
+// without dragging 1k DOM nodes into the layout.
+const NAICS_VISIBLE = 12;
 
 function NaicsPicker({
   label,
@@ -155,66 +154,151 @@ function NaicsPicker({
   onPick: (title: string) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [selection, setSelection] = useState("");
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
 
   const q = query.trim().toLowerCase();
-  const filtered = q
-    ? NAICS_ENTRIES.filter(
-        (e) =>
-          e.title.toLowerCase().includes(q) || e.code.includes(q),
-      ).slice(0, NAICS_PICKER_LIMIT)
-    : NAICS_ENTRIES.slice(0, NAICS_PICKER_LIMIT);
+  // Score each candidate so prefix matches on the title outrank substring
+  // hits buried in the middle, and a pure-numeric query is treated as a
+  // code lookup. Lightweight — runs on every keystroke against 1k rows.
+  const filtered = useMemo(() => {
+    if (!q) return NAICS_ENTRIES.slice(0, NAICS_VISIBLE);
+    const isNumeric = /^\d+$/.test(q);
+    const matches: { entry: (typeof NAICS_ENTRIES)[number]; score: number }[] = [];
+    for (const entry of NAICS_ENTRIES) {
+      const titleLower = entry.title.toLowerCase();
+      const codeMatch = entry.code.startsWith(q);
+      const titleStart = titleLower.startsWith(q);
+      const titleHit = titleLower.includes(q);
+      if (!codeMatch && !titleHit) continue;
+      let score = 0;
+      if (isNumeric && codeMatch) score += 100;
+      else if (codeMatch) score += 40;
+      if (titleStart) score += 50;
+      else if (titleHit) score += 10;
+      // Shorter codes are usually broader / better defaults.
+      score -= entry.title.length * 0.05;
+      matches.push({ entry, score });
+    }
+    matches.sort((a, b) => b.score - a.score);
+    return matches.slice(0, NAICS_VISIBLE).map((m) => m.entry);
+  }, [q]);
 
-  const handleAdd = () => {
-    if (!selection) return;
-    const entry = NAICS_ENTRIES.find((e) => e.code === selection);
-    if (!entry) return;
-    // Store the title (not the code) so the embedding picks up the
-    // semantic content and substring fallback matches RFP text.
+  // Reset highlight when the candidate list changes — otherwise the user
+  // sees a stale focused row that doesn't match what's visible.
+  useEffect(() => {
+    setHighlighted(0);
+  }, [q]);
+
+  // Click-outside closes the popover.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  // Keep the highlighted row in view when arrow keys push past the edge.
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const item = listRef.current.children[highlighted] as HTMLElement | undefined;
+    item?.scrollIntoView({ block: "nearest" });
+  }, [highlighted, open]);
+
+  const pick = (entry: (typeof NAICS_ENTRIES)[number]) => {
+    // Store the title so the matcher's embedding sees semantic content and
+    // substring fallback finds matches against RFP descriptions.
     onPick(entry.title);
-    setSelection("");
     setQuery("");
+    setOpen(false);
+    inputRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!open) {
+        setOpen(true);
+        return;
+      }
+      setHighlighted((h) => Math.min(h + 1, filtered.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlighted((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Enter") {
+      if (open && filtered[highlighted]) {
+        e.preventDefault();
+        pick(filtered[highlighted]);
+      }
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
   };
 
   return (
     <div className="border-t border-slate-100 pt-4">
       <label className={labelClass}>{label}</label>
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
+      <div ref={wrapperRef} className="relative">
         <input
+          ref={inputRef}
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search NAICS (e.g. concrete, 541, software)"
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type to search NAICS (e.g. concrete, 541, software)"
+          aria-autocomplete="list"
+          aria-expanded={open}
           className={inputClass}
         />
-        <select
-          value={selection}
-          onChange={(e) => setSelection(e.target.value)}
-          className={selectClass}
-        >
-          <option value="">
-            {filtered.length === NAICS_PICKER_LIMIT && q
-              ? `${filtered.length}+ matches — pick one…`
-              : `${filtered.length} ${q ? "matches" : "entries"} — pick one…`}
-          </option>
-          {filtered.map((e) => (
-            <option key={e.code} value={e.code}>
-              {e.code} · {e.title}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={handleAdd}
-          disabled={!selection}
-          className={`${addBtnClass} disabled:opacity-50`}
-        >
-          Add
-        </button>
+        {open && filtered.length > 0 && (
+          <ul
+            ref={listRef}
+            className="absolute z-20 left-0 right-0 mt-1 max-h-[280px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg shadow-slate-200/70"
+          >
+            {filtered.map((entry, i) => (
+              <li
+                key={entry.code}
+                // onMouseDown beats blur so the click registers before the
+                // input loses focus and the list unmounts.
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(entry);
+                }}
+                onMouseEnter={() => setHighlighted(i)}
+                className={`px-3 py-2 cursor-pointer flex items-baseline gap-2 text-sm ${
+                  highlighted === i
+                    ? "bg-blue-50 text-[#2d6fa0]"
+                    : "text-slate-700"
+                }`}
+              >
+                <span className="font-mono text-xs text-slate-400 shrink-0 w-14">
+                  {entry.code}
+                </span>
+                <span className="truncate">{entry.title}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {open && q && filtered.length === 0 && (
+          <div className="absolute z-20 left-0 right-0 mt-1 px-3 py-2 bg-white border border-slate-200 rounded-lg shadow-lg text-sm text-slate-500">
+            No NAICS codes match &ldquo;{query}&rdquo;. Use the free-text input above instead.
+          </div>
+        )}
       </div>
       <p className="text-xs text-slate-400 italic mt-1">
-        From the federal NAICS catalog (1,012 codes) — RFPs reference these
-        directly, so picking the closest match tightens the score.
+        Federal NAICS catalog (1,012 codes). RFPs reference these directly —
+        picking the closest match tightens the score.
       </p>
     </div>
   );
