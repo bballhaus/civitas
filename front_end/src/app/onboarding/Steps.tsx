@@ -149,9 +149,15 @@ const NAICS_VISIBLE = 12;
 function NaicsPicker({
   label,
   onPick,
+  selectedValues,
 }: {
   label: string;
   onPick: (title: string) => void;
+  // Lowercased titles already in the user's specialties/capabilities. The
+  // picker uses this to show an "Added" affordance on rows the user has
+  // already accepted, so they don't have to remember what they picked
+  // earlier in the same step.
+  selectedValues?: ReadonlySet<string>;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -264,30 +270,51 @@ function NaicsPicker({
         {open && filtered.length > 0 && (
           <ul
             ref={listRef}
-            className="absolute z-20 left-0 right-0 mt-1 max-h-[280px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg shadow-slate-200/70"
+            className="absolute z-20 left-0 right-0 mt-1 max-h-[320px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg shadow-slate-200/70"
           >
-            {filtered.map((entry, i) => (
-              <li
-                key={entry.code}
-                // onMouseDown beats blur so the click registers before the
-                // input loses focus and the list unmounts.
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  pick(entry);
-                }}
-                onMouseEnter={() => setHighlighted(i)}
-                className={`px-3 py-2 cursor-pointer flex items-baseline gap-2 text-sm ${
-                  highlighted === i
-                    ? "bg-blue-50 text-[#2d6fa0]"
-                    : "text-slate-700"
-                }`}
-              >
-                <span className="font-mono text-xs text-slate-400 shrink-0 w-14">
-                  {entry.code}
-                </span>
-                <span className="truncate">{entry.title}</span>
-              </li>
-            ))}
+            {filtered.map((entry, i) => {
+              const isAlreadyPicked =
+                selectedValues?.has(entry.title.toLowerCase()) ?? false;
+              return (
+                <li
+                  key={entry.code}
+                  // onMouseDown beats blur so the click registers before the
+                  // input loses focus and the list unmounts.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    if (isAlreadyPicked) {
+                      // Already in the user's profile — picking again would
+                      // either duplicate or no-op depending on backend; we
+                      // just close instead of confusing them.
+                      setOpen(false);
+                      return;
+                    }
+                    pick(entry);
+                  }}
+                  onMouseEnter={() => setHighlighted(i)}
+                  className={`px-3 py-2 cursor-pointer flex items-center gap-2 text-sm ${
+                    isAlreadyPicked
+                      ? "bg-slate-50 text-slate-400 cursor-default"
+                      : highlighted === i
+                        ? "bg-blue-50 text-[#2d6fa0]"
+                        : "text-slate-700"
+                  }`}
+                >
+                  <span className="font-mono text-xs text-slate-400 shrink-0 w-14">
+                    {entry.code}
+                  </span>
+                  <span className="truncate flex-1">{entry.title}</span>
+                  {isAlreadyPicked && (
+                    <span className="text-xs font-medium text-emerald-600 shrink-0 inline-flex items-center gap-1">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Added
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
         {open && q && filtered.length === 0 && (
@@ -463,7 +490,10 @@ function StepSpecialties({ snapshot, onChange }: StepProps) {
     await onChange();
   };
 
-  const currentValues = new Set(snapshot.specialties.map((s) => s.value.toLowerCase()));
+  const currentValues = useMemo(
+    () => new Set(snapshot.specialties.map((s) => s.value.toLowerCase())),
+    [snapshot.specialties],
+  );
 
   return (
     <div className="space-y-4">
@@ -510,7 +540,11 @@ function StepSpecialties({ snapshot, onChange }: StepProps) {
             ))}
         </div>
       </div>
-      <NaicsPicker label="Or pick from the NAICS catalog" onPick={add} />
+      <NaicsPicker
+        label="Or pick from the NAICS catalog"
+        onPick={add}
+        selectedValues={currentValues}
+      />
     </div>
   );
 }
@@ -521,6 +555,10 @@ function StepSpecialties({ snapshot, onChange }: StepProps) {
 
 function StepCapabilities({ snapshot, onChange }: StepProps) {
   const [input, setInput] = useState("");
+  const currentValues = useMemo(
+    () => new Set(snapshot.capabilities.map((c) => c.value.toLowerCase())),
+    [snapshot.capabilities],
+  );
 
   const add = async (value: string) => {
     const v = value.trim();
@@ -569,7 +607,11 @@ function StepCapabilities({ snapshot, onChange }: StepProps) {
           Add
         </button>
       </div>
-      <NaicsPicker label="Or pick from the NAICS catalog" onPick={add} />
+      <NaicsPicker
+        label="Or pick from the NAICS catalog"
+        onPick={add}
+        selectedValues={currentValues}
+      />
     </div>
   );
 }
