@@ -1,0 +1,447 @@
+"use client";
+
+// Commit handler abstraction for the onboarding Step widgets.
+//
+// Two modes:
+//  - Auto: every change hits the API immediately + refreshes the parent
+//          snapshot. This is what the onboarding wizard uses (always
+//          on), and what profile/v2 used before this file existed.
+//  - Deferred: changes accumulate in a draft snapshot held by the
+//          parent. No API calls fire until the parent invokes
+//          `commitDraft`. profile/v2 uses this in its per-section edit
+//          mode so changes aren't persisted until the user clicks Save.
+//
+// Step widgets never call fetch directly anymore — they go through the
+// commit handler from context, which keeps both modes behaviorally
+// identical from the user's perspective until commit time.
+
+import { createContext, useContext } from "react";
+import type { OnboardingSnapshot } from "./types";
+
+export interface TopLevelPatch {
+  companyName?: string | null;
+  yearFounded?: number | null;
+  employeeBand?: string | null;
+  website?: string | null;
+  scopeMinUsd?: number | null;
+  scopeMaxUsd?: number | null;
+  durationPref?: string | null;
+  complexityPref?: string | null;
+  primeVsSub?: string[] | null;
+  govExperience?: string[] | null;
+  dailyRoundupEnabled?: boolean;
+  dailyRoundupTimezone?: string | null;
+}
+
+export interface AddLicenseInput {
+  licenseClass: string;
+  licenseNumber?: string;
+  expiresOn?: string;
+}
+
+export interface AddCertificationInput {
+  canonicalId: string;
+  displayName: string;
+  kind: "hard" | "soft";
+}
+
+export interface AddWorkAreaInput {
+  kind: "city" | "county" | "metro";
+  name: string;
+  isHard: boolean;
+  radiusMiles: number | null;
+}
+
+export interface AddAgencyInput {
+  agencyCanonical: string;
+  agencyDisplay: string;
+  role: "prime" | "sub";
+}
+
+export interface CommitHandler {
+  patch(p: TopLevelPatch): Promise<void>;
+  addSpecialty(input: { value: string; weight: "primary" | "secondary" }): Promise<void>;
+  removeSpecialty(id: string): Promise<void>;
+  addCapability(input: { value: string }): Promise<void>;
+  removeCapability(id: string): Promise<void>;
+  addLicense(input: AddLicenseInput): Promise<void>;
+  removeLicense(id: string): Promise<void>;
+  addCertification(input: AddCertificationInput): Promise<void>;
+  removeCertification(id: string): Promise<void>;
+  addWorkArea(input: AddWorkAreaInput): Promise<void>;
+  removeWorkArea(id: string): Promise<void>;
+  addAgencyRelationship(input: AddAgencyInput): Promise<void>;
+  removeAgencyRelationship(id: string): Promise<void>;
+}
+
+// Default handler throws — every consumer must be wrapped in a provider.
+// Throwing here surfaces the wiring bug at call time rather than silently
+// dropping the user's edits on the floor.
+const placeholder: CommitHandler = new Proxy({} as CommitHandler, {
+  get() {
+    throw new Error(
+      "No CommitHandler in context. Wrap the Step widgets in a CommitProvider.",
+    );
+  },
+});
+
+const CommitContext = createContext<CommitHandler>(placeholder);
+
+export const CommitProvider = CommitContext.Provider;
+
+export function useCommit(): CommitHandler {
+  return useContext(CommitContext);
+}
+
+// ---------------------------------------------------------------------------
+// Auto handler — used by onboarding and by profile/v2 when not editing.
+// Calls the real API + invokes the caller's refresh callback after each
+// mutation.
+// ---------------------------------------------------------------------------
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+export function makeAutoCommitHandler(refresh: () => Promise<void> | void): CommitHandler {
+  const after = async () => {
+    await refresh();
+  };
+  return {
+    async patch(p) {
+      await fetch("/api/profile/", {
+        method: "PATCH",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(p),
+      });
+      await after();
+    },
+    async addSpecialty({ value, weight }) {
+      await fetch("/api/profile/specialties/", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ value, weight }),
+      });
+      await after();
+    },
+    async removeSpecialty(id) {
+      await fetch(`/api/profile/specialties/${id}/`, { method: "DELETE" });
+      await after();
+    },
+    async addCapability({ value }) {
+      await fetch("/api/profile/capabilities/", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ value }),
+      });
+      await after();
+    },
+    async removeCapability(id) {
+      await fetch(`/api/profile/capabilities/${id}/`, { method: "DELETE" });
+      await after();
+    },
+    async addLicense(input) {
+      await fetch("/api/profile/licenses/", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(input),
+      });
+      await after();
+    },
+    async removeLicense(id) {
+      await fetch(`/api/profile/licenses/${id}/`, { method: "DELETE" });
+      await after();
+    },
+    async addCertification(input) {
+      await fetch("/api/profile/certifications/", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(input),
+      });
+      await after();
+    },
+    async removeCertification(id) {
+      await fetch(`/api/profile/certifications/${id}/`, { method: "DELETE" });
+      await after();
+    },
+    async addWorkArea(input) {
+      await fetch("/api/profile/work-areas/", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(input),
+      });
+      await after();
+    },
+    async removeWorkArea(id) {
+      await fetch(`/api/profile/work-areas/${id}/`, { method: "DELETE" });
+      await after();
+    },
+    async addAgencyRelationship(input) {
+      await fetch("/api/profile/agency-relationships/", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ ...input, strength: 3, source: "user" }),
+      });
+      await after();
+    },
+    async removeAgencyRelationship(id) {
+      await fetch(`/api/profile/agency-relationships/${id}/`, { method: "DELETE" });
+      await after();
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Deferred handler — used by profile/v2's per-section edit mode.
+// Mutations update a draft snapshot held by the caller; no API calls
+// fire. Newly-added items get a "draft-*" id so the Step widgets can
+// remove/re-render them without colliding with real DB ids. The caller
+// invokes `commitDraft` at Save time to replay the diff against the
+// real API.
+// ---------------------------------------------------------------------------
+
+const DRAFT_ID_PREFIX = "draft-";
+
+let draftIdCounter = 0;
+function makeDraftId(): string {
+  draftIdCounter += 1;
+  return `${DRAFT_ID_PREFIX}${draftIdCounter}-${Date.now()}`;
+}
+
+export function isDraftId(id: string): boolean {
+  return id.startsWith(DRAFT_ID_PREFIX);
+}
+
+type DraftSetter = (
+  updater: (prev: OnboardingSnapshot) => OnboardingSnapshot,
+) => void;
+
+export function makeDeferredCommitHandler(setDraft: DraftSetter): CommitHandler {
+  // Functional setState pattern: React queues these so rapid successive
+  // mutations (e.g. two quick clicks on NAICS rows) each see the latest
+  // queued state instead of the stale closure value.
+  const mutate = (
+    fn: (s: OnboardingSnapshot) => OnboardingSnapshot,
+  ): Promise<void> => {
+    setDraft(fn);
+    return Promise.resolve();
+  };
+  return {
+    patch(p) {
+      return mutate((s) => ({ ...s, ...p }));
+    },
+    addSpecialty({ value, weight }) {
+      return mutate((s) => ({
+        ...s,
+        specialties: [...s.specialties, { id: makeDraftId(), value, weight }],
+      }));
+    },
+    removeSpecialty(id) {
+      return mutate((s) => ({
+        ...s,
+        specialties: s.specialties.filter((x) => x.id !== id),
+      }));
+    },
+    addCapability({ value }) {
+      return mutate((s) => ({
+        ...s,
+        capabilities: [...s.capabilities, { id: makeDraftId(), value }],
+      }));
+    },
+    removeCapability(id) {
+      return mutate((s) => ({
+        ...s,
+        capabilities: s.capabilities.filter((x) => x.id !== id),
+      }));
+    },
+    addLicense(input) {
+      return mutate((s) => ({
+        ...s,
+        licenses: [
+          ...s.licenses,
+          {
+            id: makeDraftId(),
+            licenseClass: input.licenseClass,
+            licenseNumber: input.licenseNumber ?? null,
+            expiresOn: input.expiresOn ?? null,
+          },
+        ],
+      }));
+    },
+    removeLicense(id) {
+      return mutate((s) => ({
+        ...s,
+        licenses: s.licenses.filter((x) => x.id !== id),
+      }));
+    },
+    addCertification(input) {
+      return mutate((s) => ({
+        ...s,
+        certifications: [...s.certifications, { id: makeDraftId(), ...input }],
+      }));
+    },
+    removeCertification(id) {
+      return mutate((s) => ({
+        ...s,
+        certifications: s.certifications.filter((x) => x.id !== id),
+      }));
+    },
+    addWorkArea(input) {
+      return mutate((s) => ({
+        ...s,
+        workAreas: [...s.workAreas, { id: makeDraftId(), ...input }],
+      }));
+    },
+    removeWorkArea(id) {
+      return mutate((s) => ({
+        ...s,
+        workAreas: s.workAreas.filter((x) => x.id !== id),
+      }));
+    },
+    addAgencyRelationship(input) {
+      return mutate((s) => ({
+        ...s,
+        agencyRelationships: [
+          ...s.agencyRelationships,
+          { id: makeDraftId(), strength: 3, ...input },
+        ],
+      }));
+    },
+    removeAgencyRelationship(id) {
+      return mutate((s) => ({
+        ...s,
+        agencyRelationships: s.agencyRelationships.filter((x) => x.id !== id),
+      }));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Replay the draft against the real API. Returns when every call has
+// resolved. Throws on the first failure; caller decides whether to retry
+// or surface to the user.
+//
+// Ordering: top-level patch first (cheapest), then collection adds
+// (POSTs), then removes (DELETEs). This avoids transient validation
+// errors where, e.g., a license's required class disappears mid-replay.
+// ---------------------------------------------------------------------------
+
+export async function commitDraft(
+  original: OnboardingSnapshot,
+  draft: OnboardingSnapshot,
+): Promise<void> {
+  const handler = makeAutoCommitHandler(async () => {
+    /* no-op: caller refreshes after the whole replay */
+  });
+
+  // 1. Top-level patches
+  const patch: TopLevelPatch = {};
+  if (original.companyName !== draft.companyName) patch.companyName = draft.companyName;
+  if (original.yearFounded !== draft.yearFounded) patch.yearFounded = draft.yearFounded;
+  if (original.employeeBand !== draft.employeeBand) patch.employeeBand = draft.employeeBand;
+  if (original.website !== draft.website) patch.website = draft.website;
+  if (original.scopeMinUsd !== draft.scopeMinUsd) patch.scopeMinUsd = draft.scopeMinUsd;
+  if (original.scopeMaxUsd !== draft.scopeMaxUsd) patch.scopeMaxUsd = draft.scopeMaxUsd;
+  if (original.durationPref !== draft.durationPref) patch.durationPref = draft.durationPref;
+  if (original.complexityPref !== draft.complexityPref) patch.complexityPref = draft.complexityPref;
+  if (!sameArr(original.primeVsSub, draft.primeVsSub)) patch.primeVsSub = draft.primeVsSub;
+  if (!sameArr(original.govExperience, draft.govExperience)) patch.govExperience = draft.govExperience;
+  if (original.dailyRoundupEnabled !== draft.dailyRoundupEnabled) {
+    patch.dailyRoundupEnabled = draft.dailyRoundupEnabled;
+  }
+  if (original.dailyRoundupTimezone !== draft.dailyRoundupTimezone) {
+    patch.dailyRoundupTimezone = draft.dailyRoundupTimezone;
+  }
+  if (Object.keys(patch).length > 0) {
+    await handler.patch(patch);
+  }
+
+  // 2. Collection adds (anything in draft with a draft id)
+  for (const s of draft.specialties) {
+    if (isDraftId(s.id)) {
+      await handler.addSpecialty({ value: s.value, weight: s.weight as "primary" | "secondary" });
+    }
+  }
+  for (const c of draft.capabilities) {
+    if (isDraftId(c.id)) {
+      await handler.addCapability({ value: c.value });
+    }
+  }
+  for (const l of draft.licenses) {
+    if (isDraftId(l.id)) {
+      await handler.addLicense({
+        licenseClass: l.licenseClass,
+        licenseNumber: l.licenseNumber ?? undefined,
+        expiresOn: l.expiresOn ?? undefined,
+      });
+    }
+  }
+  for (const c of draft.certifications) {
+    if (isDraftId(c.id)) {
+      await handler.addCertification({
+        canonicalId: c.canonicalId,
+        displayName: c.displayName,
+        kind: c.kind as "hard" | "soft",
+      });
+    }
+  }
+  for (const w of draft.workAreas) {
+    if (isDraftId(w.id)) {
+      await handler.addWorkArea({
+        kind: w.kind as "city" | "county" | "metro",
+        name: w.name,
+        isHard: w.isHard,
+        radiusMiles: w.radiusMiles,
+      });
+    }
+  }
+  for (const a of draft.agencyRelationships) {
+    if (isDraftId(a.id)) {
+      await handler.addAgencyRelationship({
+        agencyCanonical: a.agencyCanonical,
+        agencyDisplay: a.agencyDisplay,
+        role: a.role as "prime" | "sub",
+      });
+    }
+  }
+
+  // 3. Collection removes (anything in original but missing from draft, by id)
+  const draftIds = (collection: keyof OnboardingSnapshot) => {
+    const items = draft[collection];
+    if (!Array.isArray(items)) return new Set<string>();
+    return new Set((items as { id: string }[]).map((x) => x.id));
+  };
+  const inDraft = {
+    specialties: draftIds("specialties"),
+    capabilities: draftIds("capabilities"),
+    licenses: draftIds("licenses"),
+    certifications: draftIds("certifications"),
+    workAreas: draftIds("workAreas"),
+    agencyRelationships: draftIds("agencyRelationships"),
+  };
+  for (const s of original.specialties) {
+    if (!inDraft.specialties.has(s.id)) await handler.removeSpecialty(s.id);
+  }
+  for (const c of original.capabilities) {
+    if (!inDraft.capabilities.has(c.id)) await handler.removeCapability(c.id);
+  }
+  for (const l of original.licenses) {
+    if (!inDraft.licenses.has(l.id)) await handler.removeLicense(l.id);
+  }
+  for (const c of original.certifications) {
+    if (!inDraft.certifications.has(c.id)) await handler.removeCertification(c.id);
+  }
+  for (const w of original.workAreas) {
+    if (!inDraft.workAreas.has(w.id)) await handler.removeWorkArea(w.id);
+  }
+  for (const a of original.agencyRelationships) {
+    if (!inDraft.agencyRelationships.has(a.id)) await handler.removeAgencyRelationship(a.id);
+  }
+}
+
+function sameArr(a: string[] | null, b: string[] | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  const A = [...a].sort();
+  const B = [...b].sort();
+  return A.every((v, i) => v === B[i]);
+}

@@ -26,8 +26,8 @@ function makeProfile(overrides: Partial<FullProfile> = {}): FullProfile {
     scopeMaxUsd: 5_000_000,
     durationPref: "any",
     complexityPref: "any",
-    primeVsSub: "open_to_sub",
-    govExperience: "local",
+    primeVsSub: ["prime", "sub"],
+    govExperience: ["local"],
     vendorFingerprint: null,
     vendorResolvedAt: null,
     completenessScore: 80,
@@ -128,7 +128,7 @@ test("hard work area blocks RFP outside the lock", () => {
 });
 
 test("past gov experience gate fires only when required", () => {
-  const profile = makeProfile({ govExperience: "none" });
+  const profile = makeProfile({ govExperience: ["none"] });
   const noGate = matchV2(profile, makeRfp({ requiresPastGovExp: null }));
   assert.equal(noGate.primeEligible, true);
 

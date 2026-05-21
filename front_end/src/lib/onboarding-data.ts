@@ -162,17 +162,20 @@ export const COMPLEXITY_PREFS = [
   { value: "any", label: "Any complexity" },
 ] as const;
 
+// Multi-select in the v2 wizard — a contractor may bid as both prime and
+// sub. Stored as a text[] on profiles.prime_vs_sub.
 export const PRIME_VS_SUB = [
-  { value: "prime_only", label: "Prime only" },
-  { value: "sub_only", label: "Sub only" },
-  { value: "open_to_sub", label: "Open to both" },
+  { value: "prime", label: "Prime" },
+  { value: "sub", label: "Sub" },
 ] as const;
 
+// Multi-select. A contractor with state experience hasn't necessarily done
+// federal work, so we don't model these as a strict hierarchy.
 export const GOV_EXPERIENCE = [
   { value: "none", label: "No prior government experience" },
-  { value: "local", label: "City / County contracts" },
-  { value: "state", label: "State contracts" },
-  { value: "federal", label: "Federal contracts" },
+  { value: "local", label: "City / County / Municipal" },
+  { value: "state", label: "State" },
+  { value: "federal", label: "Federal" },
 ] as const;
 
 // California public agencies — comprehensive seed list for the step-8

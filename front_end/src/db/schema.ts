@@ -71,8 +71,14 @@ export const profiles = pgTable(
     scopeMaxUsd: bigint("scope_max_usd", { mode: "number" }),
     durationPref: text("duration_pref"), // 'short' | 'any' | 'retention_ok'
     complexityPref: text("complexity_pref"), // 'simple_only' | 'any' | 'any_with_subs'
-    primeVsSub: text("prime_vs_sub"), // 'prime_only' | 'open_to_sub' | 'sub_only'
-    govExperience: text("gov_experience"), // 'none' | 'local' | 'state' | 'federal'
+    // Multi-select: a single contractor can bid as prime on some RFPs and
+    // sub on others, so the v2 schema stores both possibilities as an array.
+    // Values: 'prime' | 'sub'.
+    primeVsSub: text("prime_vs_sub").array(),
+    // Multi-select: a contractor may have experience across several tiers
+    // (e.g. local + state) without implying the whole hierarchy. Values:
+    // 'none' | 'local' | 'state' | 'federal'. Empty array == not answered.
+    govExperience: text("gov_experience").array(),
     // vendor identity (links to webscraping vendor index)
     vendorFingerprint: text("vendor_fingerprint"),
     vendorResolvedAt: timestamp("vendor_resolved_at", { withTimezone: true }),

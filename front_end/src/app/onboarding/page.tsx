@@ -5,13 +5,14 @@
 // matching child-collection route under /api/profile/*; this page owns step
 // state and resume only. See OnboardingSteps for the per-screen renderers.
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
 import { TOTAL_STEPS, STEP_META } from "@/lib/onboarding-data";
 import { trackEvent } from "@/lib/event-tracker";
 import { OnboardingStep } from "./Steps";
+import { CommitProvider, makeAutoCommitHandler } from "./commit";
 import type { OnboardingSnapshot } from "./types";
 
 // Helper: stable, lowercase step label suitable for grouping in KPI queries.
@@ -29,6 +30,11 @@ interface OnboardingStateResponse {
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // /onboarding?edit=true lets an already-onboarded user walk back through
+  // the wizard from profile/v2's Edit details link. Without this flag we
+  // redirect them away the moment we see onboarded_at is set.
+  const editMode = searchParams?.get("edit") === "true";
   const [step, setStep] = useState<number>(1);
   const [snapshot, setSnapshot] = useState<OnboardingSnapshot | null>(null);
   const [completeness, setCompleteness] = useState<number>(0);
@@ -50,11 +56,15 @@ export default function OnboardingPage() {
         const data = (await res.json()) as OnboardingStateResponse;
         if (cancelled) return;
 
-        if (data.onboardedAt) {
+        if (data.onboardedAt && !editMode) {
           router.replace("/home");
           return;
         }
-        setStep(data.nextStep);
+        // In edit mode, drop the user at Step 1 so they can audit every
+        // section in order. The wizard reads from the live snapshot on
+        // each render, so any saves they make immediately flow back into
+        // profile/v2.
+        setStep(editMode ? 1 : data.nextStep);
         setSnapshot(data.snapshot);
         setCompleteness(data.completenessScore);
       } catch (e) {
@@ -77,6 +87,17 @@ export default function OnboardingPage() {
     setSnapshot(data.snapshot);
     setCompleteness(data.completenessScore);
   };
+
+  // Auto-commit handler for the wizard — every mutation hits the API
+  // immediately and refreshes the snapshot. Memoized so React doesn't
+  // re-wrap the Steps tree on every keystroke.
+  const commitHandler = useMemo(
+    () => makeAutoCommitHandler(refreshSnapshot),
+    // refreshSnapshot is a stable closure since this component re-renders
+    // on every state change; the inner fetch is referentially fine.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   // Fire a step-view event whenever the active step changes (incl. the
   // resume on mount, after the state fetch resolves the user's nextStep).
@@ -113,12 +134,18 @@ export default function OnboardingPage() {
         setError("Failed to finalize onboarding");
         return;
       }
-      // Drop the user into the past-proposals/contracts uploader after the
-      // wizard. The /upload page lets them either drag in past work (which
+      // In edit mode the user is auditing an already-onboarded profile —
+      // send them back to profile/v2 to review the result, not through the
+      // /upload onboarding hand-off again.
+      if (editMode) {
+        router.replace("/profile/v2");
+        return;
+      }
+      // First-time onboarding: drop the user into the past-proposals/contracts
+      // uploader. The /upload page lets them either drag in past work (which
       // backfills profile fields the wizard didn't ask about — strategic
       // goals, past performance, contract count/value, …) or skip straight
-      // through to /profile. Either way it's a continuation of onboarding,
-      // not a detour.
+      // through. Either way it's a continuation of onboarding, not a detour.
       router.replace("/upload");
     } finally {
       setFinishing(false);
@@ -195,16 +222,19 @@ export default function OnboardingPage() {
             const n = i + 1;
             const done = n < step;
             const current = n === step;
+            // In edit mode every step is freely navigable — the user has
+            // already onboarded and is auditing, not progressing.
+            const clickable = editMode || done;
             return (
               <button
                 key={m.title}
                 type="button"
-                onClick={() => done && setStep(n)}
-                disabled={!done && !current}
+                onClick={() => clickable && setStep(n)}
+                disabled={!clickable && !current}
                 className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
                   current
                     ? "bg-[#3C89C6] text-white"
-                    : done
+                    : clickable
                     ? "bg-blue-100 text-blue-700 hover:bg-blue-200 cursor-pointer"
                     : "bg-slate-100 text-slate-400 cursor-not-allowed"
                 }`}
@@ -235,11 +265,9 @@ export default function OnboardingPage() {
 
           <div className="px-6 py-6">
             {snapshot && (
-              <OnboardingStep
-                step={step}
-                snapshot={snapshot}
-                onChange={refreshSnapshot}
-              />
+              <CommitProvider value={commitHandler}>
+                <OnboardingStep step={step} snapshot={snapshot} />
+              </CommitProvider>
             )}
           </div>
 
