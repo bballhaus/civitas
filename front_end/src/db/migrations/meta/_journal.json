@@ -33,8 +33,15 @@
     {
       "idx": 4,
       "version": "7",
+      "when": 1779370854000,
+      "tag": "0004_daily_roundup",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
       "when": 1779580800000,
-      "tag": "0004_bidding_tracker",
+      "tag": "0005_bidding_tracker",
       "breakpoints": true
     }
   ]
