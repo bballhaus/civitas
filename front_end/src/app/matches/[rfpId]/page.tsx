@@ -7,11 +7,55 @@
 // it (spec § 9.10). Top of page shows a data_quality summary so the user
 // knows whether they're reading full extracted requirements or just a title.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
+import { MarkdownContent } from "@/components/MarkdownContent";
+import { portalLabel } from "@/lib/rfp-portal";
+import { getCurrentUser, updateUserRfpStatus } from "@/lib/api";
+import { trackEvent } from "@/lib/event-tracker";
+import type { CompanyProfile } from "@/lib/rfp-matching";
+
+// localStorage keys — match the dashboard's existing pattern so toggling
+// save / interested / not-interested here stays consistent with /dashboard.
+// These are intentionally session-local until the Postgres-backed
+// persistence ships (see project memory: project_saved_rfps_postgres_migration).
+const STORAGE_KEYS = {
+  SAVED: "civitas_saved_rfps",
+} as const;
+
+function loadSet(key: string): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSet(key: string, set: Set<string>) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(key, JSON.stringify([...set]));
+}
+
+// Approximate the rule-based summary that /api/match-summary expects as
+// `currentSummary` input — the v2 matcher doesn't produce one, so we
+// stitch together the top breakdown rows. The LLM uses this as a hint,
+// not as ground truth.
+function buildRuleBasedSummary(detail: DetailResponse): string {
+  const top = detail.breakdown
+    .filter((b) => b.status === "strong" || b.status === "partial")
+    .slice(0, 3)
+    .map((b) => `${b.category}: ${b.detail}`)
+    .join(". ");
+  const score = `Score ${detail.score} (${detail.tier}).`;
+  return [score, top].filter(Boolean).join(" ");
+}
 
 type CategoryStatus = "strong" | "partial" | "weak" | "missing" | "neutral" | "unknown";
 
@@ -26,17 +70,38 @@ interface CategoryBreakdown {
   profileClaimSource?: string;
 }
 
+interface DetailRfp {
+  id: string;
+  title: string;
+  description: string | null;
+  agency: string | null;
+  location: string | null;
+  deadline: string | null;
+  sourceId: string;
+  estimatedValueUsd: number | null;
+  capabilities: string[];
+  naicsCodes: string[];
+  certificationsRequired: string[];
+  licensesRequired: string[];
+  setAsideTypes: string[];
+  deliverables: string[];
+  incumbentVendor: string | null;
+  incumbentContractEnd: string | null;
+  industry: string | null;
+  contractType: string | null;
+  contractDuration: string | null;
+  evaluationCriteria: string[];
+  clearancesRequired: string[];
+  attachmentUrls: string[];
+  attachmentRollup: unknown;
+  eventUrl: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+}
+
 interface DetailResponse {
-  rfp: {
-    id: string;
-    title: string;
-    description: string | null;
-    agency: string | null;
-    location: string | null;
-    deadline: string | null;
-    sourceId: string;
-    estimatedValueUsd: number | null;
-  };
+  rfp: DetailRfp;
   score: number;
   winProbability: number;
   tier: "excellent" | "strong" | "moderate" | "low" | "minimal" | "not_eligible";
@@ -89,6 +154,73 @@ export default function RfpDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"prime" | "sub">("prime");
 
+  // User profile drives the capabilities-analysis prompt. Matches the v1
+  // pattern (read localStorage first, fall back to extracted profile).
+  const [profile, setProfile] = useState<CompanyProfile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+
+  // LLM-generated summaries.
+  const [matchSummary, setMatchSummary] = useState<string | null>(null);
+  const [matchSummaryLoading, setMatchSummaryLoading] = useState(false);
+  const [matchSummaryError, setMatchSummaryError] = useState(false);
+  const [requirementsSummary, setRequirementsSummary] = useState<string | null>(null);
+  const [requirementsSummaryLoading, setRequirementsSummaryLoading] = useState(false);
+  const [requirementsSummaryError, setRequirementsSummaryError] = useState(false);
+  const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
+  const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
+  const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
+
+  // Save state (localStorage, session-local).
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+
+  // Good / bad match feedback (server-persisted via /api/user/rfp-status).
+  const [matchRating, setMatchRating] = useState<"good" | "bad" | null>(null);
+  const [matchReason, setMatchReason] = useState("");
+  const [savedMatchReason, setSavedMatchReason] = useState("");
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+
+  // Hydrate localStorage-backed sets on mount.
+  useEffect(() => {
+    setSavedIds(loadSet(STORAGE_KEYS.SAVED));
+  }, []);
+
+  // Hydrate company profile from localStorage (same source the dashboard uses).
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem("companyProfile") : null;
+    const extracted = typeof window !== "undefined" ? localStorage.getItem("extractedProfileData") : null;
+    if (saved) {
+      try {
+        setProfile(JSON.parse(saved) as CompanyProfile);
+      } catch {
+        // ignore malformed
+      }
+    } else if (extracted) {
+      try {
+        setProfile(JSON.parse(extracted) as CompanyProfile);
+      } catch {
+        // ignore malformed
+      }
+    }
+    setProfileLoaded(true);
+  }, []);
+
+  // Hydrate match-feedback state from the server (good/bad rating + reason).
+  useEffect(() => {
+    if (!rfpId) return;
+    getCurrentUser(true)
+      .then((full) => {
+        if (!full) return;
+        const fb = full.match_feedback_by_rfp?.[rfpId];
+        if (fb) {
+          setMatchRating(fb.rating);
+          setSavedMatchReason(fb.reason ?? "");
+          setMatchReason(fb.reason ?? "");
+        }
+      })
+      .catch(() => {});
+  }, [rfpId]);
+
   useEffect(() => {
     if (!rfpId) return;
     let cancelled = false;
@@ -107,6 +239,12 @@ export default function RfpDetailPage() {
         // Default to whichever track the user is eligible on. If both,
         // prime wins (it's the primary signal).
         if (!d.primeEligible && d.subEligible) setTab("sub");
+        trackEvent("rfp_viewed", {
+          rfpId: d.rfp.id,
+          pagePath: "/matches",
+          matchScore: d.score,
+          matchTier: d.tier,
+        });
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load");
@@ -118,6 +256,241 @@ export default function RfpDetailPage() {
       cancelled = true;
     };
   }, [rfpId, router]);
+
+  // Build the per-route RFP payload the LLM endpoints expect. /api/events
+  // returns a richer shape than /api/match/[rfpId] historically did, so
+  // we map our expanded fields into that shape here.
+  const llmRfpPayload = data
+    ? {
+        title: data.rfp.title,
+        agency: data.rfp.agency,
+        industry: data.rfp.industry,
+        location: data.rfp.location,
+        deadline: data.rfp.deadline,
+        capabilities: data.rfp.capabilities,
+        certifications: data.rfp.certificationsRequired,
+        contractType: data.rfp.contractType,
+        description: data.rfp.description ?? "",
+        naicsCodes: data.rfp.naicsCodes,
+        clearancesRequired: data.rfp.clearancesRequired,
+        setAsideTypes: data.rfp.setAsideTypes,
+        deliverables: data.rfp.deliverables,
+        evaluationCriteria: data.rfp.evaluationCriteria,
+        estimatedValue: formatUsd(data.rfp.estimatedValueUsd),
+        contractDuration: data.rfp.contractDuration,
+        attachmentRollup: data.rfp.attachmentRollup,
+        incumbentVendor: data.rfp.incumbentVendor,
+        incumbentContractEnd: data.rfp.incumbentContractEnd,
+      }
+    : null;
+
+  const llmProfilePayload = profile
+    ? {
+        companyName: profile.companyName,
+        industry: profile.industry,
+        capabilities: profile.capabilities,
+        certifications: profile.certifications,
+        workCities: profile.workCities,
+        workCounties: profile.workCounties,
+        agencyExperience: profile.agencyExperience,
+        contractTypes: profile.contractTypes,
+      }
+    : null;
+
+  // Fetch match summary once we have the data + profile (profile may be null).
+  useEffect(() => {
+    if (!data || !profileLoaded || !llmRfpPayload) return;
+    const detail = data;
+    const controller = new AbortController();
+    setMatchSummaryLoading(true);
+    setMatchSummaryError(false);
+    const ruleSummary = buildRuleBasedSummary(detail);
+    fetch("/api/match-summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        rfp: llmRfpPayload,
+        profile: llmProfilePayload,
+        currentSummary: ruleSummary,
+        positiveReasons: detail.breakdown
+          .filter((b) => b.status === "strong" || b.status === "partial")
+          .map((b) => `${b.category}: ${b.detail}`),
+        negativeReasons: detail.breakdown
+          .filter((b) => b.status === "weak" || b.status === "missing")
+          .map((b) => `${b.category}: ${b.detail}`),
+      }),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      })
+      .then((json) => setMatchSummary(json.summary ?? ruleSummary))
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setMatchSummaryError(true);
+        setMatchSummary(ruleSummary);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setMatchSummaryLoading(false);
+      });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.rfp.id, profileLoaded]);
+
+  // Fetch RFP requirements summary (About this RFP).
+  useEffect(() => {
+    if (!data || !data.rfp.description?.trim() || !llmRfpPayload) return;
+    const controller = new AbortController();
+    setRequirementsSummaryLoading(true);
+    setRequirementsSummaryError(false);
+    fetch("/api/rfp-requirements-summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({ rfp: llmRfpPayload }),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      })
+      .then((json) => setRequirementsSummary(json.summary ?? null))
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setRequirementsSummaryError(true);
+        setRequirementsSummary(null);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setRequirementsSummaryLoading(false);
+      });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.rfp.id]);
+
+  // Fetch capabilities analysis (compares profile against RFP requirements).
+  useEffect(() => {
+    if (!data || !profileLoaded || !llmRfpPayload) return;
+    const detail = data;
+    const controller = new AbortController();
+    setCapabilitiesAnalysisLoading(true);
+    setCapabilitiesAnalysisError(false);
+    fetch("/api/capabilities-analysis", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        rfp: llmRfpPayload,
+        profile: llmProfilePayload
+          ? { ...llmProfilePayload, technologyStack: (profile as { technologyStack?: string[] } | null)?.technologyStack }
+          : null,
+        breakdown: detail.breakdown,
+      }),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      })
+      .then((json) => setCapabilitiesAnalysis(json.analysis ?? null))
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setCapabilitiesAnalysisError(true);
+        setCapabilitiesAnalysis(null);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCapabilitiesAnalysisLoading(false);
+      });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.rfp.id, profileLoaded]);
+
+  const handleToggleSave = useCallback(() => {
+    if (!rfpId) return;
+    setSavedIds((prev) => {
+      const next = new Set(prev);
+      const wasSaved = next.has(rfpId);
+      if (wasSaved) next.delete(rfpId);
+      else next.add(rfpId);
+      saveSet(STORAGE_KEYS.SAVED, next);
+      trackEvent(wasSaved ? "rfp_unsaved" : "rfp_saved", { rfpId });
+      return next;
+    });
+  }, [rfpId]);
+
+  const handleSubmitMatchFeedback = useCallback(
+    async (rating: "good" | "bad") => {
+      if (!rfpId || !data) return;
+      const previousRating = matchRating;
+      const previousReason = savedMatchReason;
+      setMatchRating(rating);
+      setFeedbackError(null);
+      if (rating === "good") {
+        setMatchReason("");
+        setSavedMatchReason("");
+      }
+      setFeedbackSaving(true);
+      try {
+        await updateUserRfpStatus({
+          submit_match_feedback: {
+            rfp_id: rfpId,
+            rating,
+            reason: rating === "bad" ? matchReason.trim() || undefined : undefined,
+            match_score: data.score,
+            match_tier: data.tier,
+          },
+        });
+      } catch (err) {
+        setMatchRating(previousRating);
+        setSavedMatchReason(previousReason);
+        setMatchReason(previousReason);
+        setFeedbackError(err instanceof Error ? err.message : "Failed to save feedback");
+      } finally {
+        setFeedbackSaving(false);
+      }
+    },
+    [rfpId, data, matchRating, savedMatchReason, matchReason],
+  );
+
+  const handleRemoveMatchFeedback = useCallback(async () => {
+    if (!rfpId) return;
+    const previousRating = matchRating;
+    const previousReason = savedMatchReason;
+    setMatchRating(null);
+    setMatchReason("");
+    setSavedMatchReason("");
+    setFeedbackError(null);
+    try {
+      await updateUserRfpStatus({ remove_match_feedback: rfpId });
+    } catch (err) {
+      setMatchRating(previousRating);
+      setSavedMatchReason(previousReason);
+      setMatchReason(previousReason);
+      setFeedbackError(err instanceof Error ? err.message : "Failed to remove feedback");
+    }
+  }, [rfpId, matchRating, savedMatchReason]);
+
+  const handleSaveReason = useCallback(async () => {
+    if (!rfpId || !data || matchRating !== "bad") return;
+    const trimmed = matchReason.trim();
+    if (trimmed === savedMatchReason.trim()) return;
+    setFeedbackSaving(true);
+    setFeedbackError(null);
+    try {
+      await updateUserRfpStatus({
+        submit_match_feedback: {
+          rfp_id: rfpId,
+          rating: "bad",
+          reason: trimmed || undefined,
+          match_score: data.score,
+          match_tier: data.tier,
+        },
+      });
+      setSavedMatchReason(trimmed);
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : "Failed to save reason");
+    } finally {
+      setFeedbackSaving(false);
+    }
+  }, [rfpId, data, matchRating, matchReason, savedMatchReason]);
 
   if (loading) {
     return (
@@ -199,6 +572,146 @@ export default function RfpDetailPage() {
             </div>
           </div>
 
+          {/* Action buttons — save / interest / not-interested / good-bad
+              match / view on portal. Save and interest signals live in
+              localStorage today; good/bad match writes to the server. */}
+          <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleToggleSave}
+              className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
+                rfpId && savedIds.has(rfpId)
+                  ? "text-blue-600 bg-blue-50 hover:bg-blue-100"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <svg
+                className="w-4 h-4 shrink-0"
+                fill={rfpId && savedIds.has(rfpId) ? "currentColor" : "none"}
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"
+                />
+              </svg>
+              {rfpId && savedIds.has(rfpId) ? "Saved" : "Save"}
+            </button>
+            <span className="w-px h-5 bg-slate-200 mx-1" aria-hidden="true" />
+            <button
+              type="button"
+              title="Good match"
+              aria-pressed={matchRating === "good"}
+              onClick={() =>
+                matchRating === "good"
+                  ? void handleRemoveMatchFeedback()
+                  : void handleSubmitMatchFeedback("good")
+              }
+              disabled={feedbackSaving}
+              className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors disabled:opacity-60 ${
+                matchRating === "good"
+                  ? "bg-emerald-600 text-white"
+                  : "text-slate-500 hover:text-emerald-600 hover:bg-emerald-50"
+              }`}
+            >
+              <svg
+                className="w-4 h-4 shrink-0"
+                fill={matchRating === "good" ? "currentColor" : "none"}
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"
+                />
+              </svg>
+              Good match
+            </button>
+            <button
+              type="button"
+              title="Bad match"
+              aria-pressed={matchRating === "bad"}
+              onClick={() =>
+                matchRating === "bad"
+                  ? void handleRemoveMatchFeedback()
+                  : void handleSubmitMatchFeedback("bad")
+              }
+              disabled={feedbackSaving}
+              className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors disabled:opacity-60 ${
+                matchRating === "bad"
+                  ? "bg-red-600 text-white"
+                  : "text-slate-500 hover:text-red-600 hover:bg-red-50"
+              }`}
+            >
+              <svg
+                className="w-4 h-4 shrink-0"
+                fill={matchRating === "bad" ? "currentColor" : "none"}
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10 15V19a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M17 2h3a2 2 0 012 2v7a2 2 0 01-2 2h-3"
+                />
+              </svg>
+              Bad match
+            </button>
+            {data.rfp.eventUrl && (
+              <a
+                href={data.rfp.eventUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+              >
+                View on {portalLabel(data.rfp.sourceId)}
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                  />
+                </svg>
+              </a>
+            )}
+          </div>
+          {matchRating === "bad" && (
+            <div className="mt-3">
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                Why is this a bad match?{" "}
+                <span className="text-slate-400">(optional, helps tune your matches)</span>
+              </label>
+              <textarea
+                value={matchReason}
+                onChange={(e) => setMatchReason(e.target.value)}
+                onBlur={() => void handleSaveReason()}
+                placeholder="e.g. Wrong region, contract type we don't bid on, license class we don't hold…"
+                rows={2}
+                className="w-full px-3 py-2 text-sm text-slate-800 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-transparent placeholder:text-slate-400 resize-none"
+              />
+              {feedbackError && <p className="mt-1 text-xs text-red-600">{feedbackError}</p>}
+            </div>
+          )}
+
           {/* Data quality + incumbent strip */}
           <div className="mt-4 pt-4 border-t border-slate-100">
             <DataQualityBanner dq={data.dataQuality} />
@@ -230,6 +743,62 @@ export default function RfpDetailPage() {
             )}
           </div>
         </div>
+
+        {/* Match Summary — Claude-generated explanation of WHY this scored
+            what it did, anchored to the user's profile. Falls back to the
+            rule-based summary on failure. */}
+        <section className="mb-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+              Match summary
+            </h2>
+            {matchSummaryLoading && (
+              <span className="text-xs text-slate-400 animate-pulse">Summarizing…</span>
+            )}
+          </div>
+          {matchSummary ? (
+            <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{matchSummary}</p>
+          ) : matchSummaryLoading ? (
+            <p className="text-sm text-slate-400 animate-pulse">Generating match summary…</p>
+          ) : (
+            <p className="text-sm text-slate-500">{buildRuleBasedSummary(data)}</p>
+          )}
+          {matchSummaryError && (
+            <p className="mt-2 text-xs text-amber-600">
+              AI summary unavailable — showing rule-based summary.
+            </p>
+          )}
+        </section>
+
+        {/* About this RFP — Claude-generated structured requirements summary.
+            Long-form context for what the contract actually asks for. */}
+        <section className="mb-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
+          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
+            About this RFP
+          </h2>
+          {requirementsSummaryLoading && !requirementsSummary ? (
+            <p className="text-sm text-slate-400 animate-pulse">Summarizing contract requirements…</p>
+          ) : requirementsSummary ? (
+            <MarkdownContent content={requirementsSummary} />
+          ) : data.rfp.description?.trim() ? (
+            <p className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">
+              {data.rfp.description}
+            </p>
+          ) : (
+            <p className="text-sm text-slate-500">No description available for this RFP.</p>
+          )}
+          {requirementsSummaryError && data.rfp.description?.trim() && (
+            <p className="mt-2 text-xs text-amber-600">
+              AI summary unavailable — showing original description.
+            </p>
+          )}
+          {data.rfp.contractDuration && (
+            <p className="mt-3 text-xs text-slate-500">
+              <span className="font-semibold text-slate-700">Contract duration:</span>{" "}
+              {data.rfp.contractDuration}
+            </p>
+          )}
+        </section>
 
         {/* Eligibility callouts when prime gates failed */}
         {!data.primeEligible && data.gateFailures.length > 0 && (
@@ -291,14 +860,248 @@ export default function RfpDetailPage() {
           ))}
         </div>
 
-        {/* Description */}
+        {/* Capabilities Analysis — Claude prose comparing the user's
+            profile to the RFP's stated requirements. Distinct from the
+            score breakdown above (that's deterministic + token-level). */}
+        <section className="mt-8 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
+          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
+            Capabilities analysis
+          </h2>
+          {!profileLoaded ? (
+            <p className="text-sm text-slate-400 animate-pulse">Loading profile…</p>
+          ) : !profile ? (
+            <p className="text-sm text-slate-500">
+              Complete your company profile to see a capabilities analysis.
+            </p>
+          ) : capabilitiesAnalysisLoading && !capabilitiesAnalysis ? (
+            <p className="text-sm text-slate-400 animate-pulse">
+              Analyzing your capabilities against the requirements…
+            </p>
+          ) : capabilitiesAnalysis ? (
+            <MarkdownContent content={capabilitiesAnalysis} />
+          ) : capabilitiesAnalysisError ? (
+            <p className="text-xs text-amber-600">Capabilities analysis unavailable right now.</p>
+          ) : (
+            <p className="text-sm text-slate-500">No analysis available.</p>
+          )}
+        </section>
+
+        {/* Key requirements — structured fields extracted from the RFP
+            PDFs. Renders only when at least one field has content. */}
+        {(() => {
+          const hasDeliverables = data.rfp.deliverables.length > 0;
+          const hasClearances = data.rfp.clearancesRequired.length > 0;
+          const hasSetAsides = data.rfp.setAsideTypes.length > 0;
+          const hasEvalCriteria = data.rfp.evaluationCriteria.length > 0;
+          const hasLicenses = data.rfp.licensesRequired.length > 0;
+          const hasNaics = data.rfp.naicsCodes.length > 0;
+          const hasCerts = data.rfp.certificationsRequired.length > 0;
+          const any =
+            hasDeliverables ||
+            hasClearances ||
+            hasSetAsides ||
+            hasEvalCriteria ||
+            hasLicenses ||
+            hasNaics ||
+            hasCerts;
+          if (!any) return null;
+          return (
+            <section className="mt-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">
+                Key requirements
+              </h2>
+              <div className="space-y-5 text-sm">
+                {hasDeliverables && (
+                  <div>
+                    <h3 className="font-semibold text-slate-700 mb-1.5">Deliverables</h3>
+                    <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
+                      {data.rfp.deliverables.slice(0, 10).map((d, i) => (
+                        <li key={i}>{d}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {hasEvalCriteria && (
+                  <div>
+                    <h3 className="font-semibold text-slate-700 mb-1.5">Evaluation criteria</h3>
+                    <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
+                      {data.rfp.evaluationCriteria.slice(0, 8).map((c, i) => (
+                        <li key={i}>{c}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {hasNaics && (
+                  <div>
+                    <h3 className="font-semibold text-slate-700 mb-1.5">NAICS codes</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {data.rfp.naicsCodes.map((n) => (
+                        <span
+                          key={n}
+                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200"
+                        >
+                          {n}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {hasCerts && (
+                  <div>
+                    <h3 className="font-semibold text-slate-700 mb-1.5">Certifications</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {data.rfp.certificationsRequired.map((c, i) => (
+                        <span
+                          key={i}
+                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100"
+                        >
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {hasLicenses && (
+                  <div>
+                    <h3 className="font-semibold text-slate-700 mb-1.5">Licenses</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {data.rfp.licensesRequired.map((l, i) => (
+                        <span
+                          key={i}
+                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100"
+                        >
+                          {l}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {hasClearances && (
+                  <div>
+                    <h3 className="font-semibold text-slate-700 mb-1.5">Clearances required</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {data.rfp.clearancesRequired.map((c, i) => (
+                        <span
+                          key={i}
+                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-100"
+                        >
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {hasSetAsides && (
+                  <div>
+                    <h3 className="font-semibold text-slate-700 mb-1.5">Set-asides</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {data.rfp.setAsideTypes.map((s, i) => (
+                        <span
+                          key={i}
+                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-violet-50 text-violet-700 border border-violet-100"
+                        >
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+          );
+        })()}
+
+        {/* Attachments — links to source-portal PDFs. */}
+        {data.rfp.attachmentUrls.length > 0 && (
+          <section className="mt-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
+              Attachments ({data.rfp.attachmentUrls.length})
+            </h2>
+            <ul className="space-y-2">
+              {data.rfp.attachmentUrls.map((url, i) => {
+                const filename = (() => {
+                  try {
+                    const u = new URL(url);
+                    const last = u.pathname.split("/").filter(Boolean).pop();
+                    return last ? decodeURIComponent(last) : `Attachment ${i + 1}`;
+                  } catch {
+                    return `Attachment ${i + 1}`;
+                  }
+                })();
+                return (
+                  <li key={`${url}-${i}`}>
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200 transition-colors"
+                    >
+                      <svg
+                        className="w-4 h-4 text-red-500 shrink-0"
+                        fill="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm0 7V3.5L19.5 9H14z" />
+                      </svg>
+                      <span className="truncate max-w-[40ch]">{filename}</span>
+                      <svg
+                        className="w-3.5 h-3.5 text-slate-400 shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                        />
+                      </svg>
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
+        {/* Contact info pulled from the RFP raw payload. */}
+        {(data.rfp.contactName || data.rfp.contactEmail || data.rfp.contactPhone) && (
+          <section className="mt-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
+              Contact
+            </h2>
+            {data.rfp.contactName && (
+              <p className="text-sm text-slate-700">{data.rfp.contactName}</p>
+            )}
+            {data.rfp.contactEmail && (
+              <a
+                href={`mailto:${data.rfp.contactEmail}`}
+                className="text-sm text-[#3C89C6] hover:underline"
+              >
+                {data.rfp.contactEmail}
+              </a>
+            )}
+            {data.rfp.contactPhone && (
+              <p className="text-sm text-slate-600 mt-1">{data.rfp.contactPhone}</p>
+            )}
+          </section>
+        )}
+
+        {/* Original description as a fallback / for completeness — useful
+            when the LLM summary is short or the user wants to read the
+            full source text. */}
         {data.rfp.description && (
-          <div className="mt-8 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-5">
-            <h3 className="text-sm font-bold text-slate-900 mb-2">RFP description</h3>
-            <p className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">
+          <details className="mt-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-5 group">
+            <summary className="text-sm font-bold text-slate-900 uppercase tracking-wider cursor-pointer select-none">
+              Full RFP description
+            </summary>
+            <p className="mt-3 text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">
               {data.rfp.description}
             </p>
-          </div>
+          </details>
         )}
       </main>
     </div>
