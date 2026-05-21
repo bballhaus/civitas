@@ -14,6 +14,7 @@ import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 const ses = new SESClient({ region: process.env.AWS_REGION || "us-east-1" });
 
 const FROM_EMAIL = process.env.CIVITAS_FROM_EMAIL || "";
+const CONFIG_SET = process.env.CIVITAS_SES_CONFIG_SET || "civitas-transactional";
 const isDev = process.env.NODE_ENV === "development";
 
 interface EmailParams {
@@ -45,6 +46,7 @@ export async function sendEmail(params: EmailParams): Promise<boolean> {
               : {}),
           },
         },
+        ConfigurationSetName: CONFIG_SET,
       })
     );
     console.log(`[Email] Sent to ${params.to}: ${params.subject}`);
