@@ -92,6 +92,10 @@ export default function RFPDetailPage() {
 
   // Fire rfp_viewed once per RFP, with match info if available. Tracked via
   // a ref so re-renders (e.g. when match recomputes) don't re-fire.
+  //
+  // Also persists a server-side first-view timestamp on match_state so the
+  // daily roundup digest can filter to "unviewed" RFPs. Fire-and-forget —
+  // tracking must never block the user.
   const rfpViewedRef = React.useRef<string | null>(null);
   useEffect(() => {
     if (!id || rfpViewedRef.current === id) return;
@@ -104,6 +108,14 @@ export default function RFPDetailPage() {
       pagePath: "/dashboard/rfp",
       ...(typeof matchScore === "number" ? { matchScore } : {}),
       ...(typeof matchTier === "string" ? { matchTier } : {}),
+    });
+    fetch("/api/rfp-views/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rfpId: id }),
+      keepalive: true,
+    }).catch(() => {
+      // Best-effort: the next visit will catch it if this one drops.
     });
   }, [id, rfpData, rfp]);
 

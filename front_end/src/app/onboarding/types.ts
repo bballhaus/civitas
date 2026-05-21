@@ -41,4 +41,8 @@ export interface OnboardingSnapshot {
     role: string;
     strength: number;
   }[];
+  // Notification preferences — surfaced on Step 9 (Review) as an inline
+  // opt-in. Timezone is captured from the browser when the toggle flips on.
+  dailyRoundupEnabled: boolean;
+  dailyRoundupTimezone: string | null;
 }

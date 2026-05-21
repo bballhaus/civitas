@@ -53,7 +53,7 @@ export function OnboardingStep({
     case 8:
       return <StepCapacity snapshot={snapshot} onChange={onChange} />;
     case 9:
-      return <StepReview snapshot={snapshot} />;
+      return <StepReview snapshot={snapshot} onChange={onChange} />;
     default:
       return null;
   }
@@ -1279,7 +1279,36 @@ function AgencyPicker({
 // Step 9: Done — review & finish
 // ---------------------------------------------------------------------------
 
-function StepReview({ snapshot }: { snapshot: OnboardingSnapshot }) {
+function StepReview({ snapshot, onChange }: StepProps) {
+  const [roundupSaving, setRoundupSaving] = useState(false);
+
+  const toggleRoundup = async (next: boolean) => {
+    setRoundupSaving(true);
+    try {
+      // When enabling, capture the browser's IANA timezone so the cron
+      // can fire at 7am *local*. When disabling, leave the timezone in
+      // place — cheap and harmless, and means re-enabling later doesn't
+      // need to re-detect.
+      const patch: Record<string, unknown> = { dailyRoundupEnabled: next };
+      if (next) {
+        try {
+          patch.dailyRoundupTimezone =
+            Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+        } catch {
+          patch.dailyRoundupTimezone = null;
+        }
+      }
+      await fetch("/api/profile/", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      await onChange();
+    } finally {
+      setRoundupSaving(false);
+    }
+  };
+
   const summary = [
     {
       label: "Identity",
@@ -1349,6 +1378,35 @@ function StepReview({ snapshot }: { snapshot: OnboardingSnapshot }) {
           </span>
         </div>
       ))}
+
+      {/* Daily roundup opt-in. Saves on toggle through PATCH /api/profile —
+          the user does not need to hit Continue/Finish for it to stick. */}
+      <label
+        className={`mt-5 flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-colors ${
+          snapshot.dailyRoundupEnabled
+            ? "border-[#3C89C6] bg-blue-50/60"
+            : "border-slate-200 bg-white hover:border-[#3C89C6]/40 hover:bg-blue-50/30"
+        } ${roundupSaving ? "opacity-70" : ""}`}
+      >
+        <input
+          type="checkbox"
+          checked={snapshot.dailyRoundupEnabled}
+          disabled={roundupSaving}
+          onChange={(e) => void toggleRoundup(e.target.checked)}
+          className="mt-0.5 rounded text-[#3C89C6] focus:ring-[#3C89C6]"
+        />
+        <span className="text-sm leading-relaxed">
+          <span className="font-semibold text-slate-800">
+            Email me a daily morning roundup
+          </span>
+          <span className="block text-slate-600 mt-0.5">
+            Once a day at 7:00 AM local time, we&apos;ll send a short list of
+            any new RFPs above a 75% match that you haven&apos;t looked at yet.
+            Skip days with nothing new.
+          </span>
+        </span>
+      </label>
+
       <p className="text-xs text-slate-400 mt-4">
         Hit <strong className="text-emerald-700">Finish &amp; view matches</strong> to score open RFPs against your profile.
       </p>

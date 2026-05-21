@@ -29,6 +29,13 @@
       "when": 1778749379324,
       "tag": "0003_add_radius_miles",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779370854000,
+      "tag": "0004_daily_roundup",
+      "breakpoints": true
     }
   ]
 }
