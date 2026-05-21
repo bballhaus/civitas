@@ -62,6 +62,9 @@ export async function GET(request: Request) {
       deadline: rfp.deadline,
       sourceId: rfp.sourceId,
       estimatedValueUsd: rfp.estimatedValueUsd,
+      // Exposed for dashboard filters (capabilities, NAICS multi-select, keyword search).
+      capabilities: rfp.capabilities ?? [],
+      naicsCodes: rfp.naicsCodes ?? [],
       score: m.score,
       winProbability: m.winProbability,
       tier: m.tier,

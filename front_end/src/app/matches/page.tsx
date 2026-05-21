@@ -18,11 +18,17 @@
 //     precision the matcher doesn't have.
 //   - "Hide likely incumbents" filter (§ 12).
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
+import {
+  FilterPanel,
+  applyFilters,
+  computeFacets,
+  useFilterState,
+} from "./FilterPanel";
 
 interface MatchListItem {
   rfpId: string;
@@ -32,6 +38,8 @@ interface MatchListItem {
   deadline: string | null;
   sourceId: string;
   estimatedValueUsd: number | null;
+  capabilities: string[];
+  naicsCodes: string[];
   score: number;
   winProbability: number;
   tier: "excellent" | "strong" | "moderate" | "low" | "minimal" | "not_eligible";
@@ -91,13 +99,20 @@ function formatDeadline(raw: string | null): string {
 }
 
 export default function MatchesPage() {
+  // useFilterState reads useSearchParams which Next requires under Suspense.
+  return (
+    <Suspense fallback={<MatchesLoading />}>
+      <MatchesPageInner />
+    </Suspense>
+  );
+}
+
+function MatchesPageInner() {
   const router = useRouter();
   const [data, setData] = useState<MatchResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hideIncumbents, setHideIncumbents] = useState(false);
-  const [minScore, setMinScore] = useState<number>(0);
-  const [sourceFilter, setSourceFilter] = useState<string>("");
+  const [filters, setFilters, resetFilters] = useFilterState();
 
   useEffect(() => {
     let cancelled = false;
@@ -125,33 +140,14 @@ export default function MatchesPage() {
     };
   }, [router]);
 
-  const sources = useMemo(() => {
-    if (!data) return [] as string[];
-    const set = new Set(data.matches.map((m) => m.sourceId));
-    return Array.from(set).sort();
-  }, [data]);
-
-  const filtered = useMemo(() => {
-    if (!data) return [] as MatchListItem[];
-    return data.matches.filter((m) => {
-      if (hideIncumbents && m.incumbentState === "likely") return false;
-      if (m.score < minScore) return false;
-      if (sourceFilter && m.sourceId !== sourceFilter) return false;
-      return true;
-    });
-  }, [data, hideIncumbents, minScore, sourceFilter]);
+  const facets = useMemo(() => computeFacets(data?.matches ?? []), [data]);
+  const filtered = useMemo(
+    () => (data ? applyFilters(data.matches, filters) : []),
+    [data, filters],
+  );
 
   if (loading) {
-    return (
-      <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
-        <MeshBackground />
-        <AppHeader />
-        <div className="relative flex flex-col items-center justify-center min-h-[calc(100vh-65px)] gap-4">
-          <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#3C89C6]" />
-          <p className="text-slate-600 font-medium">Loading matches&hellip;</p>
-        </div>
-      </div>
-    );
+    return <MatchesLoading />;
   }
 
   if (error) {
@@ -193,59 +189,28 @@ export default function MatchesPage() {
           </div>
         </div>
 
-        {/* Filter strip */}
-        <div className="mb-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-sm shadow-slate-200/50 p-4 flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={hideIncumbents}
-              onChange={(e) => setHideIncumbents(e.target.checked)}
-              className="rounded text-[#3C89C6] focus:ring-[#3C89C6]"
-            />
-            <span>Hide likely incumbents</span>
-          </label>
-          <div className="h-5 w-px bg-slate-200" />
-          <div className="flex items-center gap-2">
-            <label htmlFor="minScore" className="text-sm text-slate-700">Min score</label>
-            <select
-              id="minScore"
-              value={minScore}
-              onChange={(e) => setMinScore(Number(e.target.value))}
-              className="px-2 py-1 border border-slate-300 rounded-md bg-white text-sm text-slate-700"
-            >
-              <option value={0}>Any</option>
-              <option value={15}>15+ (low)</option>
-              <option value={35}>35+ (moderate)</option>
-              <option value={55}>55+ (strong)</option>
-              <option value={75}>75+ (excellent)</option>
-            </select>
-          </div>
-          <div className="h-5 w-px bg-slate-200" />
-          <div className="flex items-center gap-2">
-            <label htmlFor="source" className="text-sm text-slate-700">Source</label>
-            <select
-              id="source"
-              value={sourceFilter}
-              onChange={(e) => setSourceFilter(e.target.value)}
-              className="px-2 py-1 border border-slate-300 rounded-md bg-white text-sm text-slate-700"
-            >
-              <option value="">All</option>
-              {sources.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="ml-auto text-xs text-slate-500">
-            Showing {filtered.length} of {data?.matches.length ?? 0}
-          </div>
-        </div>
+        <FilterPanel
+          filters={filters}
+          facets={facets}
+          onChange={setFilters}
+          onReset={resetFilters}
+          totalCount={data?.matches.length ?? 0}
+          filteredCount={filtered.length}
+        />
 
         {/* Results */}
         {filtered.length === 0 ? (
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-8 text-center">
             <p className="text-slate-600 text-sm">No matches under these filters.</p>
+            {data && data.matches.length > 0 && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="mt-3 text-sm font-medium text-[#3C89C6] hover:underline"
+              >
+                Clear all filters
+              </button>
+            )}
             {data?.matches.length === 0 && (
               <p className="text-xs text-slate-500 mt-3">
                 If your rfp_cache is empty, run{" "}
@@ -386,4 +351,17 @@ function tierAccent(tier: MatchListItem["tier"]): string {
     default:
       return "rgb(203 213 225)"; // slate-300
   }
+}
+
+function MatchesLoading() {
+  return (
+    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
+      <MeshBackground />
+      <AppHeader />
+      <div className="relative flex flex-col items-center justify-center min-h-[calc(100vh-65px)] gap-4">
+        <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-300 border-t-[#3C89C6]" />
+        <p className="text-slate-600 font-medium">Loading matches&hellip;</p>
+      </div>
+    </div>
+  );
 }
