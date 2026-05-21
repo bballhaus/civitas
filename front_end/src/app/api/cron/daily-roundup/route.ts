@@ -66,6 +66,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Wrap the handler body so we always emit a structured JSON error
+  // instead of a blank 500. Vercel's default 500 is content-length: 0,
+  // which is impossible to debug from the EventBridge/Lambda side.
+  try {
+    return await runRoundup();
+  } catch (err) {
+    console.error("[cron/daily-roundup] handler crashed:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json(
+      { error: "Internal error", message },
+      { status: 500 },
+    );
+  }
+}
+
+async function runRoundup() {
   const now = new Date();
   const dedupeCutoff = new Date(now.getTime() - DEDUPE_HOURS * 3600 * 1000);
 
