@@ -30,6 +30,7 @@ import {
   CommitProvider,
   commitDraft,
   makeDeferredCommitHandler,
+  useCommit,
 } from "@/app/onboarding/commit";
 import type { OnboardingSnapshot } from "@/app/onboarding/types";
 import {
@@ -332,6 +333,15 @@ export default function ProfileV2Page() {
           refresh={refresh}
           readView={<CapacityRead profile={profile} />}
           renderEditor={(s) => <StepCapacity snapshot={s} />}
+        />
+
+        <EditableSection
+          title="Notifications"
+          accent="from-blue-500 to-blue-600"
+          originalSnapshot={snapshot}
+          refresh={refresh}
+          readView={<NotificationsRead profile={profile} />}
+          renderEditor={(s) => <NotificationsEditor snapshot={s} />}
         />
       </main>
     </div>
@@ -713,6 +723,83 @@ function CapacityRead({ profile }: { profile: FullProfile }) {
         )}
       </div>
     </div>
+  );
+}
+
+function NotificationsRead({ profile }: { profile: FullProfile }) {
+  if (!profile.dailyRoundupEnabled) {
+    return (
+      <EmptyHint>
+        Daily roundup is off. Click <strong>Edit</strong> to opt in to a
+        morning email of new high-match RFPs.
+      </EmptyHint>
+    );
+  }
+  return (
+    <div className="text-sm text-slate-700">
+      <p>
+        <span className="font-semibold text-slate-900">Daily morning roundup</span> is
+        on. We&apos;ll email a short list of new RFPs above a 75% match each day at
+        7:00&nbsp;AM
+        {profile.dailyRoundupTimezone ? (
+          <>
+            {" "}
+            <span className="text-slate-500">({profile.dailyRoundupTimezone})</span>
+          </>
+        ) : (
+          <> local time</>
+        )}
+        . Days with nothing new are skipped.
+      </p>
+    </div>
+  );
+}
+
+function NotificationsEditor({ snapshot }: { snapshot: OnboardingSnapshot }) {
+  const commit = useCommit();
+  const toggle = (next: boolean) => {
+    // When enabling, capture the browser's IANA timezone so the cron can
+    // fire at 7am local. When disabling, leave the timezone in place so
+    // re-enabling later doesn't need to re-detect. Mirrors the toggle in
+    // onboarding's StepReview.
+    const patch: { dailyRoundupEnabled: boolean; dailyRoundupTimezone?: string | null } = {
+      dailyRoundupEnabled: next,
+    };
+    if (next) {
+      try {
+        patch.dailyRoundupTimezone =
+          Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+      } catch {
+        patch.dailyRoundupTimezone = null;
+      }
+    }
+    void commit.patch(patch);
+  };
+  return (
+    <label
+      className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-colors ${
+        snapshot.dailyRoundupEnabled
+          ? "border-[#3C89C6] bg-blue-50/60"
+          : "border-slate-200 bg-white hover:border-[#3C89C6]/40 hover:bg-blue-50/30"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={snapshot.dailyRoundupEnabled}
+        onChange={(e) => toggle(e.target.checked)}
+        className="mt-0.5 rounded text-[#3C89C6] focus:ring-[#3C89C6]"
+      />
+      <span className="text-sm leading-relaxed">
+        <span className="font-semibold text-slate-800">
+          Email me a daily morning roundup
+        </span>
+        <span className="block text-slate-600 mt-0.5">
+          Once a day at 7:00 AM local time, we&apos;ll send a short list of any
+          new RFPs above a 75% match that you haven&apos;t looked at yet. Skip
+          days with nothing new.
+        </span>
+      </span>
+    </label>
   );
 }
 
