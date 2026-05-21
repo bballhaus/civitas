@@ -52,11 +52,17 @@ CHAIN_STAGGER_SECONDS = 360  # 6 minutes
 # each wave dispatches up to DISPATCH_WAVE_SIZE portals (each with a small
 # in-wave stagger) and then chains the next wave via a self-invocation
 # whose own delay fits comfortably in the Lambda budget.
-DISPATCH_PORTAL_STAGGER = 60   # seconds between adjacent portals in a wave
-DISPATCH_WAVE_SIZE = 10        # portals per wave
-# Wave duration: 10 * 60 = 600s. Last portal in wave gets delay=540s, which
-# leaves ≥ 360s for scrape work — well above the ~5min per batch.
-# dispatch_queue Lambda sleeps ≤ 600s between waves, fires fast.
+#
+# Sizing is constrained by the AWS account concurrency limit (currently 10).
+# Each active portal also fires within-portal chain invocations (chain-first
+# pattern in _handle_single_site), so realistic slot use ≈ 2 per active
+# portal. Wave size 4 keeps total in-flight ≤ ~9: 4 active portals × 2 +
+# 1 dispatch_queue Lambda during its inter-wave sleep.
+DISPATCH_PORTAL_STAGGER = 90   # seconds between adjacent portals in a wave
+DISPATCH_WAVE_SIZE = 4         # portals per wave (concurrency=10-safe)
+# Wave duration: 4 * 90 = 360s. Last portal in wave gets delay=270s,
+# leaves ≥ 630s for scrape work. dispatch_queue Lambda sleeps ≤ 360s
+# between waves, fires fast.
 
 
 def _batch_size_for(event: dict) -> int:
