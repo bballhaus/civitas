@@ -448,7 +448,7 @@ class CalEprocureScraper(BaseScraper):
 
             try:
                 await page.wait_for_selector(
-                    '[data-if-label^="ViewAttachmentsTableRow"]', timeout=10000
+                    'tr[data-if-cloned-from="ViewAttachmentsTableRow"]', timeout=10000
                 )
             except Exception:
                 # Modal opened but no rows materialized. Either the package
@@ -463,7 +463,7 @@ class CalEprocureScraper(BaseScraper):
                 return results
 
             buttons = await page.query_selector_all(
-                'button[data-if-label^="ViewAttachmentsView"]'
+                'tr[data-if-cloned-from="ViewAttachmentsTableRow"] button[data-if-label="ViewAttachmentsView"]'
             )
             n_attachments = len(buttons)
 
@@ -472,7 +472,7 @@ class CalEprocureScraper(BaseScraper):
                 pdf_url = ""
                 try:
                     buttons = await page.query_selector_all(
-                        'button[data-if-label^="ViewAttachmentsView"]'
+                        'tr[data-if-cloned-from="ViewAttachmentsTableRow"] button[data-if-label="ViewAttachmentsView"]'
                     )
                     if i >= len(buttons):
                         break
