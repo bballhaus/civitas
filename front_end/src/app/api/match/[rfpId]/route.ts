@@ -38,6 +38,14 @@ export async function GET(
   const rfp = rfpRow[0];
   const m = matchV2(profile, rfp);
 
+  // The richer fields (contact, eventUrl, attachments, evaluation criteria,
+  // contract duration, attachment_rollup) live in rfp_cache.raw — the
+  // populator stores the full V2EnrichedEvent there. Pull them out so the
+  // detail page can render contact info and feed the LLM summary endpoints
+  // with the same shape /api/events uses.
+  const raw = (rfp.raw ?? {}) as Record<string, unknown>;
+  const contact = (raw.contact ?? {}) as { name?: string; email?: string; phone?: string };
+
   return NextResponse.json(
     {
       rfp: {
@@ -49,6 +57,33 @@ export async function GET(
         deadline: rfp.deadline,
         sourceId: rfp.sourceId,
         estimatedValueUsd: rfp.estimatedValueUsd,
+        // Typed cache columns
+        capabilities: rfp.capabilities ?? [],
+        naicsCodes: rfp.naicsCodes ?? [],
+        certificationsRequired: rfp.certificationsRequired ?? [],
+        licensesRequired: rfp.licensesRequired ?? [],
+        setAsideTypes: rfp.setAsideLockout ?? [],
+        deliverables: rfp.deliverables ?? [],
+        incumbentVendor: rfp.incumbentVendor,
+        incumbentContractEnd: rfp.incumbentContractEnd,
+        // Raw payload extras (populator writes the full V2EnrichedEvent)
+        industry: raw.industry ?? null,
+        contractType: raw.procurement_type ?? null,
+        contractDuration: raw.contract_duration ?? null,
+        evaluationCriteria: Array.isArray(raw.evaluation_criteria)
+          ? (raw.evaluation_criteria as string[])
+          : [],
+        clearancesRequired: Array.isArray(raw.clearances_required)
+          ? (raw.clearances_required as string[])
+          : [],
+        attachmentUrls: Array.isArray(raw.attachment_urls)
+          ? (raw.attachment_urls as string[])
+          : [],
+        attachmentRollup: raw.attachment_rollup ?? null,
+        eventUrl: raw.source_url ?? null,
+        contactName: contact.name ?? null,
+        contactEmail: contact.email ?? null,
+        contactPhone: contact.phone ?? null,
       },
       score: m.score,
       winProbability: m.winProbability,
