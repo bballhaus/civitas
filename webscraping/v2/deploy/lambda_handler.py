@@ -496,6 +496,27 @@ def _handle_single_site(site_id, event, context):
     # this guard).
     expected_total = event.get("expected_total")
 
+    # Runaway-chain guard. The speculative dispatch fires BEFORE the
+    # scrape returns, so we can't condition on events_scraped > 0 to
+    # decide whether to chain. When the source's listing API count
+    # over-reports relative to truly-scrape-able events (the OpenGov
+    # `count=1233` example: includes per-row statuses we filter out
+    # client-side), the chain runs forever with `expected_total=None`.
+    # Fix: synthesize a per-source hard cap on `expected_total` for the
+    # FIRST invocation in the chain. Once set, it propagates and bounds
+    # the chain at a sensible depth. Cal eProcure caps high (we want
+    # full coverage); OpenGov caps low (any single tenant has <60
+    # actively-open RFPs in practice).
+    if expected_total is None:
+        if site_id.startswith("opengov_"):
+            expected_total = 60
+        elif site_id.startswith("planetbids_"):
+            expected_total = 600
+        elif site_id == "caleprocure":
+            expected_total = 2000
+        else:
+            expected_total = 300
+
     logger.info(
         f"Single-site: site={site_id}, offset={batch_offset}, "
         f"batch_size={batch_size}, skip_enrich={skip_enrich}, "
