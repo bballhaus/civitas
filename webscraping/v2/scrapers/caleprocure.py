@@ -448,16 +448,22 @@ class CalEprocureScraper(BaseScraper):
 
             try:
                 await page.wait_for_selector(
-                    '[data-if-label^="ViewAttachmentsTableRow"]', timeout=10000
+                    'tr[data-if-cloned-from="ViewAttachmentsTableRow"]', timeout=10000
                 )
             except Exception:
                 # Modal opened but no rows materialized. Either the package
-                # is genuinely empty or hydration ran past the timeout.
+                # is genuinely empty or hydration ran past the timeout —
+                # which we currently can't distinguish from the log alone.
+                # When CALEP_MODAL_DEBUG=1 is set on the Lambda, dump the
+                # modal's inner HTML to S3 so we can inspect what was
+                # actually there. Best-effort: any failure in the dump
+                # path is swallowed, the main return path is unchanged.
+                await self._maybe_dump_modal(page, url)
                 logger.info(f"  attach: package empty / table never rendered {url}")
                 return results
 
             buttons = await page.query_selector_all(
-                'button[data-if-label^="ViewAttachmentsView"]'
+                'tr[data-if-cloned-from="ViewAttachmentsTableRow"] button[data-if-label="ViewAttachmentsView"]'
             )
             n_attachments = len(buttons)
 
@@ -466,7 +472,7 @@ class CalEprocureScraper(BaseScraper):
                 pdf_url = ""
                 try:
                     buttons = await page.query_selector_all(
-                        'button[data-if-label^="ViewAttachmentsView"]'
+                        'tr[data-if-cloned-from="ViewAttachmentsTableRow"] button[data-if-label="ViewAttachmentsView"]'
                     )
                     if i >= len(buttons):
                         break
@@ -531,6 +537,90 @@ class CalEprocureScraper(BaseScraper):
             )
 
         return results
+
+    async def _maybe_dump_modal(self, page: Page, event_url: str) -> None:
+        """When CALEP_MODAL_DEBUG=1, write the attachment-modal HTML to S3.
+
+        Lets us inspect 'package empty / table never rendered' events
+        from the browser side — distinguishing between (a) the package
+        is genuinely empty (modal renders an empty-state message) and
+        (b) the table is rendered but our selector is wrong (rows
+        present under a different attribute). Best-effort; any failure
+        is swallowed.
+
+        Cap is enforced via _modal_debug_count so a single Lambda run
+        never writes more than a handful of dumps even on long chains.
+        """
+        import os
+        if os.environ.get("CALEP_MODAL_DEBUG", "0") != "1":
+            return
+        cap = int(os.environ.get("CALEP_MODAL_DEBUG_CAP", "3"))
+        if getattr(self, "_modal_debug_count", 0) >= cap:
+            return
+        try:
+            # Wait a bit more — table may render late.
+            await page.wait_for_timeout(2500)
+            payload = await page.evaluate(
+                """() => {
+                    const summary = {
+                        url: location.href,
+                        title: document.title,
+                        // What attachment-related data-if-label elements exist?
+                        attachment_labels: Array.from(
+                            document.querySelectorAll('[data-if-label]')
+                        )
+                            .map(e => e.getAttribute('data-if-label'))
+                            .filter(l => /attach|package|view|download/i.test(l)),
+                        // Any tables/rows on the page?
+                        table_count: document.querySelectorAll('table').length,
+                        tbody_tr_count: document.querySelectorAll('tbody tr').length,
+                        // Visible modals
+                        any_modal_open: Array.from(
+                            document.querySelectorAll('.modal.show, .modal.in')
+                        ).map(m => m.id || m.className),
+                        // Text from anything attachment-id'd
+                        attachment_section_text: Array.from(
+                            document.querySelectorAll('[id*="ttachment"], [class*="ttachment"]')
+                        )
+                            .map(e => (e.innerText || '').trim().slice(0, 200))
+                            .filter(Boolean)
+                            .slice(0, 10),
+                    };
+                    return {
+                        summary,
+                        body_html: document.body ? document.body.outerHTML : '',
+                    };
+                }"""
+            )
+            if not payload:
+                return
+            from webscraping.v2.config import S3_BUCKET, get_s3_client
+            import json as _json
+            from datetime import datetime
+            event_token = event_url.rstrip("/").split("/event/")[-1].replace("/", "_")
+            ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+            base = f"scrapes/v2/debug/caleprocure_modal/{ts}_{event_token}"
+            s3 = get_s3_client()
+            s3.put_object(
+                Bucket=S3_BUCKET,
+                Key=f"{base}.summary.json",
+                Body=_json.dumps(payload["summary"], indent=2).encode("utf-8"),
+                ContentType="application/json",
+            )
+            body_html = payload.get("body_html") or ""
+            if body_html:
+                s3.put_object(
+                    Bucket=S3_BUCKET,
+                    Key=f"{base}.body.html",
+                    Body=body_html.encode("utf-8"),
+                    ContentType="text/html",
+                )
+            logger.info(
+                f"  attach: dumped diagnostics for {event_url} → s3://{S3_BUCKET}/{base}.*"
+            )
+            self._modal_debug_count = getattr(self, "_modal_debug_count", 0) + 1
+        except Exception as e:
+            logger.debug(f"  attach: modal dump failed: {type(e).__name__}: {e}")
 
     async def _close_attachment_modal(self, page: Page) -> None:
         """Close the Cal eProcure attachment modal, swallowing any error."""
