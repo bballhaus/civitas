@@ -21,6 +21,23 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  // Old v1 surface → v2 redirects. The v1 pages (/dashboard, /profile,
+  // /profile-setup) still exist in app/ as fallbacks while we validate
+  // v2 — these redirects intercept any bookmarked v1 URLs at the edge,
+  // so users land on the live v2 surface. `permanent: false` keeps this
+  // reversible if we ever decide to re-promote v1.
+  //
+  // `/dashboard/rfp/:id` is intentionally NOT redirected — the v2
+  // detail page at /matches/:id is still maturing, so the legacy
+  // detail page stays reachable as a fallback. Only the bare
+  // /dashboard list view bounces.
+  async redirects() {
+    return [
+      { source: "/dashboard", destination: "/matches", permanent: false },
+      { source: "/profile", destination: "/profile/v2", permanent: false },
+      { source: "/profile-setup", destination: "/onboarding", permanent: false },
+    ];
+  },
   serverExternalPackages: ["mupdf"],
 };
 

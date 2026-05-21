@@ -43,6 +43,13 @@
       "when": 1779375087356,
       "tag": "0005_bidding_tracker",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779456000000,
+      "tag": "0006_multi_select_prime_gov",
+      "breakpoints": true
     }
   ]
 }

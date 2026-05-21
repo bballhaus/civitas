@@ -404,8 +404,8 @@ export function computeCompletenessScore(profile: FullProfile): number {
   if (profile.scopeMinUsd != null && profile.scopeMaxUsd != null) earned += COMPLETENESS_WEIGHTS.scopeRange;
   if (profile.durationPref) earned += COMPLETENESS_WEIGHTS.durationPref;
   if (profile.complexityPref) earned += COMPLETENESS_WEIGHTS.complexityPref;
-  if (profile.primeVsSub) earned += COMPLETENESS_WEIGHTS.primeVsSub;
-  if (profile.govExperience) earned += COMPLETENESS_WEIGHTS.govExperience;
+  if (profile.primeVsSub && profile.primeVsSub.length > 0) earned += COMPLETENESS_WEIGHTS.primeVsSub;
+  if (profile.govExperience && profile.govExperience.length > 0) earned += COMPLETENESS_WEIGHTS.govExperience;
 
   return Math.round((earned / TOTAL_WEIGHT) * 100);
 }

@@ -11,8 +11,12 @@ export interface OnboardingSnapshot {
   scopeMaxUsd: number | null;
   durationPref: string | null;
   complexityPref: string | null;
-  primeVsSub: string | null;
-  govExperience: string | null;
+  // Multi-select: a contractor may bid as both prime and sub. Values:
+  // 'prime' | 'sub'. null/empty array == not answered.
+  primeVsSub: string[] | null;
+  // Multi-select: contractor may have experience at several tiers. Values:
+  // 'none' | 'local' | 'state' | 'federal'.
+  govExperience: string[] | null;
   specialties: { id: string; value: string; weight: string }[];
   capabilities: { id: string; value: string }[];
   licenses: {

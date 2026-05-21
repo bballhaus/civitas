@@ -35,7 +35,9 @@ function computeNextStep(profile: Awaited<ReturnType<typeof getFullProfile>>): n
   if (profile.scopeMinUsd == null && profile.scopeMaxUsd == null && !profile.durationPref) {
     return 7;
   }
-  if (!profile.primeVsSub && !profile.govExperience) return 8;
+  const hasPrime = (profile.primeVsSub?.length ?? 0) > 0;
+  const hasGov = (profile.govExperience?.length ?? 0) > 0;
+  if (!hasPrime && !hasGov) return 8;
   return 9; // ready to mark complete
 }
 

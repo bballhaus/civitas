@@ -6,13 +6,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { OnboardingSnapshot } from "./types";
+import { useCommit } from "./commit";
 import {
   EMPLOYEE_BANDS,
   SPECIALTY_SUGGESTIONS,
   LICENSE_CLASSES,
   HARD_CERTIFICATIONS,
   SOFT_CERTIFICATIONS,
-  CA_METROS,
   DURATION_PREFS,
   COMPLEXITY_PREFS,
   PRIME_VS_SUB,
@@ -21,39 +21,36 @@ import {
 } from "@/lib/onboarding-data";
 import {
   CALIFORNIA_CITIES,
-  CALIFORNIA_COUNTIES,
   NAICS_ENTRIES,
 } from "@/data/filter-options";
 
 interface StepProps {
   snapshot: OnboardingSnapshot;
-  onChange: () => Promise<void> | void;
 }
 
 export function OnboardingStep({
   step,
   snapshot,
-  onChange,
 }: StepProps & { step: number }) {
   switch (step) {
     case 1:
-      return <StepIdentity snapshot={snapshot} onChange={onChange} />;
+      return <StepIdentity snapshot={snapshot} />;
     case 2:
-      return <StepSpecialties snapshot={snapshot} onChange={onChange} />;
+      return <StepSpecialties snapshot={snapshot} />;
     case 3:
-      return <StepCapabilities snapshot={snapshot} onChange={onChange} />;
+      return <StepCapabilities snapshot={snapshot} />;
     case 4:
-      return <StepLicenses snapshot={snapshot} onChange={onChange} />;
+      return <StepLicenses snapshot={snapshot} />;
     case 5:
-      return <StepCertifications snapshot={snapshot} onChange={onChange} />;
+      return <StepCertifications snapshot={snapshot} />;
     case 6:
-      return <StepGeography snapshot={snapshot} onChange={onChange} />;
+      return <StepGeography snapshot={snapshot} />;
     case 7:
-      return <StepScope snapshot={snapshot} onChange={onChange} />;
+      return <StepScope snapshot={snapshot} />;
     case 8:
-      return <StepCapacity snapshot={snapshot} onChange={onChange} />;
+      return <StepCapacity snapshot={snapshot} />;
     case 9:
-      return <StepReview snapshot={snapshot} onChange={onChange} />;
+      return <StepReview snapshot={snapshot} />;
     default:
       return null;
   }
@@ -141,10 +138,11 @@ function EmptyHint({ children }: { children: React.ReactNode }) {
 // scopes, so wiring them here also lifts matching accuracy.
 //
 // Implemented as a type-ahead combobox: filtered dropdown opens as the
-// user types, arrow keys move highlight, Enter picks, Esc closes. We
-// cap visible results at NAICS_VISIBLE so the list stays scrollable
-// without dragging 1k DOM nodes into the layout.
-const NAICS_VISIBLE = 12;
+// user types, arrow keys move highlight, Enter picks, Esc closes. No
+// row cap — the dropdown body scrolls (max-h-[320px]) so all 1,012
+// entries are reachable. Rendering ~1k <li>s once is cheaper than
+// repeatedly slicing+re-rendering on each keystroke, and the browser's
+// native overflow scroll handles the viewport math.
 
 function NaicsPicker({
   label,
@@ -170,8 +168,9 @@ function NaicsPicker({
   // Score each candidate so prefix matches on the title outrank substring
   // hits buried in the middle, and a pure-numeric query is treated as a
   // code lookup. Lightweight — runs on every keystroke against 1k rows.
+  // No cap on results so the user can scroll the whole catalog.
   const filtered = useMemo(() => {
-    if (!q) return NAICS_ENTRIES.slice(0, NAICS_VISIBLE);
+    if (!q) return NAICS_ENTRIES;
     const isNumeric = /^\d+$/.test(q);
     const matches: { entry: (typeof NAICS_ENTRIES)[number]; score: number }[] = [];
     for (const entry of NAICS_ENTRIES) {
@@ -190,7 +189,7 @@ function NaicsPicker({
       matches.push({ entry, score });
     }
     matches.sort((a, b) => b.score - a.score);
-    return matches.slice(0, NAICS_VISIBLE).map((m) => m.entry);
+    return matches.map((m) => m.entry);
   }, [q]);
 
   // Reset highlight when the candidate list changes — otherwise the user
@@ -226,8 +225,11 @@ function NaicsPicker({
     // Intentionally keep the dropdown open so the user can rapid-add several
     // codes without re-clicking the input. The empty query reverts the list
     // to the default head of NAICS_ENTRIES. Reset the highlight so Enter
-    // doesn't pick whatever row was last hovered.
+    // doesn't pick whatever row was last hovered. setOpen(true) is
+    // defensive — guards against a focus race after the parent's async
+    // refresh.
     setHighlighted(0);
+    setOpen(true);
     inputRef.current?.focus();
   };
 
@@ -253,9 +255,9 @@ function NaicsPicker({
   };
 
   return (
-    <div className="border-t border-slate-100 pt-4">
+    <div>
       <label className={labelClass}>{label}</label>
-      <div ref={wrapperRef} className="relative">
+      <div ref={wrapperRef}>
         <input
           ref={inputRef}
           type="text"
@@ -272,9 +274,12 @@ function NaicsPicker({
           className={inputClass}
         />
         {open && filtered.length > 0 && (
+          // Rendered inline (not absolute-positioned) so the dropdown grows
+          // the section card vertically instead of overflowing into whatever
+          // sits below. The card's parent layout handles vertical flow.
           <ul
             ref={listRef}
-            className="absolute z-20 left-0 right-0 mt-1 max-h-[320px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg shadow-slate-200/70"
+            className="mt-1 max-h-[320px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-sm"
           >
             {filtered.map((entry, i) => {
               const isAlreadyPicked =
@@ -322,7 +327,7 @@ function NaicsPicker({
           </ul>
         )}
         {open && q && filtered.length === 0 && (
-          <div className="absolute z-20 left-0 right-0 mt-1 px-3 py-2 bg-white border border-slate-200 rounded-lg shadow-lg text-sm text-slate-500">
+          <div className="mt-1 px-3 py-2 bg-white border border-slate-200 rounded-lg shadow-sm text-sm text-slate-500">
             No NAICS codes match &ldquo;{query}&rdquo;. Use the free-text input above instead.
           </div>
         )}
@@ -373,11 +378,69 @@ function ChoiceGrid({
   );
 }
 
+// Multi-select version of ChoiceGrid. Toggles each option in/out of the
+// values array. Used for prime_vs_sub and gov_experience in Step 8 where a
+// contractor may have multiple applicable answers.
+function MultiChoiceGrid({
+  options,
+  values,
+  onChange,
+  cols = 3,
+}: {
+  options: readonly { value: string; label: string }[];
+  values: readonly string[];
+  onChange: (next: string[]) => void;
+  cols?: 2 | 3 | 4;
+}) {
+  const gridCols = cols === 2 ? "md:grid-cols-2" : cols === 4 ? "md:grid-cols-4" : "md:grid-cols-3";
+  const selected = new Set(values);
+  return (
+    <div className={`grid grid-cols-1 ${gridCols} gap-2`}>
+      {options.map((p) => {
+        const active = selected.has(p.value);
+        return (
+          <button
+            key={p.value}
+            type="button"
+            onClick={() => {
+              const next = new Set(selected);
+              if (active) next.delete(p.value);
+              else next.add(p.value);
+              onChange(Array.from(next));
+            }}
+            aria-pressed={active}
+            className={`px-3 py-2.5 text-sm font-medium rounded-xl border-2 text-left transition-colors flex items-center gap-2 ${
+              active
+                ? "border-[#3C89C6] bg-blue-50 text-[#2d6fa0]"
+                : "border-slate-200 bg-white text-slate-600 hover:border-[#3C89C6]/40 hover:bg-blue-50/50"
+            }`}
+          >
+            <span
+              className={`inline-flex w-4 h-4 shrink-0 rounded border-2 items-center justify-center transition-colors ${
+                active ? "bg-[#3C89C6] border-[#3C89C6]" : "border-slate-300 bg-white"
+              }`}
+              aria-hidden="true"
+            >
+              {active && (
+                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </span>
+            <span className="truncate">{p.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Step 1: Identity → profiles.{company_name, year_founded, employee_band, website}
 // ---------------------------------------------------------------------------
 
-function StepIdentity({ snapshot, onChange }: StepProps) {
+export function StepIdentity({ snapshot }: StepProps) {
+  const commit = useCommit();
   const [companyName, setCompanyName] = useState(snapshot.companyName ?? "");
   const [yearFounded, setYearFounded] = useState(
     snapshot.yearFounded ? String(snapshot.yearFounded) : "",
@@ -385,17 +448,11 @@ function StepIdentity({ snapshot, onChange }: StepProps) {
   const [employeeBand, setEmployeeBand] = useState(snapshot.employeeBand ?? "");
   const [website, setWebsite] = useState(snapshot.website ?? "");
 
-  // Auto-save on blur for every field. The old design required an explicit
-  // "Save changes" button — users hit Continue without clicking it and lost
-  // their company name / year founded / website silently. Drives the
-  // matcher's company name + size band, so it has to be reliable.
+  // Persists on blur — the auto handler hits the API immediately, the
+  // deferred handler updates the parent draft. Either way the user sees
+  // their text reflected in the snapshot on the next render.
   const savePatch = async (patch: Record<string, unknown>) => {
-    await fetch("/api/profile/", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    await onChange();
+    await commit.patch(patch);
   };
 
   return (
@@ -475,23 +532,18 @@ function StepIdentity({ snapshot, onChange }: StepProps) {
 // Step 2: Specialties
 // ---------------------------------------------------------------------------
 
-function StepSpecialties({ snapshot, onChange }: StepProps) {
+export function StepSpecialties({ snapshot }: StepProps) {
+  const commit = useCommit();
   const [input, setInput] = useState("");
 
   const add = async (value: string) => {
     const v = value.trim();
     if (!v) return;
-    await fetch("/api/profile/specialties/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: v, weight: "primary" }),
-    });
+    await commit.addSpecialty({ value: v, weight: "primary" });
     setInput("");
-    await onChange();
   };
   const remove = async (id: string) => {
-    await fetch(`/api/profile/specialties/${id}/`, { method: "DELETE" });
-    await onChange();
+    await commit.removeSpecialty(id);
   };
 
   const currentValues = useMemo(
@@ -503,7 +555,7 @@ function StepSpecialties({ snapshot, onChange }: StepProps) {
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 min-h-[40px]">
         {snapshot.specialties.length === 0 ? (
-          <EmptyHint>Nothing here yet — add a few below.</EmptyHint>
+          <EmptyHint>Nothing here yet — pick a NAICS code below or type your own.</EmptyHint>
         ) : (
           snapshot.specialties.map((s) => (
             <Chip key={s.id} variant="blue" onRemove={() => remove(s.id)}>
@@ -512,25 +564,33 @@ function StepSpecialties({ snapshot, onChange }: StepProps) {
           ))
         )}
       </div>
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void add(input);
-            }
-          }}
-          placeholder="e.g. concrete flatwork installation"
-          className={inputClass}
-        />
-        <button type="button" onClick={() => add(input)} className={addBtnClass}>
-          Add
-        </button>
+      <NaicsPicker
+        label="Pick from the NAICS catalog"
+        onPick={add}
+        selectedValues={currentValues}
+      />
+      <div className="border-t border-slate-100 pt-4">
+        <label className={labelClass}>Or add your own</label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void add(input);
+              }
+            }}
+            placeholder="e.g. concrete flatwork installation"
+            className={inputClass}
+          />
+          <button type="button" onClick={() => add(input)} className={addBtnClass}>
+            Add
+          </button>
+        </div>
       </div>
-      <div>
+      <div className="border-t border-slate-100 pt-4">
         <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
           Common picks
         </p>
@@ -544,11 +604,6 @@ function StepSpecialties({ snapshot, onChange }: StepProps) {
             ))}
         </div>
       </div>
-      <NaicsPicker
-        label="Or pick from the NAICS catalog"
-        onPick={add}
-        selectedValues={currentValues}
-      />
     </div>
   );
 }
@@ -557,7 +612,8 @@ function StepSpecialties({ snapshot, onChange }: StepProps) {
 // Step 3: Capabilities
 // ---------------------------------------------------------------------------
 
-function StepCapabilities({ snapshot, onChange }: StepProps) {
+export function StepCapabilities({ snapshot }: StepProps) {
+  const commit = useCommit();
   const [input, setInput] = useState("");
   const currentValues = useMemo(
     () => new Set(snapshot.capabilities.map((c) => c.value.toLowerCase())),
@@ -567,24 +623,18 @@ function StepCapabilities({ snapshot, onChange }: StepProps) {
   const add = async (value: string) => {
     const v = value.trim();
     if (!v) return;
-    await fetch("/api/profile/capabilities/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: v }),
-    });
+    await commit.addCapability({ value: v });
     setInput("");
-    await onChange();
   };
   const remove = async (id: string) => {
-    await fetch(`/api/profile/capabilities/${id}/`, { method: "DELETE" });
-    await onChange();
+    await commit.removeCapability(id);
   };
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 min-h-[40px]">
         {snapshot.capabilities.length === 0 ? (
-          <EmptyHint>No capabilities yet.</EmptyHint>
+          <EmptyHint>No capabilities yet — pick a NAICS code below or type your own.</EmptyHint>
         ) : (
           snapshot.capabilities.map((c) => (
             <Chip key={c.id} variant="emerald" onRemove={() => remove(c.id)}>
@@ -593,29 +643,32 @@ function StepCapabilities({ snapshot, onChange }: StepProps) {
           ))
         )}
       </div>
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void add(input);
-            }
-          }}
-          placeholder="e.g. ADA compliance, traffic control, surveying"
-          className={inputClass}
-        />
-        <button type="button" onClick={() => add(input)} className={addBtnClass}>
-          Add
-        </button>
-      </div>
       <NaicsPicker
-        label="Or pick from the NAICS catalog"
+        label="Pick from the NAICS catalog"
         onPick={add}
         selectedValues={currentValues}
       />
+      <div className="border-t border-slate-100 pt-4">
+        <label className={labelClass}>Or add your own</label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void add(input);
+              }
+            }}
+            placeholder="e.g. ADA compliance, traffic control, surveying"
+            className={inputClass}
+          />
+          <button type="button" onClick={() => add(input)} className={addBtnClass}>
+            Add
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -624,30 +677,25 @@ function StepCapabilities({ snapshot, onChange }: StepProps) {
 // Step 4: Licenses
 // ---------------------------------------------------------------------------
 
-function StepLicenses({ snapshot, onChange }: StepProps) {
+export function StepLicenses({ snapshot }: StepProps) {
+  const commit = useCommit();
   const [licenseClass, setLicenseClass] = useState("");
   const [licenseNumber, setLicenseNumber] = useState("");
   const [expiresOn, setExpiresOn] = useState("");
 
   const add = async () => {
     if (!licenseClass) return;
-    await fetch("/api/profile/licenses/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        licenseClass,
-        licenseNumber: licenseNumber.trim() || undefined,
-        expiresOn: expiresOn || undefined,
-      }),
+    await commit.addLicense({
+      licenseClass,
+      licenseNumber: licenseNumber.trim() || undefined,
+      expiresOn: expiresOn || undefined,
     });
     setLicenseClass("");
     setLicenseNumber("");
     setExpiresOn("");
-    await onChange();
   };
   const remove = async (id: string) => {
-    await fetch(`/api/profile/licenses/${id}/`, { method: "DELETE" });
-    await onChange();
+    await commit.removeLicense(id);
   };
 
   const existingClasses = new Set(snapshot.licenses.map((l) => l.licenseClass));
@@ -685,50 +733,62 @@ function StepLicenses({ snapshot, onChange }: StepProps) {
           ))
         )}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div>
-          <label className={labelClass}>Class</label>
-          <select
-            value={licenseClass}
-            onChange={(e) => setLicenseClass(e.target.value)}
-            className={selectClass}
+      <div className="border-t border-slate-100 pt-4">
+        <label className={labelClass}>Add a license</label>
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-3 items-end">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">
+              Class
+            </p>
+            <select
+              value={licenseClass}
+              onChange={(e) => setLicenseClass(e.target.value)}
+              className={selectClass}
+            >
+              <option value="">Pick a class…</option>
+              {LICENSE_CLASSES.filter((c) => !existingClasses.has(c.value)).map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">
+              Number
+            </p>
+            <input
+              type="text"
+              value={licenseNumber}
+              onChange={(e) => setLicenseNumber(e.target.value)}
+              placeholder="1234567"
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">
+              Expires
+            </p>
+            <input
+              type="date"
+              value={expiresOn}
+              onChange={(e) => setExpiresOn(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={add}
+            disabled={!licenseClass}
+            className="h-[42px] px-5 text-sm font-semibold text-white bg-[#3C89C6] rounded-lg shadow-sm shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#3C89C6] transition-colors"
           >
-            <option value="">Pick a class…</option>
-            {LICENSE_CLASSES.filter((c) => !existingClasses.has(c.value)).map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
+            Save
+          </button>
         </div>
-        <div>
-          <label className={labelClass}>License number</label>
-          <input
-            type="text"
-            value={licenseNumber}
-            onChange={(e) => setLicenseNumber(e.target.value)}
-            placeholder="1234567"
-            className={inputClass}
-          />
-        </div>
-        <div>
-          <label className={labelClass}>Expires</label>
-          <input
-            type="date"
-            value={expiresOn}
-            onChange={(e) => setExpiresOn(e.target.value)}
-            className={inputClass}
-          />
-        </div>
+        <p className="text-xs text-slate-400 italic mt-1.5">
+          Pick a class, then hit Save. Number + expiration are optional.
+        </p>
       </div>
-      <button
-        type="button"
-        onClick={add}
-        disabled={!licenseClass}
-        className="px-4 py-2 text-sm font-semibold text-slate-700 border border-slate-300 rounded-lg bg-white hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        Add license
-      </button>
     </div>
   );
 }
@@ -737,8 +797,17 @@ function StepLicenses({ snapshot, onChange }: StepProps) {
 // Step 5: Certifications (hard + soft, two columns)
 // ---------------------------------------------------------------------------
 
-function StepCertifications({ snapshot, onChange }: StepProps) {
+export function StepCertifications({ snapshot }: StepProps) {
+  const commit = useCommit();
   const held = new Set(snapshot.certifications.map((c) => c.canonicalId));
+  const seededIds = new Set<string>([
+    ...HARD_CERTIFICATIONS.map((c) => c.canonicalId),
+    ...SOFT_CERTIFICATIONS.map((c) => c.canonicalId),
+  ]);
+  const customCerts = snapshot.certifications.filter((c) => !seededIds.has(c.canonicalId));
+
+  const [customName, setCustomName] = useState("");
+  const [customKind, setCustomKind] = useState<"hard" | "soft">("soft");
 
   const toggle = async (
     canonicalId: string,
@@ -748,71 +817,140 @@ function StepCertifications({ snapshot, onChange }: StepProps) {
     if (held.has(canonicalId)) {
       const row = snapshot.certifications.find((c) => c.canonicalId === canonicalId);
       if (row) {
-        await fetch(`/api/profile/certifications/${row.id}/`, { method: "DELETE" });
+        await commit.removeCertification(row.id);
       }
     } else {
-      await fetch("/api/profile/certifications/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ canonicalId, displayName, kind }),
-      });
+      await commit.addCertification({ canonicalId, displayName, kind });
     }
-    await onChange();
+  };
+
+  const removeCustom = async (id: string) => {
+    await commit.removeCertification(id);
+  };
+
+  const addCustom = async () => {
+    const name = customName.trim();
+    if (!name) return;
+    // Derive a canonical id from the user's typed display name. Conservative —
+    // strip anything that isn't a-z0-9 and lowercase. Same pattern as the
+    // custom-agency picker in Step 8.
+    const canonicalId = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_|_$/g, "");
+    if (!canonicalId) return;
+    await commit.addCertification({ canonicalId, displayName: name, kind: customKind });
+    setCustomName("");
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <span className="w-6 h-6 rounded-md bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center text-white shadow-sm">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-          </span>
-          <h3 className="text-sm font-bold text-slate-900">Hard / set-aside</h3>
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="w-6 h-6 rounded-md bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center text-white shadow-sm">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </span>
+            <h3 className="text-sm font-bold text-slate-900">Hard / set-aside</h3>
+          </div>
+          <div className="space-y-1">
+            {HARD_CERTIFICATIONS.map((c) => (
+              <label
+                key={c.canonicalId}
+                className="flex items-center gap-2 p-2 rounded-lg hover:bg-amber-50/50 cursor-pointer text-sm text-slate-700 transition-colors"
+              >
+                <input
+                  type="checkbox"
+                  checked={held.has(c.canonicalId)}
+                  onChange={() => toggle(c.canonicalId, c.displayName, "hard")}
+                  className="rounded text-[#3C89C6] focus:ring-[#3C89C6]"
+                />
+                {c.displayName}
+              </label>
+            ))}
+          </div>
         </div>
-        <div className="space-y-1">
-          {HARD_CERTIFICATIONS.map((c) => (
-            <label
-              key={c.canonicalId}
-              className="flex items-center gap-2 p-2 rounded-lg hover:bg-amber-50/50 cursor-pointer text-sm text-slate-700 transition-colors"
-            >
-              <input
-                type="checkbox"
-                checked={held.has(c.canonicalId)}
-                onChange={() => toggle(c.canonicalId, c.displayName, "hard")}
-                className="rounded text-[#3C89C6] focus:ring-[#3C89C6]"
-              />
-              {c.displayName}
-            </label>
-          ))}
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="w-6 h-6 rounded-md bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white shadow-sm">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </span>
+            <h3 className="text-sm font-bold text-slate-900">Soft / quality</h3>
+          </div>
+          <div className="space-y-1">
+            {SOFT_CERTIFICATIONS.map((c) => (
+              <label
+                key={c.canonicalId}
+                className="flex items-center gap-2 p-2 rounded-lg hover:bg-violet-50/50 cursor-pointer text-sm text-slate-700 transition-colors"
+              >
+                <input
+                  type="checkbox"
+                  checked={held.has(c.canonicalId)}
+                  onChange={() => toggle(c.canonicalId, c.displayName, "soft")}
+                  className="rounded text-[#3C89C6] focus:ring-[#3C89C6]"
+                />
+                {c.displayName}
+              </label>
+            ))}
+          </div>
         </div>
       </div>
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <span className="w-6 h-6 rounded-md bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white shadow-sm">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </span>
-          <h3 className="text-sm font-bold text-slate-900">Soft / quality</h3>
+
+      <div className="border-t border-slate-100 pt-5">
+        <label className={labelClass}>Add your own</label>
+        {customCerts.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {customCerts.map((c) => (
+              <Chip
+                key={c.id}
+                variant={c.kind === "hard" ? "amber" : "violet"}
+                onRemove={() => removeCustom(c.id)}
+              >
+                <span>{c.displayName}</span>
+                <span className="text-xs opacity-60">· {c.kind}</span>
+              </Chip>
+            ))}
+          </div>
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2 items-stretch">
+          <input
+            type="text"
+            value={customName}
+            onChange={(e) => setCustomName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void addCustom();
+              }
+            }}
+            placeholder="e.g. LEED Gold contractor, OSHA 10-Hour"
+            className={inputClass}
+          />
+          <select
+            value={customKind}
+            onChange={(e) => setCustomKind(e.target.value as "hard" | "soft")}
+            className={selectClass}
+            aria-label="Certification type"
+          >
+            <option value="soft">Soft (bonus)</option>
+            <option value="hard">Hard (set-aside)</option>
+          </select>
+          <button
+            type="button"
+            onClick={addCustom}
+            disabled={!customName.trim()}
+            className={`${addBtnClass} disabled:opacity-50`}
+          >
+            Add
+          </button>
         </div>
-        <div className="space-y-1">
-          {SOFT_CERTIFICATIONS.map((c) => (
-            <label
-              key={c.canonicalId}
-              className="flex items-center gap-2 p-2 rounded-lg hover:bg-violet-50/50 cursor-pointer text-sm text-slate-700 transition-colors"
-            >
-              <input
-                type="checkbox"
-                checked={held.has(c.canonicalId)}
-                onChange={() => toggle(c.canonicalId, c.displayName, "soft")}
-                className="rounded text-[#3C89C6] focus:ring-[#3C89C6]"
-              />
-              {c.displayName}
-            </label>
-          ))}
-        </div>
+        <p className="text-xs text-slate-400 italic mt-1">
+          Use <strong>Hard</strong> for set-aside or mandatory certifications, <strong>Soft</strong> for quality / preferred-vendor signals.
+        </p>
       </div>
     </div>
   );
@@ -822,72 +960,51 @@ function StepCertifications({ snapshot, onChange }: StepProps) {
 // Step 6: Geography
 // ---------------------------------------------------------------------------
 
-function StepGeography({ snapshot, onChange }: StepProps) {
-  const [selection, setSelection] = useState(""); // "kind|name" composite
+export function StepGeography({ snapshot }: StepProps) {
+  const commit = useCommit();
   const [isHard, setIsHard] = useState(false);
   const [radiusMiles, setRadiusMiles] = useState("");
 
-  // All pickable areas as a single typed list: metros + counties + cities.
-  // Stored as "kind|name" so the <select> value carries both fields.
-  const options = [
-    ...CA_METROS.map((m) => ({ kind: "metro" as const, name: m, group: "Metros" })),
-    ...CALIFORNIA_COUNTIES.map((c) => ({
-      kind: "county" as const,
-      name: c,
-      group: "Counties",
-    })),
-    ...CALIFORNIA_CITIES.map((c) => ({
-      kind: "city" as const,
-      name: c,
-      group: "Cities",
-    })),
-  ];
+  // Only cities now — the matcher already substring-matches against
+  // rfp.location, so a city name in the user's work areas catches the
+  // metro/county phrasing too. Dropping metros+counties from this picker
+  // simplifies the choice without hurting match coverage.
+  const heldCities = new Set(
+    snapshot.workAreas
+      .filter((w) => w.kind === "city")
+      .map((w) => w.name.toLowerCase()),
+  );
 
-  const heldKeys = new Set(snapshot.workAreas.map((w) => `${w.kind}|${w.name}`));
-
-  const add = async (kindArg: "city" | "county" | "metro", nameArg: string) => {
-    if (!nameArg) return;
+  const add = async (cityName: string) => {
+    const name = cityName.trim();
+    if (!name) return;
     const radiusNum = radiusMiles ? Number(radiusMiles) : null;
-    await fetch("/api/profile/work-areas/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        kind: kindArg,
-        name: nameArg,
-        isHard,
-        // Only meaningful when isHard=true. Persist regardless so toggling
-        // hard later doesn't drop the value.
-        radiusMiles: Number.isFinite(radiusNum) ? radiusNum : null,
-      }),
+    await commit.addWorkArea({
+      kind: "city",
+      name,
+      isHard,
+      radiusMiles: Number.isFinite(radiusNum) ? radiusNum : null,
     });
-    setSelection("");
-    await onChange();
   };
 
   const remove = async (id: string) => {
-    await fetch(`/api/profile/work-areas/${id}/`, { method: "DELETE" });
-    await onChange();
-  };
-
-  const handleAdd = () => {
-    if (!selection) return;
-    const [kindArg, nameArg] = selection.split("|", 2);
-    if (kindArg === "city" || kindArg === "county" || kindArg === "metro") {
-      void add(kindArg, nameArg);
-    }
+    await commit.removeWorkArea(id);
   };
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 min-h-[40px]">
         {snapshot.workAreas.length === 0 ? (
-          <EmptyHint>No areas yet.</EmptyHint>
+          <EmptyHint>No cities yet — start typing one below.</EmptyHint>
         ) : (
           snapshot.workAreas.map((w) => (
-            <Chip key={w.id} variant={w.isHard ? "amber" : "blue"} onRemove={() => remove(w.id)}>
+            <Chip
+              key={w.id}
+              variant={w.isHard ? "amber" : "blue"}
+              onRemove={() => remove(w.id)}
+            >
               {w.isHard && <span aria-label="hard limit">🔒</span>}
               <span>{w.name}</span>
-              <span className="text-xs opacity-60">· {w.kind}</span>
               {w.isHard && w.radiusMiles != null && (
                 <span className="text-xs opacity-60">· {w.radiusMiles}mi</span>
               )}
@@ -896,49 +1013,9 @@ function StepGeography({ snapshot, onChange }: StepProps) {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
-        <div>
-          <label className={labelClass}>Add a California city, county, or metro</label>
-          <select
-            value={selection}
-            onChange={(e) => setSelection(e.target.value)}
-            className={selectClass}
-          >
-            <option value="">Search and pick…</option>
-            <optgroup label="Metros">
-              {CA_METROS.filter((m) => !heldKeys.has(`metro|${m}`)).map((m) => (
-                <option key={`metro|${m}`} value={`metro|${m}`}>
-                  {m}
-                </option>
-              ))}
-            </optgroup>
-            <optgroup label="Counties">
-              {CALIFORNIA_COUNTIES.filter((c) => !heldKeys.has(`county|${c}`)).map((c) => (
-                <option key={`county|${c}`} value={`county|${c}`}>
-                  {c} County
-                </option>
-              ))}
-            </optgroup>
-            <optgroup label="Cities">
-              {CALIFORNIA_CITIES.filter((c) => !heldKeys.has(`city|${c}`)).map((c) => (
-                <option key={`city|${c}`} value={`city|${c}`}>
-                  {c}
-                </option>
-              ))}
-            </optgroup>
-          </select>
-        </div>
-        <button
-          type="button"
-          onClick={handleAdd}
-          disabled={!selection}
-          className={`${addBtnClass} disabled:opacity-50`}
-        >
-          Add
-        </button>
-      </div>
+      <CityPicker selectedCities={heldCities} onPick={add} />
 
-      <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] gap-3 items-center">
+      <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] gap-3 items-center border-t border-slate-100 pt-4">
         <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
           <input
             type="checkbox"
@@ -968,8 +1045,167 @@ function StepGeography({ snapshot, onChange }: StepProps) {
       </div>
       <p className="text-xs text-slate-400 italic">
         Toggle hard limit and set a mileage radius if you only bid within a
-        commute window. Without a radius the gate is a strict name match.
+        commute window. Toggle applies to the <em>next</em> city you add —
+        existing chips remain as they were.
       </p>
+    </div>
+  );
+}
+
+// City autocomplete combobox — same UX pattern as NaicsPicker but
+// against the 481-entry CA cities list. Picking a city posts immediately
+// (uses the hard/radius state from the parent), then clears the query
+// and keeps the dropdown open so users can rapid-add several. No cap
+// on results — the dropdown body scrolls so the whole list is reachable.
+
+function CityPicker({
+  selectedCities,
+  onPick,
+}: {
+  selectedCities: ReadonlySet<string>;
+  onPick: (city: string) => void | Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
+
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return CALIFORNIA_CITIES;
+    const matches: { name: string; score: number }[] = [];
+    for (const city of CALIFORNIA_CITIES) {
+      const low = city.toLowerCase();
+      if (!low.includes(q)) continue;
+      let score = 0;
+      if (low === q) score += 100;
+      else if (low.startsWith(q)) score += 60;
+      else score += 20;
+      score -= city.length * 0.05;
+      matches.push({ name: city, score });
+    }
+    matches.sort((a, b) => b.score - a.score);
+    return matches.map((m) => m.name);
+  }, [q]);
+
+  useEffect(() => {
+    setHighlighted(0);
+  }, [q]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const item = listRef.current.children[highlighted] as HTMLElement | undefined;
+    item?.scrollIntoView({ block: "nearest" });
+  }, [highlighted, open]);
+
+  const pick = (city: string) => {
+    void onPick(city);
+    setQuery("");
+    setHighlighted(0);
+    setOpen(true);
+    inputRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!open) {
+        setOpen(true);
+        return;
+      }
+      setHighlighted((h) => Math.min(h + 1, filtered.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlighted((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Enter") {
+      if (open && filtered[highlighted]) {
+        e.preventDefault();
+        pick(filtered[highlighted]);
+      }
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div>
+      <label className={labelClass}>Add a California city</label>
+      <div ref={wrapperRef}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type a city name — e.g. Sacramento, Los Angeles, San Diego"
+          aria-autocomplete="list"
+          className={inputClass}
+        />
+        {open && filtered.length > 0 && (
+          // Inline (not absolute) so the section card grows to contain it.
+          <ul
+            ref={listRef}
+            className="mt-1 max-h-[320px] overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-sm"
+          >
+            {filtered.map((city, i) => {
+              const isAlreadyPicked = selectedCities.has(city.toLowerCase());
+              return (
+                <li
+                  key={city}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    if (isAlreadyPicked) {
+                      setOpen(false);
+                      return;
+                    }
+                    pick(city);
+                  }}
+                  onMouseEnter={() => setHighlighted(i)}
+                  className={`px-3 py-2 cursor-pointer flex items-center gap-2 text-sm ${
+                    isAlreadyPicked
+                      ? "bg-slate-50 text-slate-400 cursor-default"
+                      : highlighted === i
+                        ? "bg-blue-50 text-[#2d6fa0]"
+                        : "text-slate-700"
+                  }`}
+                >
+                  <span className="truncate flex-1">{city}</span>
+                  {isAlreadyPicked && (
+                    <span className="text-xs font-medium text-emerald-600 shrink-0 inline-flex items-center gap-1">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Added
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {open && q && filtered.length === 0 && (
+          <div className="mt-1 px-3 py-2 bg-white border border-slate-200 rounded-lg shadow-sm text-sm text-slate-500">
+            No California city matches &ldquo;{query}&rdquo;.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -978,7 +1214,8 @@ function StepGeography({ snapshot, onChange }: StepProps) {
 // Step 7: Scope & duration
 // ---------------------------------------------------------------------------
 
-function StepScope({ snapshot, onChange }: StepProps) {
+export function StepScope({ snapshot }: StepProps) {
+  const commit = useCommit();
   const [minUsd, setMinUsd] = useState(
     snapshot.scopeMinUsd ? String(snapshot.scopeMinUsd) : "",
   );
@@ -989,12 +1226,7 @@ function StepScope({ snapshot, onChange }: StepProps) {
   const [complexityPref, setComplexityPref] = useState(snapshot.complexityPref ?? "");
 
   const save = async (patch: Record<string, unknown>) => {
-    await fetch("/api/profile/", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    await onChange();
+    await commit.patch(patch);
   };
 
   return (
@@ -1057,17 +1289,13 @@ function StepScope({ snapshot, onChange }: StepProps) {
 // Step 8: Capacity & history
 // ---------------------------------------------------------------------------
 
-function StepCapacity({ snapshot, onChange }: StepProps) {
-  const [primeVsSub, setPrimeVsSub] = useState(snapshot.primeVsSub ?? "");
-  const [govExperience, setGovExperience] = useState(snapshot.govExperience ?? "");
+export function StepCapacity({ snapshot }: StepProps) {
+  const commit = useCommit();
+  const [primeVsSub, setPrimeVsSub] = useState<string[]>(snapshot.primeVsSub ?? []);
+  const [govExperience, setGovExperience] = useState<string[]>(snapshot.govExperience ?? []);
 
   const savePatch = async (patch: Record<string, unknown>) => {
-    await fetch("/api/profile/", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    await onChange();
+    await commit.patch(patch);
   };
 
   const addAgency = async (
@@ -1075,45 +1303,50 @@ function StepCapacity({ snapshot, onChange }: StepProps) {
     display: string,
     role: "prime" | "sub",
   ) => {
-    await fetch("/api/profile/agency-relationships/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        agencyCanonical: canonical,
-        agencyDisplay: display,
-        role,
-        strength: 3,
-        source: "user",
-      }),
+    await commit.addAgencyRelationship({
+      agencyCanonical: canonical,
+      agencyDisplay: display,
+      role,
     });
-    await onChange();
   };
   const removeAgency = async (id: string) => {
-    await fetch(`/api/profile/agency-relationships/${id}/`, { method: "DELETE" });
-    await onChange();
+    await commit.removeAgencyRelationship(id);
   };
 
   return (
     <div className="space-y-5">
       <div>
         <label className={labelClass}>Do you bid as prime, sub, or both?</label>
-        <ChoiceGrid
+        <p className="text-xs text-slate-400 italic mb-2">Pick all that apply.</p>
+        <MultiChoiceGrid
           options={PRIME_VS_SUB}
-          value={primeVsSub}
-          onChange={(v) => {
-            setPrimeVsSub(v);
-            void savePatch({ primeVsSub: v });
+          values={primeVsSub}
+          onChange={(next) => {
+            setPrimeVsSub(next);
+            void savePatch({ primeVsSub: next });
           }}
+          cols={2}
         />
       </div>
       <div>
         <label className={labelClass}>Government contracting experience</label>
-        <ChoiceGrid
+        <p className="text-xs text-slate-400 italic mb-2">Pick every tier you&apos;ve worked at.</p>
+        <MultiChoiceGrid
           options={GOV_EXPERIENCE}
-          value={govExperience}
-          onChange={(v) => {
-            setGovExperience(v);
-            void savePatch({ govExperience: v });
+          values={govExperience}
+          onChange={(next) => {
+            // "None" is mutually exclusive with the others — if the user
+            // selects it, clear the rest; if they pick another tier, drop
+            // "none" automatically.
+            let normalized = next;
+            const justPickedNone =
+              next.includes("none") && !govExperience.includes("none");
+            const pickedSomethingElse =
+              govExperience.includes("none") && next.some((v) => v !== "none");
+            if (justPickedNone) normalized = ["none"];
+            else if (pickedSomethingElse) normalized = next.filter((v) => v !== "none");
+            setGovExperience(normalized);
+            void savePatch({ govExperience: normalized });
           }}
           cols={4}
         />
@@ -1279,7 +1512,140 @@ function AgencyPicker({
 // Step 9: Done — review & finish
 // ---------------------------------------------------------------------------
 
-function StepReview({ snapshot, onChange }: StepProps) {
+// Mirrors COMPLETENESS_WEIGHTS in db/queries/profile.ts. Drives the per-
+// category bars on the review step so users can see at a glance which
+// pieces of their profile matter most for matching, and which they've
+// skipped. Keep this list in sync — if the matcher weights move, this
+// visual must follow or it will mislead users.
+//
+// We bucket Identity (company name) with Scope/Duration/Complexity since
+// they're all top-level profile fields, and group "Bidding" as
+// primeVsSub + govExperience like the existing summary.
+type ReviewCategory = {
+  label: string;
+  weight: number;
+  earned: number;
+  detail: string | null;
+  variant: "blue" | "emerald" | "violet" | "amber";
+};
+
+function buildReviewCategories(snapshot: OnboardingSnapshot): ReviewCategory[] {
+  const has = (b: boolean, w: number) => (b ? w : 0);
+  return [
+    {
+      label: "Identity",
+      weight: 5,
+      earned: has(Boolean(snapshot.companyName?.trim()), 5),
+      detail: snapshot.companyName
+        ? `${snapshot.companyName}${snapshot.employeeBand ? ` · ${snapshot.employeeBand} people` : ""}`
+        : null,
+      variant: "blue",
+    },
+    {
+      label: "Specialties",
+      weight: 25,
+      earned: has(snapshot.specialties.length > 0, 25),
+      detail: snapshot.specialties.length
+        ? snapshot.specialties.map((s) => s.value).slice(0, 4).join(", ") +
+          (snapshot.specialties.length > 4 ? ` +${snapshot.specialties.length - 4} more` : "")
+        : null,
+      variant: "blue",
+    },
+    {
+      label: "Capabilities",
+      weight: 15,
+      earned: has(snapshot.capabilities.length > 0, 15),
+      detail: snapshot.capabilities.length
+        ? `${snapshot.capabilities.length} added`
+        : null,
+      variant: "emerald",
+    },
+    {
+      label: "Licenses",
+      weight: 10,
+      earned: has(snapshot.licenses.length > 0, 10),
+      detail: snapshot.licenses.length
+        ? snapshot.licenses.map((l) => l.licenseClass).join(", ")
+        : null,
+      variant: "violet",
+    },
+    {
+      label: "Certifications",
+      weight: 10,
+      earned: has(snapshot.certifications.length > 0, 10),
+      detail: snapshot.certifications.length
+        ? `${snapshot.certifications.length} held`
+        : null,
+      variant: "amber",
+    },
+    {
+      label: "Work areas",
+      weight: 10,
+      earned: has(snapshot.workAreas.length > 0, 10),
+      detail: snapshot.workAreas.length
+        ? snapshot.workAreas.map((w) => w.name).slice(0, 5).join(", ") +
+          (snapshot.workAreas.length > 5 ? ` +${snapshot.workAreas.length - 5} more` : "")
+        : null,
+      variant: "blue",
+    },
+    {
+      label: "Agencies",
+      weight: 10,
+      earned: has(snapshot.agencyRelationships.length > 0, 10),
+      detail: snapshot.agencyRelationships.length
+        ? `${snapshot.agencyRelationships.length} agencies`
+        : null,
+      variant: "violet",
+    },
+    {
+      label: "Scope range",
+      weight: 5,
+      earned: has(snapshot.scopeMinUsd != null && snapshot.scopeMaxUsd != null, 5),
+      detail:
+        snapshot.scopeMinUsd || snapshot.scopeMaxUsd
+          ? `$${(snapshot.scopeMinUsd ?? 0).toLocaleString()} – $${
+              snapshot.scopeMaxUsd ? snapshot.scopeMaxUsd.toLocaleString() : "∞"
+            }`
+          : null,
+      variant: "emerald",
+    },
+    {
+      label: "Duration",
+      weight: 3,
+      earned: has(Boolean(snapshot.durationPref), 3),
+      detail: snapshot.durationPref,
+      variant: "blue",
+    },
+    {
+      label: "Complexity",
+      weight: 3,
+      earned: has(Boolean(snapshot.complexityPref), 3),
+      detail: snapshot.complexityPref,
+      variant: "blue",
+    },
+    {
+      label: "Contract type",
+      weight: 2,
+      earned: has((snapshot.primeVsSub?.length ?? 0) > 0, 2),
+      detail: snapshot.primeVsSub?.length
+        ? snapshot.primeVsSub.join(", ")
+        : null,
+      variant: "violet",
+    },
+    {
+      label: "Gov experience",
+      weight: 2,
+      earned: has((snapshot.govExperience?.length ?? 0) > 0, 2),
+      detail: snapshot.govExperience?.length
+        ? snapshot.govExperience.join(", ")
+        : null,
+      variant: "violet",
+    },
+  ];
+}
+
+function StepReview({ snapshot }: { snapshot: OnboardingSnapshot }) {
+  const commit = useCommit();
   const [roundupSaving, setRoundupSaving] = useState(false);
 
   const toggleRoundup = async (next: boolean) => {
@@ -1289,7 +1655,9 @@ function StepReview({ snapshot, onChange }: StepProps) {
       // can fire at 7am *local*. When disabling, leave the timezone in
       // place — cheap and harmless, and means re-enabling later doesn't
       // need to re-detect.
-      const patch: Record<string, unknown> = { dailyRoundupEnabled: next };
+      const patch: { dailyRoundupEnabled: boolean; dailyRoundupTimezone?: string | null } = {
+        dailyRoundupEnabled: next,
+      };
       if (next) {
         try {
           patch.dailyRoundupTimezone =
@@ -1298,89 +1666,118 @@ function StepReview({ snapshot, onChange }: StepProps) {
           patch.dailyRoundupTimezone = null;
         }
       }
-      await fetch("/api/profile/", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      await onChange();
+      await commit.patch(patch);
     } finally {
       setRoundupSaving(false);
     }
   };
 
-  const summary = [
-    {
-      label: "Identity",
-      value: snapshot.companyName
-        ? `${snapshot.companyName}${snapshot.employeeBand ? ` · ${snapshot.employeeBand} people` : ""}`
-        : null,
-    },
-    {
-      label: "Specialties",
-      value: snapshot.specialties.length
-        ? snapshot.specialties.map((s) => s.value).join(", ")
-        : null,
-    },
-    {
-      label: "Capabilities",
-      value: snapshot.capabilities.length
-        ? `${snapshot.capabilities.length} added`
-        : null,
-    },
-    {
-      label: "Licenses",
-      value: snapshot.licenses.length
-        ? snapshot.licenses.map((l) => l.licenseClass).join(", ")
-        : null,
-    },
-    {
-      label: "Certifications",
-      value: snapshot.certifications.length
-        ? `${snapshot.certifications.length} held`
-        : null,
-    },
-    {
-      label: "Work areas",
-      value: snapshot.workAreas.length
-        ? snapshot.workAreas.map((w) => w.name).join(", ")
-        : null,
-    },
-    {
-      label: "Scope",
-      value:
-        snapshot.scopeMinUsd || snapshot.scopeMaxUsd
-          ? `$${(snapshot.scopeMinUsd ?? 0).toLocaleString()} – $${
-              snapshot.scopeMaxUsd ? snapshot.scopeMaxUsd.toLocaleString() : "∞"
-            }`
-          : null,
-    },
-    {
-      label: "Bidding",
-      value: snapshot.primeVsSub || snapshot.govExperience
-        ? [snapshot.primeVsSub, snapshot.govExperience].filter(Boolean).join(" · ")
-        : null,
-    },
-  ];
+  const categories = buildReviewCategories(snapshot);
+  const totalWeight = categories.reduce((s, c) => s + c.weight, 0);
+  const totalEarned = categories.reduce((s, c) => s + c.earned, 0);
+  const overall = Math.round((totalEarned / totalWeight) * 100);
+
+  const barColors: Record<ReviewCategory["variant"], string> = {
+    blue: "from-blue-500 to-blue-600",
+    emerald: "from-emerald-500 to-emerald-600",
+    violet: "from-violet-500 to-violet-600",
+    amber: "from-amber-500 to-amber-600",
+  };
 
   return (
-    <div className="space-y-2">
-      {summary.map((s) => (
-        <div
-          key={s.label}
-          className="flex items-baseline gap-3 text-sm py-2 border-b border-slate-100 last:border-0"
-        >
-          <span className="w-32 shrink-0 font-semibold text-slate-500 text-xs uppercase tracking-wider">
-            {s.label}
-          </span>
-          <span className={s.value ? "text-slate-800" : "text-slate-400 italic"}>
-            {s.value ?? "Skipped — you can fill this in later"}
-          </span>
+    <div className="space-y-4">
+      {/* Overall ring + headline */}
+      <div className="flex items-center gap-4 p-4 rounded-xl bg-gradient-to-br from-blue-50/60 to-emerald-50/40 border border-slate-100">
+        <div className="relative w-16 h-16 shrink-0">
+          <svg viewBox="0 0 36 36" className="w-16 h-16 -rotate-90">
+            <circle
+              cx="18"
+              cy="18"
+              r="15.9155"
+              fill="none"
+              stroke="#e2e8f0"
+              strokeWidth="3"
+            />
+            <circle
+              cx="18"
+              cy="18"
+              r="15.9155"
+              fill="none"
+              stroke="#3C89C6"
+              strokeWidth="3"
+              strokeDasharray={`${overall}, 100`}
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-base font-extrabold text-slate-900">{overall}%</span>
+          </div>
         </div>
-      ))}
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-slate-900">Profile readiness for matching</p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Categories with thicker bars carry the most weight in the matcher. Empty
+            ones lower your match quality — you can revisit any of them after
+            finishing.
+          </p>
+        </div>
+      </div>
 
-      {/* Daily roundup opt-in. Saves on toggle through PATCH /api/profile —
-          the user does not need to hit Continue/Finish for it to stick. */}
+      {/* Per-category bars — width = weight so eye is naturally drawn to
+          high-impact categories the user skipped. */}
+      <div className="space-y-2.5">
+        {categories.map((c) => {
+          const filled = c.earned > 0;
+          // The bar's max-width is proportional to the category's weight in
+          // the matcher (cap at 25 → 100%). High-weight rows visibly span
+          // wider than low-weight ones, even when both are "complete."
+          const weightFraction = Math.min(1, c.weight / 25);
+          return (
+            <div key={c.label} className="text-sm">
+              <div className="flex items-center gap-3">
+                <span className="w-32 shrink-0 font-semibold text-slate-500 text-xs uppercase tracking-wider">
+                  {c.label}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div
+                    className="h-2 rounded-full bg-slate-100 overflow-hidden"
+                    style={{ maxWidth: `${weightFraction * 100}%` }}
+                    title={`Worth ${c.weight} of ${totalWeight} weight points`}
+                  >
+                    <div
+                      className={`h-full ${
+                        filled
+                          ? `bg-gradient-to-r ${barColors[c.variant]}`
+                          : "bg-slate-200"
+                      } transition-all duration-300`}
+                      style={{ width: filled ? "100%" : "0%" }}
+                    />
+                  </div>
+                  <p
+                    className={`text-xs mt-1 truncate ${
+                      filled ? "text-slate-700" : "text-slate-400 italic"
+                    }`}
+                    title={c.detail ?? undefined}
+                  >
+                    {c.detail ?? "Skipped — you can fill this in later"}
+                  </p>
+                </div>
+                <span
+                  className={`shrink-0 w-10 text-right text-xs font-bold ${
+                    filled ? "text-slate-700" : "text-slate-300"
+                  }`}
+                >
+                  {c.earned}/{c.weight}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Daily roundup opt-in. Goes through the commit handler — auto mode
+          (onboarding) PATCHes immediately; deferred mode (profile/v2 edit)
+          buffers the change into the section's draft until Save. */}
       <label
         className={`mt-5 flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-colors ${
           snapshot.dailyRoundupEnabled
@@ -1408,7 +1805,8 @@ function StepReview({ snapshot, onChange }: StepProps) {
       </label>
 
       <p className="text-xs text-slate-400 mt-4">
-        Hit <strong className="text-emerald-700">Finish &amp; view matches</strong> to score open RFPs against your profile.
+        Hit <strong className="text-emerald-700">Finish &amp; view matches</strong> to
+        score open RFPs against your profile.
       </p>
     </div>
   );

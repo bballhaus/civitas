@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   uploadContractDocument,
   getProfileFromBackend,
@@ -11,6 +10,7 @@ import {
   getCachedUser,
   setCachedProfile,
 } from "@/lib/api";
+import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
 
 interface ExtractedData {
@@ -161,7 +161,7 @@ export default function UploadPage() {
 
         setProgress(100);
         setTimeout(() => {
-          router.push("/profile");
+          router.push("/profile/v2");
         }, 500);
       } else {
         setProgress(10);
@@ -186,7 +186,7 @@ export default function UploadPage() {
 
         setProgress(100);
         setTimeout(() => {
-          router.push("/profile");
+          router.push("/profile/v2");
         }, 500);
       }
     } catch (error) {
@@ -201,15 +201,7 @@ export default function UploadPage() {
   return (
     <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
       <MeshBackground />
-      {/* Navigation */}
-      <nav className="sticky top-0 bg-white border-b border-slate-200 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <img src="/logo.png" alt="Civitas logo" className="h-12 w-12" />
-              <span className="text-2xl font-bold text-slate-900">Civitas</span>
-            </Link>
-        </div>
-      </nav>
+      <AppHeader />
 
       {/* Main Content */}
       <div className="relative max-w-4xl mx-auto px-6 py-12">
@@ -218,8 +210,8 @@ export default function UploadPage() {
             Upload Your Past Proposals & Documents
           </h1>
           <p className="text-slate-600">
-            Our AI will analyze your documents to automatically fill in your
-            company profile details.
+            Our AI uses past proposals to better understand your company and
+            proposal style.
           </p>
           {!isLoggedIn && (
             <p className="text-amber-700 text-sm mt-2">
@@ -377,10 +369,10 @@ export default function UploadPage() {
         {!isProcessing && (
           <div className="text-center mt-4">
             <button
-              onClick={() => router.push("/profile")}
+              onClick={() => router.push("/profile/v2")}
               className="text-sm text-slate-600 hover:text-slate-900 underline"
             >
-              Skip and fill out manually
+              Skip
             </button>
           </div>
         )}

@@ -231,8 +231,12 @@ function checkHardGates(profile: FullProfile, rfp: RfpCacheRow): string[] {
     }
   }
 
-  // Past gov experience gate
-  if (rfp.requiresPastGovExp === true && profile.govExperience === "none") {
+  // Past gov experience gate. govExperience is a text[] — a profile claiming
+  // {none} or an empty/null array fails the gate; any other tier (local,
+  // state, federal) lets it through.
+  const govTiers = profile.govExperience ?? [];
+  const hasRealGovExp = govTiers.some((t) => t && t !== "none");
+  if (rfp.requiresPastGovExp === true && !hasRealGovExp) {
     failures.push("Requires past government contract experience");
   }
 
