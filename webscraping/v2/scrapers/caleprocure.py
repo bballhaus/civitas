@@ -264,8 +264,42 @@ class CalEprocureScraper(BaseScraper):
         try:
             # If it's an event URL, navigate directly
             if url.startswith("http"):
-                await page.goto(url, wait_until="networkidle", timeout=30000)
-                await page.wait_for_timeout(2000)
+                # The previous strategy was page.goto(wait_until="networkidle",
+                # timeout=30000), which timed out on 40-67% of events because
+                # the Cal eProcure SPA loads analytics + tracking pixels that
+                # keep the network active well past page hydration. We now use
+                # domcontentloaded (returns once the DOM tree is built) and
+                # then wait for a specific data-if-label element that only
+                # exists after the SPA's data-binding pass runs — that's the
+                # real readiness signal. networkidle is the wrong gate for
+                # ad-heavy SPAs.
+                try:
+                    await page.goto(
+                        url, wait_until="domcontentloaded", timeout=45000
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"  nav: goto failed ({type(e).__name__}) {url}"
+                    )
+                    return None
+                # Wait for the SPA's data-binding to hydrate. eventName
+                # is bound from #AUC_HDR_AUC_NAME and is present on every
+                # event detail page. 20s is generous; if it's not visible
+                # by then the page is broken or the event is gone.
+                try:
+                    await page.wait_for_selector(
+                        '[data-if-label="eventName"]',
+                        state="attached",
+                        timeout=20000,
+                    )
+                except Exception:
+                    logger.info(
+                        f"  nav: hydration marker missing after goto {url}"
+                    )
+                    # Don't return — _extract_event_data has its own per-field
+                    # waits and may still get partial data. _download_attachments
+                    # will log its own state.
+                await page.wait_for_timeout(1000)
             else:
                 # It's an event ID — we'd need to construct the URL
                 # This shouldn't happen with the current flow
