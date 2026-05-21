@@ -295,6 +295,46 @@ function scoreSpecialty(
   if (profile.specialties.length === 0) {
     return neutral("Specialty", "Add specialties to your profile to enable semantic match.");
   }
+
+  // Literal-first short-circuit. Same problem shape as scoreCapability —
+  // cosine compares a single specialty phrase against the whole-RFP vector,
+  // so even a definitive textual hit lands well below 1.0. If your
+  // specialty appears literally in the RFP title or in its structured
+  // capabilities[] array, that's a strong signal — bypass cosine and
+  // return strong directly.
+  const titleLower = rfp.title.toLowerCase();
+  const titleHit = profile.specialties.find((s) =>
+    titleLower.includes(s.value.toLowerCase()),
+  );
+  if (titleHit) {
+    return {
+      category: "Specialty",
+      status: "strong",
+      score: 1.0,
+      weight: WEIGHTS.specialty,
+      detail: `RFP title references your specialty: "${titleHit.value}".`,
+      rfpPhrase: rfp.title,
+      profileClaim: titleHit.value,
+    };
+  }
+  const rfpCapsLower = (rfp.capabilities ?? []).map((s) => s.toLowerCase());
+  if (rfpCapsLower.length > 0) {
+    const capHit = profile.specialties.find((s) =>
+      rfpCapsLower.some((c) => c.includes(s.value.toLowerCase())),
+    );
+    if (capHit) {
+      return {
+        category: "Specialty",
+        status: "strong",
+        score: 1.0,
+        weight: WEIGHTS.specialty,
+        detail: `RFP capabilities reference your specialty: "${capHit.value}".`,
+        rfpPhrase: rfp.title,
+        profileClaim: capHit.value,
+      };
+    }
+  }
+
   if (!rfp.embedding) {
     // Without an RFP embedding we can't run semantic. Fall back to substring
     // match on title/description so the score is non-zero when there's a
@@ -357,6 +397,30 @@ function scoreCapability(
   if (profile.capabilities.length === 0) {
     return neutral("Capability", "No capabilities on file.");
   }
+
+  // Literal-first short-circuit. Embedding cosine compares one capability
+  // string against the whole-RFP vector, so even an exact textual hit lands
+  // around 0.55–0.65 — misleading when the RFP explicitly lists the same
+  // capability. If any of the user's capabilities matches an entry in the
+  // RFP's structured capabilities[] (case-insensitive), score it strong
+  // directly and skip cosine.
+  const rfpCapsLower = (rfp.capabilities ?? []).map((s) => s.toLowerCase());
+  if (rfpCapsLower.length > 0) {
+    const literalHit = profile.capabilities.find((c) =>
+      rfpCapsLower.includes(c.value.toLowerCase()),
+    );
+    if (literalHit) {
+      return {
+        category: "Capability",
+        status: "strong",
+        score: 1.0,
+        weight: WEIGHTS.capability,
+        detail: `Exact capability match: "${literalHit.value}".`,
+        profileClaim: literalHit.value,
+      };
+    }
+  }
+
   if (!rfp.embedding) {
     const textBag = `${rfp.title} ${rfp.description ?? ""} ${rfp.capabilities?.join(" ") ?? ""}`.toLowerCase();
     const hits = profile.capabilities.filter((c) =>
