@@ -1766,5 +1766,109 @@ class TestLambdaInvestigateAndOnboardRouting:
         assert resp["statusCode"] == 400
 
 
+class TestDispatchQueue:
+    """Wave-based dispatch — keeps each Lambda invocation under the 900s
+    timeout, even for queues larger than a single wave."""
+
+    def _make_context(self):
+        class _Ctx:
+            function_name = "civitas-rfp-scraper"
+        return _Ctx()
+
+    def test_dispatch_queue_fires_first_wave_and_chains_remainder(self):
+        import unittest.mock as mock
+        from webscraping.v2.deploy import lambda_handler
+
+        fired = []
+
+        def fake_invoke(context, payload):
+            fired.append(payload)
+
+        queue = [
+            {"site_id": f"planetbids_site_{i}", "batch_offset": 0, "batch_size": 5}
+            for i in range(25)
+        ]
+
+        with mock.patch.object(lambda_handler, "_invoke_async", side_effect=fake_invoke):
+            resp = lambda_handler._handle_dispatch_queue(
+                {
+                    "mode": "dispatch_queue",
+                    "queue": queue,
+                    "wave_size": 10,
+                    "portal_stagger": 60,
+                },
+                self._make_context(),
+            )
+
+        assert resp["statusCode"] == 200
+
+        portal_fires = [p for p in fired if "site_id" in p]
+        chain_fires = [p for p in fired if p.get("mode") == "dispatch_queue"]
+
+        assert len(portal_fires) == 10, "First wave should fire wave_size portals"
+        # In-wave staggers: 0, 60, 120, ..., 540
+        assert [p["delay_before_start"] for p in portal_fires] == [
+            i * 60 for i in range(10)
+        ]
+        # Every individual portal sleep is < Lambda timeout - margin
+        assert all(p["delay_before_start"] < 850 for p in portal_fires)
+        # Chain hands off the remaining 15 portals with one wave's delay
+        assert len(chain_fires) == 1
+        assert len(chain_fires[0]["queue"]) == 15
+        assert chain_fires[0]["delay_before_start"] == 600
+
+    def test_dispatch_queue_does_not_chain_when_queue_drained(self):
+        import unittest.mock as mock
+        from webscraping.v2.deploy import lambda_handler
+
+        fired = []
+        with mock.patch.object(
+            lambda_handler, "_invoke_async", side_effect=lambda c, p: fired.append(p)
+        ):
+            lambda_handler._handle_dispatch_queue(
+                {"queue": [{"site_id": "a"}, {"site_id": "b"}],
+                 "wave_size": 10, "portal_stagger": 30},
+                self._make_context(),
+            )
+        assert [p for p in fired if p.get("mode") == "dispatch_queue"] == []
+        assert sum(1 for p in fired if "site_id" in p) == 2
+
+    def test_dispatch_queue_refuses_unsafe_wave_config(self):
+        """Caller bug: a wave whose internal sleep exceeds the Lambda
+        timeout would have the same failure mode as the bug this rewrite
+        fixes. Refuse rather than silently break the chain."""
+        from webscraping.v2.deploy import lambda_handler
+        resp = lambda_handler._handle_dispatch_queue(
+            {"queue": [{"site_id": "a"}], "wave_size": 20, "portal_stagger": 60},
+            self._make_context(),
+        )
+        assert resp["statusCode"] == 500
+
+    def test_run_all_hands_off_to_dispatch_queue(self):
+        """mode=all should fire exactly one dispatch_queue invocation
+        whose queue contains every enabled site — no upfront cumulative
+        delays on the portal payloads themselves."""
+        import unittest.mock as mock
+        from webscraping.v2.deploy import lambda_handler
+
+        fired = []
+        with mock.patch.object(
+            lambda_handler, "_invoke_async", side_effect=lambda c, p: fired.append(p)
+        ):
+            resp = lambda_handler._handle_run_all(
+                {"mode": "all", "skip_enrich": True}, self._make_context()
+            )
+
+        assert resp["statusCode"] == 200
+        assert len(fired) == 1
+        seed = fired[0]
+        assert seed["mode"] == "dispatch_queue"
+        assert len(seed["queue"]) >= 1
+        # No entry in the seed queue carries a pre-baked delay — that's the
+        # job of the dispatch_queue handler, per-wave.
+        for entry in seed["queue"]:
+            assert "delay_before_start" not in entry
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

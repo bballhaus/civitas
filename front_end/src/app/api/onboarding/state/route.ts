@@ -98,6 +98,8 @@ export async function GET(request: Request) {
           role: a.role,
           strength: a.strength,
         })),
+        dailyRoundupEnabled: profile.dailyRoundupEnabled,
+        dailyRoundupTimezone: profile.dailyRoundupTimezone,
       },
     },
     { headers: { "Cache-Control": "no-store" } },

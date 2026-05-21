@@ -81,6 +81,12 @@ export const profiles = pgTable(
     onboardedAt: timestamp("onboarded_at", { withTimezone: true }),
     embeddingUpdatedAt: timestamp("embedding_updated_at", { withTimezone: true }),
     lastDashboardViewedAt: timestamp("last_dashboard_viewed_at", { withTimezone: true }),
+    // Daily roundup email: opt-in toggle, IANA timezone captured from the
+    // browser on opt-in, and last-sent timestamp used by the cron to dedupe.
+    // Hour-of-day is fixed at 7am local in the cron handler.
+    dailyRoundupEnabled: boolean("daily_roundup_enabled").notNull().default(false),
+    dailyRoundupTimezone: text("daily_roundup_timezone"),
+    dailyRoundupLastSentAt: timestamp("daily_roundup_last_sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -330,11 +336,17 @@ export const matchState = pgTable(
     feedbackRating: text("feedback_rating"), // 'good' | 'bad'
     feedbackReason: text("feedback_reason"),
     feedbackAt: timestamp("feedback_at", { withTimezone: true }),
+    // Bidding-tracker audit: timestamp of the last status transition.
     statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
+    // First time the user opened the RFP detail page. Drives the daily
+    // roundup digest (unviewed >75% matches only) and any future "new
+    // since last visit" UI. Set once and never cleared.
+    viewedAt: timestamp("viewed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("idx_match_state_user_status").on(t.userId, t.status),
+    index("idx_match_state_user_viewed").on(t.userId, t.viewedAt),
     unique("uq_match_state_user_rfp").on(t.userId, t.rfpId),
   ],
 );

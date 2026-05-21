@@ -94,7 +94,12 @@ Summarize the contract requirements:`;
         { role: "system", content: PROMPT },
         { role: "user", content: input },
       ],
-      { temperature: 0.3, maxTokens: 700 }
+      {
+        provider: "anthropic",
+        model: "claude-haiku-4-5-20251001",
+        temperature: 0.3,
+        maxTokens: 700,
+      },
     );
 
     const summary = result.content?.trim() ?? description.slice(0, 500);

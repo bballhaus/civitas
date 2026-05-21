@@ -97,7 +97,12 @@ Produce the capabilities analysis:`;
         { role: "system", content: PROMPT },
         { role: "user", content: input },
       ],
-      { temperature: 0.3, maxTokens: 500 }
+      {
+        provider: "anthropic",
+        model: "claude-haiku-4-5-20251001",
+        temperature: 0.3,
+        maxTokens: 500,
+      },
     );
 
     const analysis = result.content?.trim() ?? null;

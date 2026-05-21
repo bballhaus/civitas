@@ -11,7 +11,11 @@ export type SecurityEventType =
   | "password_change"
   | "password_reset_request"
   | "password_reset_complete"
-  | "email_verified";
+  | "email_verified"
+  | "email_bounce"
+  | "email_complaint"
+  | "ses_event_received"
+  | "ses_event_invalid";
 
 export function logSecurityEvent(event: {
   type: SecurityEventType;

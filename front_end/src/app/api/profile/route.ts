@@ -29,6 +29,8 @@ const PATCHABLE_FIELDS = [
   "complexityPref",
   "primeVsSub",
   "govExperience",
+  "dailyRoundupEnabled",
+  "dailyRoundupTimezone",
 ] as const;
 
 type PatchableField = (typeof PATCHABLE_FIELDS)[number];

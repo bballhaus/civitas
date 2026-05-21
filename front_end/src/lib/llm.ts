@@ -10,6 +10,7 @@ export interface ChatMessage {
 }
 
 export interface ChatCompletionOptions {
+  provider?: "groq" | "openai" | "anthropic";
   model?: string;
   temperature?: number;
   maxTokens?: number;
@@ -115,7 +116,7 @@ export async function chatCompletion(
   options?: ChatCompletionOptions
 ): Promise<ChatCompletionResult> {
   const opts = options ?? {};
-  const provider = config.llm.provider;
+  const provider = opts.provider ?? config.llm.provider;
 
   let content: string;
   switch (provider) {
