@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { chatCompletion } from "@/lib/llm";
 
+// Haiku 4.5 with a full RFP + profile + breakdown can take 10–15s end-to-end;
+// the default Vercel function ceiling cuts it off and surfaces as a 500 in the
+// UI ("Capabilities analysis unavailable right now.").
+export const maxDuration = 60;
+
 const PROMPT = `You are an expert government contracting consultant. Given an RFP and a company profile, produce a concise capabilities analysis that compares the user's qualifications against the RFP's requirements.
 
 You will be given:
