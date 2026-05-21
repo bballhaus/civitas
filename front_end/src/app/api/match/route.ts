@@ -21,7 +21,7 @@ import { rfpCache } from "@/db/schema";
 import { getFullProfile } from "@/db/queries/profile";
 import { matchV2 } from "@/lib/matching-v2";
 
-const DEFAULT_LIMIT = 200;
+const DEFAULT_LIMIT = 1000;
 const MAX_LIMIT = 1000;
 
 export async function GET(request: Request) {
