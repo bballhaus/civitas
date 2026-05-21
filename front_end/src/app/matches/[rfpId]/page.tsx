@@ -14,7 +14,15 @@ import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { portalLabel } from "@/lib/rfp-portal";
-import { getCurrentUser, updateUserRfpStatus, setRfpStatus } from "@/lib/api";
+import {
+  getCurrentUser,
+  updateUserRfpStatus,
+  setRfpStatus,
+  getProfileFromBackend,
+  mapBackendProfileToCompanyProfile,
+  getCachedProfile,
+  setCachedProfile,
+} from "@/lib/api";
 import { trackEvent } from "@/lib/event-tracker";
 import type { CompanyProfile } from "@/lib/rfp-matching";
 
@@ -173,24 +181,45 @@ export default function RfpDetailPage() {
       .catch(() => {});
   }, []);
 
-  // Hydrate company profile from localStorage (same source the dashboard uses).
+  // Hydrate company profile. Prefer the server (the same /api/profile/ that
+  // powers the % complete gauge); fall back to localStorage if the user is
+  // signed out or the backend is unreachable. Reading localStorage alone
+  // would hide a fully-populated server profile from a fresh browser session.
   useEffect(() => {
-    const saved = typeof window !== "undefined" ? localStorage.getItem("companyProfile") : null;
-    const extracted = typeof window !== "undefined" ? localStorage.getItem("extractedProfileData") : null;
-    if (saved) {
-      try {
-        setProfile(JSON.parse(saved) as CompanyProfile);
-      } catch {
-        // ignore malformed
-      }
-    } else if (extracted) {
-      try {
-        setProfile(JSON.parse(extracted) as CompanyProfile);
-      } catch {
-        // ignore malformed
-      }
+    let cancelled = false;
+    const cached = getCachedProfile();
+    if (cached) {
+      setProfile(cached as CompanyProfile);
+      setProfileLoaded(true);
+      return;
     }
-    setProfileLoaded(true);
+    getProfileFromBackend()
+      .then((backendProfile) => {
+        if (cancelled) return;
+        const mapped = mapBackendProfileToCompanyProfile(backendProfile);
+        if (mapped) {
+          setProfile(mapped as CompanyProfile);
+          setCachedProfile(undefined, mapped);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const saved = typeof window !== "undefined" ? localStorage.getItem("companyProfile") : null;
+        const extracted =
+          typeof window !== "undefined" ? localStorage.getItem("extractedProfileData") : null;
+        try {
+          if (saved) setProfile(JSON.parse(saved) as CompanyProfile);
+          else if (extracted) setProfile(JSON.parse(extracted) as CompanyProfile);
+        } catch {
+          // ignore malformed
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setProfileLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Hydrate match-feedback state from the server (good/bad rating + reason).
