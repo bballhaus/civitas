@@ -77,11 +77,10 @@ export interface UserData {
   password_reset_expires?: string;
   legacy_user_id?: number; // Django numeric user ID for S3 path continuity
   profile?: UserProfile;
-  applied_rfp_ids?: string[];
-  in_progress_rfp_ids?: string[];
+  // RFP pipeline status + match feedback moved to Postgres (match_state).
+  // Generated PoE/proposal content still lives here keyed by rfp_id.
   generated_poe_by_rfp?: Record<string, string>;
   generated_proposal_by_rfp?: Record<string, string>;
-  match_feedback_by_rfp?: Record<string, MatchFeedback>;
   // Legacy fields (from old bearer token system, kept for compatibility)
   token?: string;
   token_expires_at?: string;

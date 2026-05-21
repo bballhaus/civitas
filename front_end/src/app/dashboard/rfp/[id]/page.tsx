@@ -12,7 +12,7 @@ import {
   generateMatchSummary,
 } from "@/lib/rfp-matching";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { getCurrentUser, getGeneratedPoe, updateUserRfpStatus, listContracts } from "@/lib/api";
+import { getCurrentUser, getGeneratedPoe, updateUserRfpStatus, setRfpStatus, listContracts } from "@/lib/api";
 import { getCachedEvents } from "@/lib/events-cache";
 import { trackEvent } from "@/lib/event-tracker";
 import { portalLabel } from "@/lib/rfp-portal";
@@ -53,10 +53,8 @@ export default function RFPDetailPage() {
   const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
   const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
   const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
-  const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
-  const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
   const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(new Set());
-  const [userRfpStatusLoaded, setUserRfpStatusLoaded] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
   const [viewMode, setViewMode] = useState<"match" | "generated">("match");
   // Match feedback (thumbs up/down + optional "why" reason). Mirrors the
   // sidebar widget in /dashboard. The reason text is only shown / saved
@@ -109,10 +107,8 @@ export default function RFPDetailPage() {
 
   useEffect(() => {
     getCurrentUser(true).then((full) => {
-      setUserRfpStatusLoaded(true);
       if (full) {
-        setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
-        setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
+        setSavedRfpIds(new Set(full.saved_rfp_ids ?? []));
         const fb = full.match_feedback_by_rfp?.[id];
         if (fb) {
           setMatchRating(fb.rating);
@@ -516,9 +512,6 @@ export default function RFPDetailPage() {
     setProposalError(null);
     if (!trimmed) setProposal(null);
 
-    setInProgressRfpIds((prev) => new Set([...prev, id]));
-    updateUserRfpStatus({ mark_in_progress: id }).catch(() => {});
-
     try {
       // Fetch past contract document URLs for style reference
       let pastDocumentUrls: string[] = [];
@@ -594,67 +587,35 @@ export default function RFPDetailPage() {
       : null,
   });
 
-  // Saved RFPs are session-only until the Postgres-backed persistence ships
-  // (see project memory: project_saved_rfps_postgres_migration).
-  const handleToggleSave = useCallback(() => {
-    if (!id) return;
+  // Save = add this RFP to the bidding tracker. The Save button is the only
+  // pipeline action on the detail page; subsequent transitions (in_progress,
+  // bid_submitted, won, lost, no_bid) happen on /tracker.
+  const handleToggleSave = useCallback(async () => {
+    if (!id || saveBusy) return;
     const currentlySaved = savedRfpIds.has(id);
+    // Optimistic UI flip; reverted in catch on failure.
     setSavedRfpIds((prev) => {
       const next = new Set(prev);
       if (currentlySaved) next.delete(id);
       else next.add(id);
       return next;
     });
-    trackEvent(currentlySaved ? "rfp_unsaved" : "rfp_saved", { rfpId: id });
-  }, [id, savedRfpIds]);
-
-  const handleToggleApplied = useCallback(async () => {
-    if (!id) return;
-    const currentlyApplied = appliedRfpIds.has(id);
-    const currentlyInProgress = inProgressRfpIds.has(id);
-    setAppliedRfpIds((prev) => {
-      const next = new Set(prev);
-      if (currentlyApplied) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    if (currentlyApplied) {
-      setInProgressRfpIds((prev) => new Set([...prev, id]));
-    } else if (currentlyInProgress) {
-      setInProgressRfpIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    }
+    setSaveBusy(true);
     try {
-      if (currentlyApplied) {
-        await updateUserRfpStatus({ remove_applied: id, mark_in_progress: id });
-      } else {
-        await updateUserRfpStatus({
-          mark_applied: id,
-          ...(currentlyInProgress ? { remove_in_progress: id } : {}),
-        });
-      }
+      await setRfpStatus(id, currentlySaved ? null : "saved");
+      // Server route emits rfp_saved / rfp_unsaved; no client-side event needed.
     } catch (e) {
-      setAppliedRfpIds((prev) => {
+      setSavedRfpIds((prev) => {
         const next = new Set(prev);
-        if (currentlyApplied) next.add(id);
+        if (currentlySaved) next.add(id);
         else next.delete(id);
         return next;
       });
-      if (currentlyApplied) {
-        setInProgressRfpIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      } else if (currentlyInProgress) {
-        setInProgressRfpIds((prev) => new Set([...prev, id]));
-      }
-      console.error("Failed to update applied status:", e);
+      console.error("Failed to update saved status:", e);
+    } finally {
+      setSaveBusy(false);
     }
-  }, [id, appliedRfpIds, inProgressRfpIds]);
+  }, [id, savedRfpIds, saveBusy]);
 
   // Match feedback — submit / change rating. "good" persists immediately
   // with no reason. "bad" persists immediately too; the reason input shows
@@ -745,10 +706,6 @@ export default function RFPDetailPage() {
     setPlanLoading(true);
     setPlanError(null);
     if (!trimmed) setPlanOfExecution(null);
-
-    // Mark in progress as soon as the button is pressed (even if POE generation fails or doesn't finish)
-    setInProgressRfpIds((prev) => new Set([...prev, id]));
-    updateUserRfpStatus({ mark_in_progress: id }).catch(() => {});
 
     try {
       const res = await fetch("/api/generate-plan-of-execution", {
@@ -859,7 +816,9 @@ export default function RFPDetailPage() {
               <button
                 type="button"
                 onClick={handleToggleSave}
-                className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
+                disabled={saveBusy}
+                title={savedRfpIds.has(id) ? "Remove from tracker" : "Add to bidding tracker"}
+                className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors disabled:opacity-60 ${
                   savedRfpIds.has(id)
                     ? "text-blue-600 bg-blue-50 hover:bg-blue-100"
                     : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
@@ -868,34 +827,15 @@ export default function RFPDetailPage() {
                 <svg className="w-4 h-4 shrink-0" fill={savedRfpIds.has(id) ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
                 </svg>
-                {savedRfpIds.has(id) ? "Saved" : "Save"}
+                {savedRfpIds.has(id) ? "Saved · in tracker" : "Save to tracker"}
               </button>
-              {userRfpStatusLoaded && (
-                <button
-                  type="button"
-                  onClick={handleToggleApplied}
-                  className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
-                    appliedRfpIds.has(id)
-                      ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100"
-                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                  }`}
+              {savedRfpIds.has(id) && (
+                <Link
+                  href="/tracker"
+                  className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg text-[#3C89C6] hover:bg-blue-50 font-semibold"
                 >
-                  {appliedRfpIds.has(id) ? (
-                    <>
-                      <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Applied
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      I&apos;ve applied
-                    </>
-                  )}
-                </button>
+                  Manage in tracker &rarr;
+                </Link>
               )}
               {SHOW_AI_GENERATION && (
                 <>
@@ -1005,11 +945,6 @@ export default function RFPDetailPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                   </svg>
                 </a>
-              )}
-              {inProgressRfpIds.has(id) && (
-                <span className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-50 text-violet-700 border border-violet-100">
-                  In progress
-                </span>
               )}
             </div>
             {/* Bad-match reason capture — appears only after the user marks

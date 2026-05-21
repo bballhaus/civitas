@@ -25,6 +25,7 @@ import {
   mapBackendProfileToCompanyProfile,
   getEmptyCompanyProfile,
   updateUserRfpStatus,
+  setRfpStatus,
   getGeneratedPoe,
   getGeneratedProposal,
   listContracts,
@@ -717,19 +718,31 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 2500);
   };
 
-  // Saved RFPs are session-only until the Postgres-backed persistence ships
-  // (see project memory: project_saved_rfps_postgres_migration).
-  // KPI signal still fires.
-  const handleSaveRfp = useCallback((rfpId: string) => {
+  // Save = add this RFP to the bidding tracker (status='saved' in
+  // match_state). Persisted to Postgres so /home and /tracker stay in sync.
+  const handleSaveRfp = useCallback(async (rfpId: string) => {
     const currentlySaved = savedRfpIds.has(rfpId);
+    // Optimistic flip; revert in catch on failure.
     setSavedRfpIds((prev) => {
       const next = new Set(prev);
       if (currentlySaved) next.delete(rfpId);
       else next.add(rfpId);
       return next;
     });
-    trackEvent(currentlySaved ? "rfp_unsaved" : "rfp_saved", { rfpId });
-    showToast(currentlySaved ? "Removed from saved" : "Saved to your list");
+    try {
+      await setRfpStatus(rfpId, currentlySaved ? null : "saved");
+      // rfp_saved / rfp_unsaved events are emitted server-side from the
+      // /api/user/rfp-status route — no client-side trackEvent needed.
+      showToast(currentlySaved ? "Removed from tracker" : "Added to tracker");
+    } catch (e) {
+      setSavedRfpIds((prev) => {
+        const next = new Set(prev);
+        if (currentlySaved) next.add(rfpId);
+        else next.delete(rfpId);
+        return next;
+      });
+      showToast(e instanceof Error ? e.message : "Failed to save — try again");
+    }
   }, [savedRfpIds]);
 
   const handleNotInterested = (rfpId: string) => {
@@ -768,6 +781,9 @@ export default function DashboardPage() {
     showToast("RFP restored to your list");
   };
 
+  // Toggle "Bid Submitted" status. The dashboard's button keeps the legacy
+  // "Applied" label for now; semantically it means "I submitted the bid".
+  // Pipeline transitions on/off this status route through set_status.
   const handleToggleApplied = useCallback(async (rfpId: string) => {
     const currentlyApplied = appliedRfpIds.has(rfpId);
     setAppliedRfpIds((prev) => {
@@ -777,13 +793,10 @@ export default function DashboardPage() {
       return next;
     });
     try {
-      if (currentlyApplied) {
-        await updateUserRfpStatus({ remove_applied: rfpId });
-        showToast("Removed from applied");
-      } else {
-        await updateUserRfpStatus({ mark_applied: rfpId });
-        showToast("Marked as applied");
-      }
+      // Toggling off "Bid Submitted" returns the RFP to 'saved' (in tracker)
+      // rather than removing it entirely.
+      await setRfpStatus(rfpId, currentlyApplied ? "saved" : "bid_submitted");
+      showToast(currentlyApplied ? "Marked as no longer submitted" : "Marked as bid submitted");
     } catch (e) {
       setAppliedRfpIds((prev) => {
         const next = new Set(prev);
@@ -791,14 +804,14 @@ export default function DashboardPage() {
         else next.delete(rfpId);
         return next;
       });
-      console.error("Failed to update applied status:", e);
+      console.error("Failed to update bid_submitted status:", e);
       showToast(e instanceof Error ? e.message : "Failed to update — try again");
     }
   }, [appliedRfpIds]);
 
   const handleMarkInProgress = useCallback(async (rfpId: string) => {
     try {
-      await updateUserRfpStatus({ mark_in_progress: rfpId });
+      await setRfpStatus(rfpId, "in_progress");
       setInProgressRfpIds((prev) => new Set([...prev, rfpId]));
     } catch (e) {
       console.error("Failed to mark RFP in progress:", e);
@@ -937,7 +950,8 @@ export default function DashboardPage() {
       });
       getCurrentUser(true).then((full) => {
         if (cancelled || !full) return;
-        setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+        setSavedRfpIds(new Set(full.saved_rfp_ids ?? []));
+        setAppliedRfpIds(new Set(full.bid_submitted_rfp_ids ?? []));
         setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
         if (full.match_feedback_by_rfp) setMatchFeedback(full.match_feedback_by_rfp);
         // Refresh profile from API so sizeStatus and other fields stay current
@@ -961,7 +975,8 @@ export default function DashboardPage() {
           const mapped = apiProfile ?? cached ?? getEmptyCompanyProfile();
           setProfile(mapped);
           if (apiProfile) setCachedProfile(full.user_id, apiProfile);
-          setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+          setSavedRfpIds(new Set(full.saved_rfp_ids ?? []));
+          setAppliedRfpIds(new Set(full.bid_submitted_rfp_ids ?? []));
           setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
           if (full.match_feedback_by_rfp) setMatchFeedback(full.match_feedback_by_rfp);
           setProfileLoadDone(true);
@@ -1641,7 +1656,7 @@ function RFPDetailPanel({
     setPlanLoading(true);
     setPlanError(null);
     if (!trimmed) setPlanOfExecution(null);
-    updateUserRfpStatus({ mark_in_progress: rfp.id }).catch(() => {});
+    setRfpStatus(rfp.id, "in_progress").catch(() => {});
     try {
       const res = await fetch("/api/generate-plan-of-execution", {
         method: "POST",
@@ -1703,7 +1718,7 @@ function RFPDetailPanel({
     setProposalLoading(true);
     setProposalError(null);
     if (!trimmed) setProposal(null);
-    updateUserRfpStatus({ mark_in_progress: rfp.id }).catch(() => {});
+    setRfpStatus(rfp.id, "in_progress").catch(() => {});
     try {
       // Fetch past contract document URLs for style reference
       let pastDocumentUrls: string[] = [];

@@ -29,6 +29,13 @@
       "when": 1778749379324,
       "tag": "0003_add_radius_miles",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779580800000,
+      "tag": "0004_bidding_tracker",
+      "breakpoints": true
     }
   ]
 }

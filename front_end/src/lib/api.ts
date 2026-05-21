@@ -6,14 +6,50 @@
 
 import type { MatchFeedback } from "./user-data";
 
+export type PipelineStatus =
+  | "saved"
+  | "in_progress"
+  | "bid_submitted"
+  | "won"
+  | "lost"
+  | "no_bid";
+
+export const PIPELINE_STATUSES: readonly PipelineStatus[] = [
+  "saved",
+  "in_progress",
+  "bid_submitted",
+  "won",
+  "lost",
+  "no_bid",
+] as const;
+
 export interface CurrentUser {
+  userId?: string;
   user_id?: number;
   username: string;
   email?: string;
   profile?: AuthMeProfile;
-  applied_rfp_ids?: string[];
+  // Pipeline buckets (one per status). An RFP appears in exactly one bucket
+  // — the bucket matching its current match_state.status.
+  saved_rfp_ids?: string[];
   in_progress_rfp_ids?: string[];
+  bid_submitted_rfp_ids?: string[];
+  won_rfp_ids?: string[];
+  lost_rfp_ids?: string[];
+  no_bid_rfp_ids?: string[];
   match_feedback_by_rfp?: Record<string, MatchFeedback>;
+}
+
+export interface RfpTask {
+  id: string;
+  userId: string;
+  rfpId: string;
+  label: string;
+  dueDate: string | null;
+  completedAt: string | null;
+  sortOrder: number;
+  isCustom: boolean;
+  createdAt: string;
 }
 
 /** Profile shape returned by GET /api/auth/me/ and GET /api/profile/. */
@@ -277,10 +313,14 @@ export async function getProfileFromBackend(): Promise<AuthMeProfile> {
   return res.json();
 }
 
-/** Response from PATCH /api/user/rfp-status/ */
+/** Response from PATCH /api/user/rfp-status/ — full pipeline snapshot. */
 export interface UserRfpStatusResponse {
-  applied_rfp_ids: string[];
+  saved_rfp_ids: string[];
   in_progress_rfp_ids: string[];
+  bid_submitted_rfp_ids: string[];
+  won_rfp_ids: string[];
+  lost_rfp_ids: string[];
+  no_bid_rfp_ids: string[];
   match_feedback_by_rfp?: Record<string, MatchFeedback>;
 }
 
@@ -303,10 +343,7 @@ export async function getGeneratedProposal(rfpId: string): Promise<string | null
 }
 
 export async function updateUserRfpStatus(payload: {
-  mark_applied?: string;
-  remove_applied?: string;
-  mark_in_progress?: string;
-  remove_in_progress?: string;
+  set_status?: { rfp_id: string; status: PipelineStatus | null };
   save_generated_poe?: { rfp_id: string; content: string };
   save_generated_proposal?: { rfp_id: string; content: string };
   submit_match_feedback?: { rfp_id: string; rating: "good" | "bad"; reason?: string; match_score: number; match_tier: string };
@@ -326,6 +363,71 @@ export async function updateUserRfpStatus(payload: {
     throw new Error(msg);
   }
   return res.json();
+}
+
+/** Set (or clear) the pipeline status for an RFP. Shorthand over updateUserRfpStatus. */
+export async function setRfpStatus(
+  rfpId: string,
+  status: PipelineStatus | null,
+): Promise<UserRfpStatusResponse> {
+  return updateUserRfpStatus({ set_status: { rfp_id: rfpId, status } });
+}
+
+// ── Tasks ──
+
+export async function listTasks(rfpId?: string): Promise<RfpTask[]> {
+  const url = rfpId
+    ? `/api/tasks?rfp_id=${encodeURIComponent(rfpId)}`
+    : "/api/tasks";
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const data = (await res.json()) as { tasks?: RfpTask[] };
+  return data.tasks ?? [];
+}
+
+export async function createTask(input: {
+  rfp_id: string;
+  label: string;
+  due_date?: string | null;
+}): Promise<RfpTask> {
+  const res = await fetch("/api/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to create task (${res.status})`);
+  }
+  const data = (await res.json()) as { task: RfpTask };
+  return data.task;
+}
+
+export async function updateTask(
+  taskId: string,
+  patch: { label?: string; due_date?: string | null; completed?: boolean },
+): Promise<RfpTask> {
+  const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to update task (${res.status})`);
+  }
+  const data = (await res.json()) as { task: RfpTask };
+  return data.task;
+}
+
+export async function deleteTask(taskId: string): Promise<void> {
+  const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 204) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to delete task (${res.status})`);
+  }
 }
 
 /** Payload for PATCH /api/profile/ */
