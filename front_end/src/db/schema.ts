@@ -326,7 +326,9 @@ export const matchState = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     rfpId: text("rfp_id").notNull(),
-    status: text("status"), // 'saved' | 'applied' | 'in_progress'
+    // Bidding-tracker pipeline. null = not in the tracker.
+    // 'saved' | 'in_progress' | 'bid_submitted' | 'won' | 'lost' | 'no_bid'
+    status: text("status"),
     matchScore: real("match_score"),
     matchTier: text("match_tier"),
     winProbability: real("win_probability"),
@@ -334,6 +336,8 @@ export const matchState = pgTable(
     feedbackRating: text("feedback_rating"), // 'good' | 'bad'
     feedbackReason: text("feedback_reason"),
     feedbackAt: timestamp("feedback_at", { withTimezone: true }),
+    // Bidding-tracker audit: timestamp of the last status transition.
+    statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
     // First time the user opened the RFP detail page. Drives the daily
     // roundup digest (unviewed >75% matches only) and any future "new
     // since last visit" UI. Set once and never cleared.
@@ -344,6 +348,32 @@ export const matchState = pgTable(
     index("idx_match_state_user_status").on(t.userId, t.status),
     index("idx_match_state_user_viewed").on(t.userId, t.viewedAt),
     unique("uq_match_state_user_rfp").on(t.userId, t.rfpId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// RFP tasks — per (user, RFP) checklist for the bidding tracker.
+// On first save of an RFP, a default 7-item template is seeded (is_custom=false);
+// users can add/edit/delete any items afterward.
+// ---------------------------------------------------------------------------
+
+export const rfpTasks = pgTable(
+  "rfp_tasks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    rfpId: text("rfp_id").notNull(),
+    label: text("label").notNull(),
+    dueDate: date("due_date"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isCustom: boolean("is_custom").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_rfp_tasks_user_rfp").on(t.userId, t.rfpId),
   ],
 );
 
@@ -492,6 +522,8 @@ export type AgencyRelationship = typeof agencyRelationships.$inferSelect;
 export type Contract = typeof contracts.$inferSelect;
 export type Claim = typeof claims.$inferSelect;
 export type MatchState = typeof matchState.$inferSelect;
+export type RfpTask = typeof rfpTasks.$inferSelect;
+export type NewRfpTask = typeof rfpTasks.$inferInsert;
 
 export type RfpCacheRow = typeof rfpCache.$inferSelect;
 export type RfpBidder = typeof rfpBidders.$inferSelect;

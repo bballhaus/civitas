@@ -14,34 +14,14 @@ import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { portalLabel } from "@/lib/rfp-portal";
-import { getCurrentUser, updateUserRfpStatus } from "@/lib/api";
+import { getCurrentUser, updateUserRfpStatus, setRfpStatus } from "@/lib/api";
 import { trackEvent } from "@/lib/event-tracker";
 import type { CompanyProfile } from "@/lib/rfp-matching";
 
-// localStorage keys — match the dashboard's existing pattern so toggling
-// save / interested / not-interested here stays consistent with /dashboard.
-// These are intentionally session-local until the Postgres-backed
-// persistence ships (see project memory: project_saved_rfps_postgres_migration).
-const STORAGE_KEYS = {
-  SAVED: "civitas_saved_rfps",
-} as const;
-
-function loadSet(key: string): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return new Set();
-    const arr = JSON.parse(raw) as string[];
-    return new Set(Array.isArray(arr) ? arr : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function saveSet(key: string, set: Set<string>) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(key, JSON.stringify([...set]));
-}
+// Save state is server-persisted via match_state. Toggling Save on this
+// page is the entry point into the Bidding Process Tracker — the new row's
+// status becomes 'saved' and the default task template is auto-seeded by
+// the /api/user/rfp-status route.
 
 // Approximate the rule-based summary that /api/match-summary expects as
 // `currentSummary` input — the v2 matcher doesn't produce one, so we
@@ -170,8 +150,10 @@ export default function RfpDetailPage() {
   const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
   const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
 
-  // Save state (localStorage, session-local).
+  // Save state (server-persisted via match_state). Hydrated from
+  // /api/auth/me's saved_rfp_ids snapshot.
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [saveBusy, setSaveBusy] = useState(false);
 
   // Good / bad match feedback (server-persisted via /api/user/rfp-status).
   const [matchRating, setMatchRating] = useState<"good" | "bad" | null>(null);
@@ -180,9 +162,15 @@ export default function RfpDetailPage() {
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
-  // Hydrate localStorage-backed sets on mount.
+  // Hydrate saved-IDs set from the server on mount. The same payload that
+  // /api/auth/me returns for match feedback also includes the pipeline
+  // snapshot (saved/in_progress/bid_submitted/won/lost/no_bid).
   useEffect(() => {
-    setSavedIds(loadSet(STORAGE_KEYS.SAVED));
+    getCurrentUser(true)
+      .then((full) => {
+        if (full?.saved_rfp_ids) setSavedIds(new Set(full.saved_rfp_ids));
+      })
+      .catch(() => {});
   }, []);
 
   // Hydrate company profile from localStorage (same source the dashboard uses).
@@ -403,18 +391,32 @@ export default function RfpDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.rfp.id, profileLoaded]);
 
-  const handleToggleSave = useCallback(() => {
-    if (!rfpId) return;
+  const handleToggleSave = useCallback(async () => {
+    if (!rfpId || saveBusy) return;
+    const wasSaved = savedIds.has(rfpId);
+    // Optimistic UI; reverted on failure.
     setSavedIds((prev) => {
       const next = new Set(prev);
-      const wasSaved = next.has(rfpId);
       if (wasSaved) next.delete(rfpId);
       else next.add(rfpId);
-      saveSet(STORAGE_KEYS.SAVED, next);
-      trackEvent(wasSaved ? "rfp_unsaved" : "rfp_saved", { rfpId });
       return next;
     });
-  }, [rfpId]);
+    setSaveBusy(true);
+    try {
+      await setRfpStatus(rfpId, wasSaved ? null : "saved");
+      // Server route emits rfp_saved / rfp_unsaved events; no client trackEvent.
+    } catch (err) {
+      setSavedIds((prev) => {
+        const next = new Set(prev);
+        if (wasSaved) next.add(rfpId);
+        else next.delete(rfpId);
+        return next;
+      });
+      console.error("Failed to update saved status:", err);
+    } finally {
+      setSaveBusy(false);
+    }
+  }, [rfpId, savedIds, saveBusy]);
 
   const handleSubmitMatchFeedback = useCallback(
     async (rating: "good" | "bad") => {
@@ -572,14 +574,17 @@ export default function RfpDetailPage() {
             </div>
           </div>
 
-          {/* Action buttons — save / interest / not-interested / good-bad
-              match / view on portal. Save and interest signals live in
-              localStorage today; good/bad match writes to the server. */}
+          {/* Action buttons — save (= add to Bidding Process Tracker),
+              good/bad match feedback, and view on portal. Pipeline status
+              transitions beyond "saved" (in_progress, bid_submitted, won,
+              lost, no_bid) happen on /tracker, not here. */}
           <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={handleToggleSave}
-              className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
+              onClick={() => void handleToggleSave()}
+              disabled={saveBusy}
+              title={rfpId && savedIds.has(rfpId) ? "Remove from tracker" : "Add to bidding tracker"}
+              className={`text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors disabled:opacity-60 ${
                 rfpId && savedIds.has(rfpId)
                   ? "text-blue-600 bg-blue-50 hover:bg-blue-100"
                   : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
@@ -598,8 +603,16 @@ export default function RfpDetailPage() {
                   d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"
                 />
               </svg>
-              {rfpId && savedIds.has(rfpId) ? "Saved" : "Save"}
+              {rfpId && savedIds.has(rfpId) ? "Saved · in tracker" : "Save to tracker"}
             </button>
+            {rfpId && savedIds.has(rfpId) && (
+              <Link
+                href="/tracker"
+                className="text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg text-[#3C89C6] hover:bg-blue-50 font-semibold"
+              >
+                Manage in tracker &rarr;
+              </Link>
+            )}
             <span className="w-px h-5 bg-slate-200 mx-1" aria-hidden="true" />
             <button
               type="button"

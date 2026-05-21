@@ -12,7 +12,7 @@ import {
   generateMatchSummary,
 } from "@/lib/rfp-matching";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { getCurrentUser, getGeneratedPoe, updateUserRfpStatus, listContracts } from "@/lib/api";
+import { getCurrentUser, getGeneratedPoe, updateUserRfpStatus, setRfpStatus, listContracts } from "@/lib/api";
 import { getCachedEvents } from "@/lib/events-cache";
 import { trackEvent } from "@/lib/event-tracker";
 import { portalLabel } from "@/lib/rfp-portal";
@@ -123,7 +123,7 @@ export default function RFPDetailPage() {
     getCurrentUser(true).then((full) => {
       setUserRfpStatusLoaded(true);
       if (full) {
-        setAppliedRfpIds(new Set(full.applied_rfp_ids ?? []));
+        setAppliedRfpIds(new Set(full.bid_submitted_rfp_ids ?? []));
         setInProgressRfpIds(new Set(full.in_progress_rfp_ids ?? []));
         const fb = full.match_feedback_by_rfp?.[id];
         if (fb) {
@@ -529,7 +529,7 @@ export default function RFPDetailPage() {
     if (!trimmed) setProposal(null);
 
     setInProgressRfpIds((prev) => new Set([...prev, id]));
-    updateUserRfpStatus({ mark_in_progress: id }).catch(() => {});
+    setRfpStatus(id, "in_progress").catch(() => {});
 
     try {
       // Fetch past contract document URLs for style reference
@@ -617,7 +617,9 @@ export default function RFPDetailPage() {
       else next.add(id);
       return next;
     });
-    trackEvent(currentlySaved ? "rfp_unsaved" : "rfp_saved", { rfpId: id });
+    // rfp_saved / rfp_unsaved events are emitted server-side by /api/user/rfp-status.
+    // (No-op here: this v1 page's Save is session-local; see /matches/[rfpId] for
+    // the server-persisted Save flow.)
   }, [id, savedRfpIds]);
 
   const handleToggleApplied = useCallback(async () => {
@@ -640,14 +642,9 @@ export default function RFPDetailPage() {
       });
     }
     try {
-      if (currentlyApplied) {
-        await updateUserRfpStatus({ remove_applied: id, mark_in_progress: id });
-      } else {
-        await updateUserRfpStatus({
-          mark_applied: id,
-          ...(currentlyInProgress ? { remove_in_progress: id } : {}),
-        });
-      }
+      // Toggling "Applied" on the v1 detail page now maps to the new
+      // bid_submitted ↔ in_progress pipeline transition in match_state.
+      await setRfpStatus(id, currentlyApplied ? "in_progress" : "bid_submitted");
     } catch (e) {
       setAppliedRfpIds((prev) => {
         const next = new Set(prev);
@@ -760,7 +757,7 @@ export default function RFPDetailPage() {
 
     // Mark in progress as soon as the button is pressed (even if POE generation fails or doesn't finish)
     setInProgressRfpIds((prev) => new Set([...prev, id]));
-    updateUserRfpStatus({ mark_in_progress: id }).catch(() => {});
+    setRfpStatus(id, "in_progress").catch(() => {});
 
     try {
       const res = await fetch("/api/generate-plan-of-execution", {

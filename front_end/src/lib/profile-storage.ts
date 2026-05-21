@@ -109,8 +109,6 @@ export async function getOrCreateProfile(username: string): Promise<UserProfile>
     const profile = defaultProfile();
     const data = (await getUserData(username)) || ({} as UserData);
     data.profile = profileToJson(profile) as unknown as UserProfile;
-    if (!data.applied_rfp_ids) data.applied_rfp_ids = [];
-    if (!data.in_progress_rfp_ids) data.in_progress_rfp_ids = [];
     await saveUserData(username, data);
     return profile;
   } catch (err) {

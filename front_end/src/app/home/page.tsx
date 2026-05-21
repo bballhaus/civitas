@@ -1,86 +1,29 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
-import { getCurrentUser, getCachedUser, getCachedProfile } from "@/lib/api";
-import { setCachedEvents } from "@/lib/events-cache";
+import {
+  getCurrentUser,
+  getCachedProfile,
+  type RfpTask,
+  type PipelineStatus,
+} from "@/lib/api";
 import { trackEvent } from "@/lib/event-tracker";
-import type { RFP } from "@/lib/rfp-matching";
 
-const STORAGE_KEYS = {
-  EXPRESSED_INTEREST: "civitas_expressed_interest_rfps",
-};
-const RFP_PRELOAD_KEY = "civitas_preload_rfp";
-
-export type PreloadFilter = "saved" | "applied" | "in_progress" | null;
-
-function preloadRfpAndNavigate(
-  rfp: RFP,
-  router: ReturnType<typeof useRouter>,
-  filter: PreloadFilter = null
-) {
-  try {
-    sessionStorage.setItem(
-      RFP_PRELOAD_KEY,
-      JSON.stringify({ rfp, filter })
-    );
-  } catch {
-    // ignore quota / private mode
-  }
-  router.push("/dashboard");
+interface TrackerRfp {
+  id: string;
+  title: string;
+  agency: string | null;
+  deadline: string | null;
+  status: PipelineStatus;
 }
 
-function loadSet(key: string): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return new Set();
-    const arr = JSON.parse(raw) as string[];
-    return new Set(Array.isArray(arr) ? arr : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function parseDeadline(deadline: string): Date | null {
-  const normalized = deadline?.trim();
-  if (!normalized || normalized.toUpperCase() === "TBD") return null;
-  const direct = Date.parse(normalized);
-  if (!Number.isNaN(direct)) return new Date(direct);
-  const cleaned = normalized
-    .replace(/\b(PST|PDT)\b/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  const m = cleaned.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(AM|PM)$/i
-  );
-  if (!m) return null;
-  const mm = Number(m[1]);
-  const dd = Number(m[2]);
-  const yyyy = Number(m[3]);
-  let hh = Number(m[4]);
-  const min = Number(m[5]);
-  const ampm = m[6].toUpperCase();
-  if (ampm === "PM" && hh !== 12) hh += 12;
-  if (ampm === "AM" && hh === 12) hh = 0;
-  return new Date(yyyy, mm - 1, dd, hh, min, 0);
-}
-
-function formatDeadlineShort(deadline: string): string {
-  const d = parseDeadline(deadline);
-  if (!d) return "TBD";
-  const now = new Date();
-  const diffMs = d.getTime() - now.getTime();
-  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-  if (diffDays < 0) return "Past";
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Tomorrow";
-  if (diffDays <= 7) return `${diffDays}d`;
-  if (diffDays <= 30) return `${diffDays}d`;
-  return d.toLocaleDateString();
+interface TrackerPayload {
+  rfps: TrackerRfp[];
+  tasks: RfpTask[];
 }
 
 const CARD_CLASS =
@@ -89,21 +32,21 @@ const CARD_CLASS =
 function StatCard({
   label,
   value,
-  subtext,
   accent,
   icon,
+  href,
 }: {
   label: string;
   value: number;
-  subtext: string;
   accent: "blue" | "emerald" | "amber" | "violet";
   icon: React.ReactNode;
+  href?: string;
 }) {
   const styles = {
-    blue: "from-blue-500 to-blue-600 ring-blue-200",
-    emerald: "from-emerald-500 to-emerald-600 ring-emerald-200",
-    amber: "from-amber-500 to-amber-600 ring-amber-200",
-    violet: "from-violet-500 to-violet-600 ring-violet-200",
+    blue: "from-blue-500 to-blue-600",
+    emerald: "from-emerald-500 to-emerald-600",
+    amber: "from-amber-500 to-amber-600",
+    violet: "from-violet-500 to-violet-600",
   };
   const textStyles = {
     blue: "text-blue-700",
@@ -111,8 +54,8 @@ function StatCard({
     amber: "text-amber-700",
     violet: "text-violet-700",
   };
-  return (
-    <div className="bg-white/80 backdrop-blur-sm rounded-lg border border-white/60 shadow-sm shadow-slate-200/50 overflow-hidden group">
+  const inner = (
+    <div className="bg-white/80 backdrop-blur-sm rounded-lg border border-white/60 shadow-sm shadow-slate-200/50 overflow-hidden">
       <div className="px-3 py-2 flex items-center gap-2">
         <div className={`bg-gradient-to-br ${styles[accent]} w-6 h-6 rounded-md flex items-center justify-center text-white shrink-0`}>
           {icon}
@@ -124,21 +67,139 @@ function StatCard({
       </div>
     </div>
   );
+  return href ? <Link href={href}>{inner}</Link> : inner;
+}
+
+interface CalEntry {
+  date: Date;
+  kind: "deadline" | "task";
+  label: string;
+  rfpId: string;
+  rfpTitle?: string;
+  completed?: boolean;
+}
+
+function buildCalendarEntries(payload: TrackerPayload): CalEntry[] {
+  const entries: CalEntry[] = [];
+  for (const rfp of payload.rfps) {
+    if (!rfp.deadline) continue;
+    const d = new Date(rfp.deadline);
+    if (Number.isNaN(d.getTime())) continue;
+    entries.push({ date: d, kind: "deadline", label: rfp.title, rfpId: rfp.id });
+  }
+  const rfpById = new Map(payload.rfps.map((r) => [r.id, r]));
+  for (const t of payload.tasks) {
+    if (!t.dueDate) continue;
+    const d = new Date(t.dueDate);
+    if (Number.isNaN(d.getTime())) continue;
+    entries.push({
+      date: d,
+      kind: "task",
+      label: t.label,
+      rfpId: t.rfpId,
+      rfpTitle: rfpById.get(t.rfpId)?.title,
+      completed: !!t.completedAt,
+    });
+  }
+  return entries;
+}
+
+function MiniCalendar({ entries }: { entries: CalEntry[] }) {
+  // Snapshot the current date at mount so derived values (year, month) stay
+  // stable across renders — the React Compiler flags re-derived locals as
+  // potentially mutating dependencies.
+  const [today] = useState(() => new Date());
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const firstOfMonth = new Date(year, month, 1);
+  const startDay = firstOfMonth.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthLabel = today.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+  const entriesByDay = useMemo(() => {
+    const m = new Map<number, CalEntry[]>();
+    for (const e of entries) {
+      if (e.date.getFullYear() !== year || e.date.getMonth() !== month) continue;
+      const day = e.date.getDate();
+      if (!m.has(day)) m.set(day, []);
+      m.get(day)!.push(e);
+    }
+    return m;
+  }, [entries, year, month]);
+
+  const cells: Array<{ day: number | null; entries: CalEntry[] }> = [];
+  for (let i = 0; i < startDay; i++) cells.push({ day: null, entries: [] });
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push({ day: d, entries: entriesByDay.get(d) ?? [] });
+  }
+  while (cells.length % 7 !== 0) cells.push({ day: null, entries: [] });
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-base font-bold text-slate-900">{monthLabel}</h3>
+        <Link href="/tracker" className="text-xs font-semibold text-[#3C89C6] hover:underline">
+          Open full tracker &rarr;
+        </Link>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-[10px] font-bold text-slate-400 uppercase mb-1">
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+          <div key={d} className="text-center">{d}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((c, i) => {
+          const isToday = c.day === today.getDate();
+          const hasDeadline = c.entries.some((e) => e.kind === "deadline");
+          const hasOpenTask = c.entries.some((e) => e.kind === "task" && !e.completed);
+          return (
+            <div
+              key={i}
+              className={`aspect-square rounded-md text-xs flex flex-col items-center justify-start p-1 ${
+                c.day === null
+                  ? ""
+                  : isToday
+                  ? "bg-[#3C89C6] text-white font-bold"
+                  : c.entries.length > 0
+                  ? "bg-slate-50 border border-slate-200 text-slate-800"
+                  : "text-slate-500"
+              }`}
+            >
+              {c.day !== null && (
+                <>
+                  <span>{c.day}</span>
+                  {(hasDeadline || hasOpenTask) && (
+                    <div className="flex gap-0.5 mt-0.5">
+                      {hasDeadline && <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />}
+                      {hasOpenTask && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex items-center gap-4 text-[11px] text-slate-500">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> RFP deadline</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" /> Open task</span>
+      </div>
+    </div>
+  );
+}
+
+function statusLabel(s: PipelineStatus): string {
+  return s === "in_progress" ? "In Progress" : s === "bid_submitted" ? "Bid Submitted" : s === "no_bid" ? "No-bid" : s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 export default function HomePage() {
   const router = useRouter();
   const [displayName, setDisplayName] = useState<string>("");
-  const [rfps, setRfps] = useState<RFP[]>([]);
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
-  const [expressedIds, setExpressedIds] = useState<Set<string>>(new Set());
-  const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
-  const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
+  const [payload, setPayload] = useState<TrackerPayload>({ rfps: [], tasks: [] });
   const [loading, setLoading] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
-    setExpressedIds(loadSet(STORAGE_KEYS.EXPRESSED_INTEREST));
     trackEvent("page_viewed", { pagePath: "/home" });
   }, []);
 
@@ -151,11 +212,8 @@ export default function HomePage() {
           const cached = getCachedProfile(data.user_id);
           const companyName = cached?.companyName?.trim();
           setDisplayName(companyName || data.username || "there");
-          setAppliedRfpIds(new Set(data.applied_rfp_ids ?? []));
-          setInProgressRfpIds(new Set(data.in_progress_rfp_ids ?? []));
         } else {
           router.replace("/login");
-          return;
         }
       })
       .finally(() => {
@@ -168,38 +226,50 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!authChecked) return;
-    fetch("/api/events")
-      .then((res) => (res.ok ? res.json() : { events: [] }))
-      .then((data) => {
-        const events = data.events ?? [];
-        setRfps(events);
-        if (events.length > 0) setCachedEvents(events);
-      })
-      .catch(() => setRfps([]))
+    fetch("/api/tracker")
+      .then((res) => (res.ok ? res.json() : { rfps: [], tasks: [] }))
+      .then((data) => setPayload(data as TrackerPayload))
+      .catch(() => setPayload({ rfps: [], tasks: [] }))
       .finally(() => setLoading(false));
   }, [authChecked]);
 
-  const savedRfps = rfps.filter((r) => savedIds.has(r.id));
-  const appliedRfps = rfps.filter((r) => appliedRfpIds.has(r.id));
-  const inProgressRfps = rfps.filter((r) => inProgressRfpIds.has(r.id));
-  const relevantForDeadlines = [
-    ...savedRfps,
-    ...appliedRfps.filter((r) => !savedIds.has(r.id)),
-    ...inProgressRfps.filter((r) => !savedIds.has(r.id) && !appliedRfpIds.has(r.id)),
-  ];
-  const now = new Date();
-  const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-  const upcomingDeadlines = relevantForDeadlines
-    .map((r) => ({ rfp: r, date: parseDeadline(r.deadline) }))
-    .filter(({ date }) => date && date >= now && date <= in30Days)
-    .sort((a, b) => (a.date!.getTime() - b.date!.getTime()))
-    .slice(0, 7)
-    .map(({ rfp }) => rfp);
+  const entries = useMemo(() => buildCalendarEntries(payload), [payload]);
 
-  const dueIn30Count = relevantForDeadlines.filter((r) => {
-    const d = parseDeadline(r.deadline);
-    return d && d >= now && d <= in30Days;
-  }).length;
+  // Snapshot "now" at mount. The home page is a quick-look surface; re-running
+  // the "due in 30 days" math against a fresh Date on every render isn't worth
+  // fighting the React Compiler purity rule.
+  const [nowMs] = useState(() => Date.now());
+
+  const stats = useMemo(() => {
+    const counts: Record<PipelineStatus, number> = {
+      saved: 0,
+      in_progress: 0,
+      bid_submitted: 0,
+      won: 0,
+      lost: 0,
+      no_bid: 0,
+    };
+    for (const r of payload.rfps) counts[r.status] = (counts[r.status] ?? 0) + 1;
+    const in30 = nowMs + 30 * 24 * 60 * 60 * 1000;
+    const dueIn30 = payload.rfps.filter((r) => {
+      if (!r.deadline) return false;
+      const t = new Date(r.deadline).getTime();
+      return !Number.isNaN(t) && t >= nowMs && t <= in30;
+    }).length;
+    return { ...counts, dueIn30 };
+  }, [payload, nowMs]);
+
+  const upcoming = useMemo(() => {
+    const in30 = nowMs + 30 * 24 * 60 * 60 * 1000;
+    return payload.rfps
+      .filter((r) => {
+        if (!r.deadline) return false;
+        const d = new Date(r.deadline).getTime();
+        return !Number.isNaN(d) && d >= nowMs && d <= in30;
+      })
+      .sort((a, b) => new Date(a.deadline!).getTime() - new Date(b.deadline!).getTime())
+      .slice(0, 7);
+  }, [payload.rfps, nowMs]);
 
   if (!authChecked) {
     return (
@@ -219,14 +289,14 @@ export default function HomePage() {
       <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
     </svg>
   );
-  const iconApplied = (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
   const iconInProgress = (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+    </svg>
+  );
+  const iconBid = (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   );
   const iconDeadline = (
@@ -238,7 +308,6 @@ export default function HomePage() {
   return (
     <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
       <MeshBackground />
-
       <AppHeader />
 
       <main className="relative max-w-7xl mx-auto px-6 md:px-10 py-10">
@@ -248,287 +317,95 @@ export default function HomePage() {
               Welcome back{displayName !== "there" ? `, ${displayName}` : ""}
             </h1>
             <p className="text-slate-600 text-sm">
-              {"Here's your overview: saved opportunities, applications, and upcoming deadlines."}
+              Here&apos;s your overview: tracker pipeline, calendar, and upcoming deadlines.
             </p>
           </div>
-          <button
-            onClick={() => {
-              if (authChecked) router.push("/dashboard");
-            }}
-            disabled={!authChecked}
-            className="shrink-0 w-full sm:w-auto flex items-center justify-center gap-3 px-5 py-3 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:shadow-[#3C89C6]/30 hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-y-0">
-            <svg className="w-5 h-5 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-            </svg>
-            <span className="font-semibold">{authChecked ? "View Matches" : "Loading…"}</span>
-            <svg className="w-4 h-4 text-white/90 group-hover:text-white group-hover:translate-x-0.5 shrink-0 transition-all duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/tracker"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-slate-700 font-semibold border border-slate-200 hover:bg-slate-50"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Open Tracker
+            </Link>
+            <Link
+              href="/matches"
+              className="flex items-center gap-3 px-5 py-2.5 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20"
+            >
+              <svg className="w-5 h-5 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+              <span className="font-semibold">View Matches</span>
+            </Link>
+          </div>
         </div>
 
         {/* Quick stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
-          <StatCard
-            label="Saved"
-            value={savedIds.size}
-            subtext="RFPs in your list"
-            accent="blue"
-            icon={iconSaved}
-          />
-          <StatCard
-            label="Applied"
-            value={appliedRfps.length}
-            subtext="Marked as applied"
-            accent="emerald"
-            icon={iconApplied}
-          />
-          <StatCard
-            label="In progress"
-            value={inProgressRfps.length}
-            subtext="POA / plan generated"
-            accent="violet"
-            icon={iconInProgress}
-          />
-          <StatCard
-            label="Due in 30 days"
-            value={dueIn30Count}
-            subtext="From saved, applied, or in progress"
-            accent="amber"
-            icon={iconDeadline}
-          />
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 mb-8">
+          <StatCard label="Saved" value={stats.saved} accent="blue" icon={iconSaved} href="/tracker" />
+          <StatCard label="In progress" value={stats.in_progress} accent="violet" icon={iconInProgress} href="/tracker" />
+          <StatCard label="Bid submitted" value={stats.bid_submitted} accent="emerald" icon={iconBid} href="/tracker" />
+          <StatCard label="Due in 30 days" value={stats.dueIn30} accent="amber" icon={iconDeadline} href="/tracker" />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Saved RFPs */}
-          <div className={`${CARD_CLASS} border-l-4 border-l-blue-500`}>
-            <div className="px-5 py-4 bg-gradient-to-r from-blue-50/80 to-white/80 border-b border-slate-100 font-bold text-slate-900 flex items-center gap-2">
-              <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white shadow-md">
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
-                </svg>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Mini calendar (spans 2 cols on lg) */}
+          <div className={`${CARD_CLASS} lg:col-span-2 p-5`}>
+            {loading ? (
+              <p className="text-sm text-slate-500 py-10 text-center">Loading calendar&hellip;</p>
+            ) : (
+              <MiniCalendar entries={entries} />
+            )}
+          </div>
+
+          {/* Upcoming deadlines */}
+          <div className={`${CARD_CLASS} border-l-4 border-l-amber-500`}>
+            <div className="px-5 py-3 bg-gradient-to-r from-amber-50/80 to-white/80 border-b border-slate-100 font-bold text-slate-900 flex items-center gap-2">
+              <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center text-white shadow-md">
+                {iconDeadline}
               </span>
-              Saved RFPs
-              {savedIds.size > 0 && (
-                <span className="text-sm font-semibold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
-                  {savedIds.size}
+              Upcoming deadlines
+              {stats.dueIn30 > 0 && (
+                <span className="text-xs font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                  {stats.dueIn30} in 30 days
                 </span>
               )}
             </div>
-            <div className="p-4">
+            <div className="p-3">
               {loading ? (
-                <p className="text-sm text-slate-500">Loading&hellip;</p>
-              ) : savedRfps.length === 0 ? (
-                <p className="text-sm text-slate-600">
-                  No saved RFPs yet.{" "}
-                  <Link
-                    href="/dashboard"
-                    className="text-blue-600 font-semibold hover:underline"
-                  >
+                <p className="text-sm text-slate-500 px-2">Loading&hellip;</p>
+              ) : upcoming.length === 0 ? (
+                <p className="text-sm text-slate-600 px-2 py-2">
+                  No upcoming deadlines in your tracker.{" "}
+                  <Link href="/matches" className="text-[#3C89C6] font-semibold hover:underline">
                     Browse opportunities
                   </Link>
                 </p>
               ) : (
-                <div className={savedRfps.length >= 2 ? "min-h-0 max-h-[11rem] overflow-y-scroll overflow-x-hidden" : ""}>
-                  <ul className="space-y-2">
-                    {savedRfps.slice(0, 5).map((rfp) => (
-                      <li key={rfp.id}>
-                        <button
-                          type="button"
-                          onClick={() => preloadRfpAndNavigate(rfp, router, "saved")}
-                          className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/50 transition-all hover:shadow-sm border-l-2 border-l-blue-400"
-                        >
-                          <p className="font-semibold text-slate-900 text-sm line-clamp-2">
-                            {rfp.title}
-                          </p>
-                          <p className="text-xs text-slate-500 mt-1">
-                            {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
-                          </p>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {savedRfps.length > 5 && (
-                <Link
-                  href="/dashboard"
-                  className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-blue-600 hover:text-blue-700 hover:underline"
-                >
-                  View all saved on dashboard &rarr;
-                </Link>
-              )}
-            </div>
-          </div>
-
-          {/* Applied / Expressed interest */}
-          <div className={`${CARD_CLASS} border-l-4 border-l-emerald-500`}>
-            <div className="px-5 py-4 bg-gradient-to-r from-emerald-50/80 to-white/80 border-b border-slate-100 font-bold text-slate-900 flex items-center gap-2">
-              <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-white shadow-md">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </span>
-              Applied
-              {appliedRfps.length > 0 && (
-                <span className="text-sm font-semibold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full">
-                  {appliedRfps.length}
-                </span>
-              )}
-            </div>
-            <div className="p-4">
-              {loading ? (
-                <p className="text-sm text-slate-500">Loading&hellip;</p>
-              ) : appliedRfps.length === 0 ? (
-                <p className="text-sm text-slate-600">
-                  You haven&apos;t marked any RFPs as applied yet. Use &quot;I&apos;ve applied&quot; on the dashboard when you&apos;ve submitted an application.
-                </p>
-              ) : (
-                <div className={appliedRfps.length >= 2 ? "min-h-0 max-h-[11rem] overflow-y-scroll overflow-x-hidden" : ""}>
-                  <ul className="space-y-2">
-                    {appliedRfps.slice(0, 5).map((rfp) => (
-                      <li key={rfp.id}>
-                        <button
-                          type="button"
-                          onClick={() => preloadRfpAndNavigate(rfp, router, "applied")}
-                          className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/50 transition-all hover:shadow-sm border-l-2 border-l-emerald-400"
-                        >
-                          <p className="font-semibold text-slate-900 text-sm line-clamp-2">
-                            {rfp.title}
-                          </p>
-                          <p className="text-xs text-slate-500 mt-1">
-                            {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
-                          </p>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {appliedRfps.length > 5 && (
-                <Link
-                  href="/dashboard"
-                  className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-emerald-600 hover:text-emerald-700 hover:underline"
-                >
-                  View all on dashboard &rarr;
-                </Link>
-              )}
-            </div>
-          </div>
-
-          {/* In progress (POA / plan of action generated) */}
-          <div className={`${CARD_CLASS} border-l-4 border-l-violet-500`}>
-            <div className="px-5 py-4 bg-gradient-to-r from-violet-50/80 to-white/80 border-b border-slate-100 font-bold text-slate-900 flex items-center gap-2">
-              <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white shadow-md">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                </svg>
-              </span>
-              In progress
-              {inProgressRfps.length > 0 && (
-                <span className="text-sm font-semibold text-violet-600 bg-violet-100 px-2 py-0.5 rounded-full">
-                  {inProgressRfps.length}
-                </span>
-              )}
-            </div>
-            <div className="p-4">
-              {loading ? (
-                <p className="text-sm text-slate-500">Loading&hellip;</p>
-              ) : inProgressRfps.length === 0 ? (
-                <p className="text-sm text-slate-600">
-                  No RFPs in progress yet. Generate a Plan of Execution on the dashboard to track them here.
-                </p>
-              ) : (
-                <div className={inProgressRfps.length >= 2 ? "min-h-0 max-h-[11rem] overflow-y-scroll overflow-x-hidden" : ""}>
-                  <ul className="space-y-2">
-                    {inProgressRfps.slice(0, 5).map((rfp) => (
-                      <li key={rfp.id}>
-                        <button
-                          type="button"
-                          onClick={() => preloadRfpAndNavigate(rfp, router, "in_progress")}
-                          className="w-full text-left block p-3 rounded-xl border border-slate-100 hover:border-violet-200 hover:bg-violet-50/50 transition-all hover:shadow-sm border-l-2 border-l-violet-400"
-                        >
-                          <p className="font-semibold text-slate-900 text-sm line-clamp-2">
-                            {rfp.title}
-                          </p>
-                          <p className="text-xs text-slate-500 mt-1">
-                            {rfp.agency} &middot; {formatDeadlineShort(rfp.deadline)}
-                          </p>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {inProgressRfps.length > 5 && (
-                <Link
-                  href="/dashboard"
-                  className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-violet-600 hover:text-violet-700 hover:underline"
-                >
-                  View all on dashboard &rarr;
-                </Link>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Upcoming deadlines */}
-        <div className={`${CARD_CLASS} mt-6 border-l-4 border-l-amber-500`}>
-          <div className="px-5 py-4 bg-gradient-to-r from-amber-50/80 to-white/80 border-b border-slate-100 font-bold text-slate-900 flex items-center gap-2">
-            <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center text-white shadow-md">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            </span>
-            Upcoming deadlines
-            {upcomingDeadlines.length > 0 && (
-              <span className="text-sm font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
-                {dueIn30Count} due in 30 days
-              </span>
-            )}
-          </div>
-          <div className="p-4">
-            {loading ? (
-              <p className="text-sm text-slate-500">Loading&hellip;</p>
-            ) : upcomingDeadlines.length === 0 ? (
-              <p className="text-sm text-slate-600">
-                No upcoming deadlines in the next 30 days from your saved or
-                applied RFPs.
-              </p>
-            ) : (
-              <div className={upcomingDeadlines.length >= 2 ? "min-h-0 max-h-[11rem] overflow-y-scroll overflow-x-hidden" : ""}>
-                <ul className="space-y-2">
-{upcomingDeadlines.map((rfp) => (
-                  <li key={rfp.id}>
-                    <button
-                      type="button"
-                      onClick={() => preloadRfpAndNavigate(rfp, router, null)}
-                        className="w-full text-left flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-100 hover:border-amber-200 hover:bg-amber-50/50 transition-all hover:shadow-sm border-l-2 border-l-amber-400"
+                <ul className="space-y-1.5">
+                  {upcoming.map((rfp) => (
+                    <li key={rfp.id}>
+                      <Link
+                        href={`/matches/${encodeURIComponent(rfp.id)}`}
+                        className="block p-2.5 rounded-lg border border-slate-100 hover:border-amber-200 hover:bg-amber-50/50 transition-all"
                       >
-                        <div className="min-w-0">
-                          <p className="font-semibold text-slate-900 text-sm line-clamp-1">
-                            {rfp.title}
-                          </p>
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            {rfp.agency}
-                          </p>
+                        <p className="font-semibold text-slate-900 text-sm line-clamp-2">{rfp.title}</p>
+                        <div className="flex items-center justify-between mt-1 gap-2">
+                          <span className="text-xs text-slate-500 truncate">{rfp.agency ?? "Unknown agency"}</span>
+                          <span className="shrink-0 text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                            {new Date(rfp.deadline!).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                          </span>
                         </div>
-                        <span className="shrink-0 text-sm font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-lg">
-                          {formatDeadlineShort(rfp.deadline)}
-                        </span>
-                      </button>
+                        <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400 mt-1">
+                          {statusLabel(rfp.status)}
+                        </p>
+                      </Link>
                     </li>
                   ))}
                 </ul>
-              </div>
-            )}
-            <div className="mt-4 pt-4 border-t border-slate-100">
-              <Link
-                href="/dashboard"
-                className="inline-flex items-center gap-1 text-sm font-semibold text-[#3C89C6] hover:text-[#2d6fa0] hover:underline"
-              >
-                View all RFPs and filters &rarr;
-              </Link>
+              )}
             </div>
           </div>
         </div>

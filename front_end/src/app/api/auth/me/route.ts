@@ -3,10 +3,16 @@
 // `?include_profile=1` returns the full profile assembled across all child
 // tables (specialties, capabilities, licenses, certifications, work_areas,
 // agency_relationships) in addition to the user's basic info.
+//
+// The pipeline snapshot (saved/in_progress/bid_submitted/won/lost/no_bid
+// arrays + match feedback) is read from match_state and always included so
+// the home page, dashboard, detail page, and tracker can all hydrate from
+// one round-trip.
 
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getFullProfile } from "@/db/queries/profile";
+import { getPipelineSnapshot } from "@/db/queries/match-state";
 
 export async function GET(request: Request) {
   const user = await getAuthenticatedUser(request);
@@ -19,32 +25,17 @@ export async function GET(request: Request) {
     searchParams.get("include_profile")?.toLowerCase() === "1" ||
     searchParams.get("include_profile")?.toLowerCase() === "true";
 
-  if (includeProfile) {
-    const profile = await getFullProfile(user.userId);
-    return NextResponse.json(
-      {
-        userId: user.userId,
-        username: user.username,
-        profile,
-        // RFP status / match feedback move to the match_state table; route
-        // to retrieve them lands in a follow-up slice. Stub to empty for now
-        // so the dashboard's expected shape is preserved.
-        applied_rfp_ids: [],
-        in_progress_rfp_ids: [],
-        match_feedback_by_rfp: {},
-      },
-      { headers: { "Cache-Control": "no-store" } },
-    );
-  }
+  const [profile, snapshot] = await Promise.all([
+    includeProfile ? getFullProfile(user.userId) : Promise.resolve(null),
+    getPipelineSnapshot(user.userId),
+  ]);
 
   return NextResponse.json(
     {
       userId: user.userId,
       username: user.username,
-      profile: null,
-      applied_rfp_ids: [],
-      in_progress_rfp_ids: [],
-      match_feedback_by_rfp: {},
+      profile,
+      ...snapshot,
     },
     { headers: { "Cache-Control": "no-store" } },
   );
