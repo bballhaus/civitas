@@ -358,22 +358,69 @@ class CalEprocureScraper(BaseScraper):
         fetch it directly through the browser context (same cookies → same
         session) — no click required.
         Returns a list of dicts: [{"filename": str, "url": str, "text": str}, ...]
+
+        Logs the specific failure step at INFO level (was previously a single
+        debug-level catch that obscured why ~90% of events end up with empty
+        attachment_urls). Failure modes seen in the wild:
+          - viewPackage selector never appears (page is an award detail, or
+            event isn't a Sell Event in the expected layout).
+          - viewPackage appears but the attachments table never renders (the
+            package is empty, or the modal hydration was slower than the 10s
+            wait).
+          - Individual row click fails (overlay intercept).
         """
         from webscraping.v2.pipeline.enrich import classify_pdf, extract_text_from_pdf
 
         results = []
+        url = page.url
+
+        # Diagnostic helper: detect alternative buttons that explain why
+        # viewPackage is absent. Doesn't block — best-effort.
+        async def _has(selector: str) -> bool:
+            try:
+                el = await page.query_selector(selector)
+                return el is not None
+            except Exception:
+                return False
+
         try:
-            view_pkg = await page.wait_for_selector(
-                '[data-if-label="viewPackage"]', timeout=5000
-            )
+            try:
+                view_pkg = await page.wait_for_selector(
+                    '[data-if-label="viewPackage"]', timeout=12000, state="visible"
+                )
+            except Exception:
+                view_pkg = None
             if not view_pkg:
+                # Diagnose: is this an award-state event? An awarded/closed
+                # listing renders viewAwardDetails instead of viewPackage and
+                # has no download path through this code path.
+                if await _has('[data-if-label="viewAwardDetails"]'):
+                    logger.info(f"  attach: skip (award-state event) {url}")
+                elif await _has('[data-if-label="subscribe"]'):
+                    # Page hydrated (subscribe button is on every event) but
+                    # viewPackage never appeared — likely a Sell Event subtype
+                    # without a downloadable package.
+                    logger.info(f"  attach: no package button (no docs?) {url}")
+                else:
+                    # Page didn't hydrate within 12s — slow Lambda Playwright.
+                    logger.warning(f"  attach: page never hydrated {url}")
                 return results
-            await view_pkg.click()
+            try:
+                await view_pkg.click()
+            except Exception as e:
+                logger.warning(f"  attach: viewPackage click failed ({type(e).__name__}) {url}")
+                return results
             await page.wait_for_timeout(4000)
 
-            await page.wait_for_selector(
-                '[data-if-label^="ViewAttachmentsTableRow"]', timeout=10000
-            )
+            try:
+                await page.wait_for_selector(
+                    '[data-if-label^="ViewAttachmentsTableRow"]', timeout=10000
+                )
+            except Exception:
+                # Modal opened but no rows materialized. Either the package
+                # is genuinely empty or hydration ran past the timeout.
+                logger.info(f"  attach: package empty / table never rendered {url}")
+                return results
 
             buttons = await page.query_selector_all(
                 'button[data-if-label^="ViewAttachmentsView"]'
@@ -445,7 +492,9 @@ class CalEprocureScraper(BaseScraper):
                     await self._close_attachment_modal(page)
 
         except Exception as e:
-            logger.debug(f"No attachments or error: {e}")
+            logger.warning(
+                f"  attach: unexpected failure ({type(e).__name__}: {e}) {url}"
+            )
 
         return results
 
