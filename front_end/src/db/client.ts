@@ -31,12 +31,18 @@ function createDb() {
       "DATABASE_URL is not set. See front_end/.env.example for the local-dev value.",
     );
   }
+  // RDS Postgres rejects unencrypted connections. Force SSL whenever the
+  // URL points at AWS RDS so callers don't have to remember to append
+  // ?sslmode=require to the env var. No-op for local docker postgres or
+  // anything else that doesn't enforce TLS.
+  const isRds = databaseUrl.includes(".rds.amazonaws.com");
   const client =
     globalThis.__civitas_pg ??
     postgres(databaseUrl, {
       max: 10,
       idle_timeout: 20,
       connect_timeout: 10,
+      ...(isRds ? { ssl: "require" as const } : {}),
     });
   if (process.env.NODE_ENV !== "production") {
     globalThis.__civitas_pg = client;
