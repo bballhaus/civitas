@@ -558,32 +558,65 @@ class CalEprocureScraper(BaseScraper):
         if getattr(self, "_modal_debug_count", 0) >= cap:
             return
         try:
-            # Wait a bit more — the table may render late.
+            # Wait a bit more — table may render late.
             await page.wait_for_timeout(2500)
-            html = await page.evaluate(
+            payload = await page.evaluate(
                 """() => {
-                    const m = document.querySelector('#attachmentWrapperModal')
-                        || document.querySelector('.modal-dialog')
-                        || document.querySelector('.modal-content');
-                    return m ? m.outerHTML : (document.body.outerHTML || '');
+                    const summary = {
+                        url: location.href,
+                        title: document.title,
+                        // What attachment-related data-if-label elements exist?
+                        attachment_labels: Array.from(
+                            document.querySelectorAll('[data-if-label]')
+                        )
+                            .map(e => e.getAttribute('data-if-label'))
+                            .filter(l => /attach|package|view|download/i.test(l)),
+                        // Any tables/rows on the page?
+                        table_count: document.querySelectorAll('table').length,
+                        tbody_tr_count: document.querySelectorAll('tbody tr').length,
+                        // Visible modals
+                        any_modal_open: Array.from(
+                            document.querySelectorAll('.modal.show, .modal.in')
+                        ).map(m => m.id || m.className),
+                        // Text from anything attachment-id'd
+                        attachment_section_text: Array.from(
+                            document.querySelectorAll('[id*="ttachment"], [class*="ttachment"]')
+                        )
+                            .map(e => (e.innerText || '').trim().slice(0, 200))
+                            .filter(Boolean)
+                            .slice(0, 10),
+                    };
+                    return {
+                        summary,
+                        body_html: document.body ? document.body.outerHTML : '',
+                    };
                 }"""
             )
-            if not html:
+            if not payload:
                 return
             from webscraping.v2.config import S3_BUCKET, get_s3_client
+            import json as _json
             from datetime import datetime
             event_token = event_url.rstrip("/").split("/event/")[-1].replace("/", "_")
             ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
-            key = f"scrapes/v2/debug/caleprocure_modal/{ts}_{event_token}.html"
+            base = f"scrapes/v2/debug/caleprocure_modal/{ts}_{event_token}"
             s3 = get_s3_client()
             s3.put_object(
                 Bucket=S3_BUCKET,
-                Key=key,
-                Body=html.encode("utf-8"),
-                ContentType="text/html",
+                Key=f"{base}.summary.json",
+                Body=_json.dumps(payload["summary"], indent=2).encode("utf-8"),
+                ContentType="application/json",
             )
+            body_html = payload.get("body_html") or ""
+            if body_html:
+                s3.put_object(
+                    Bucket=S3_BUCKET,
+                    Key=f"{base}.body.html",
+                    Body=body_html.encode("utf-8"),
+                    ContentType="text/html",
+                )
             logger.info(
-                f"  attach: dumped modal HTML for {event_url} → s3://{S3_BUCKET}/{key}"
+                f"  attach: dumped diagnostics for {event_url} → s3://{S3_BUCKET}/{base}.*"
             )
             self._modal_debug_count = getattr(self, "_modal_debug_count", 0) + 1
         except Exception as e:
