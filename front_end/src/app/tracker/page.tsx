@@ -331,8 +331,8 @@ export default function TrackerPage() {
             <p className="text-slate-600 text-sm">
               Calendar, pipeline, and per-RFP tasks for every opportunity you&apos;re tracking.
               {" "}
-              <Link href="/dashboard" className="text-[#3C89C6] font-semibold hover:underline">
-                Find more on the dashboard &rarr;
+              <Link href="/matches" className="text-[#3C89C6] font-semibold hover:underline">
+                Find more in your matches &rarr;
               </Link>
             </p>
           </div>
@@ -502,10 +502,10 @@ export default function TrackerPage() {
           <div className="mt-8 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-10 text-center">
             <p className="text-slate-700 font-semibold text-lg mb-2">Your tracker is empty</p>
             <p className="text-slate-500 text-sm mb-4">
-              Save an RFP from the dashboard to start tracking it here.
+              Save an RFP from your matches to start tracking it here.
             </p>
             <Link
-              href="/dashboard"
+              href="/matches"
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#3C89C6] text-white font-semibold hover:bg-[#2d6fa0] transition-colors"
             >
               Browse matches &rarr;
@@ -625,7 +625,7 @@ function RfpDrawer({
               Tasks ({tasks.filter((t) => t.completedAt).length} / {tasks.length})
             </p>
             <Link
-              href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
+              href={`/matches/${encodeURIComponent(rfp.id)}`}
               className="text-xs font-semibold text-[#3C89C6] hover:underline"
             >
               Open RFP detail &rarr;

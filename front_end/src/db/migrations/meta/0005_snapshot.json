@@ -1,6 +1,6 @@
 {
-  "id": "2bb66967-acd9-4d8d-96f4-e6996bb3a6ee",
-  "prevId": "0409bb67-c872-43ad-a98f-f8bbd79d8229",
+  "id": "175bf568-a0c4-4e94-9908-d96cf3b55154",
+  "prevId": "5ed3ac8c-8827-4214-9025-17909556c2e8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -895,6 +895,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "viewed_at": {
+          "name": "viewed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -915,6 +921,27 @@
             },
             {
               "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_match_state_user_viewed": {
+          "name": "idx_match_state_user_viewed",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "viewed_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1154,6 +1181,25 @@
         },
         "last_dashboard_viewed_at": {
           "name": "last_dashboard_viewed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "daily_roundup_enabled": {
+          "name": "daily_roundup_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "daily_roundup_timezone": {
+          "name": "daily_roundup_timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "daily_roundup_last_sent_at": {
+          "name": "daily_roundup_last_sent_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

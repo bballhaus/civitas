@@ -331,7 +331,7 @@ export default function HomePage() {
               Open Tracker
             </Link>
             <Link
-              href="/dashboard"
+              href="/matches"
               className="flex items-center gap-3 px-5 py-2.5 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20"
             >
               <svg className="w-5 h-5 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -379,7 +379,7 @@ export default function HomePage() {
               ) : upcoming.length === 0 ? (
                 <p className="text-sm text-slate-600 px-2 py-2">
                   No upcoming deadlines in your tracker.{" "}
-                  <Link href="/dashboard" className="text-[#3C89C6] font-semibold hover:underline">
+                  <Link href="/matches" className="text-[#3C89C6] font-semibold hover:underline">
                     Browse opportunities
                   </Link>
                 </p>
@@ -388,7 +388,7 @@ export default function HomePage() {
                   {upcoming.map((rfp) => (
                     <li key={rfp.id}>
                       <Link
-                        href={`/dashboard/rfp/${encodeURIComponent(rfp.id)}`}
+                        href={`/matches/${encodeURIComponent(rfp.id)}`}
                         className="block p-2.5 rounded-lg border border-slate-100 hover:border-amber-200 hover:bg-amber-50/50 transition-all"
                       >
                         <p className="font-semibold text-slate-900 text-sm line-clamp-2">{rfp.title}</p>

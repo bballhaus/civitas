@@ -2,8 +2,8 @@
 --
 -- 1. New rfp_tasks table: per-(user, RFP) checklist for the tracker.
 -- 2. match_state gains a status_changed_at column for audit + sort-by-recency.
--- 3. Any pre-existing 'applied' rows are renamed to 'bid_submitted' (the new
---    pipeline vocabulary). 'applied' is no longer a valid status value.
+-- 3. Any pre-existing 'applied' rows are renamed to 'bid_submitted' (the
+--    new pipeline vocabulary). 'applied' is no longer a valid status value.
 
 CREATE TABLE "rfp_tasks" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
