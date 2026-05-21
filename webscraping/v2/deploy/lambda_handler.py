@@ -45,6 +45,19 @@ BATCH_SIZE = 1
 # this serializes portals — invocation N+1 sleeps while N runs.
 CHAIN_STAGGER_SECONDS = 360  # 6 minutes
 
+# Wave-based dispatch for mode=all. Cumulative-delay fan-out is unsafe:
+# Lambda timeout is 900s, so any portal scheduled with
+# delay_before_start > ~900s dies inside time.sleep() before its scrape or
+# chain-first dispatch ever runs. We instead fire the queue in waves, where
+# each wave dispatches up to DISPATCH_WAVE_SIZE portals (each with a small
+# in-wave stagger) and then chains the next wave via a self-invocation
+# whose own delay fits comfortably in the Lambda budget.
+DISPATCH_PORTAL_STAGGER = 60   # seconds between adjacent portals in a wave
+DISPATCH_WAVE_SIZE = 10        # portals per wave
+# Wave duration: 10 * 60 = 600s. Last portal in wave gets delay=540s, which
+# leaves ≥ 360s for scrape work — well above the ~5min per batch.
+# dispatch_queue Lambda sleeps ≤ 600s between waves, fires fast.
+
 
 def _batch_size_for(event: dict) -> int:
     return BATCH_SIZE
@@ -72,6 +85,10 @@ def handler(event, context):
         return _handle_daily_pipeline(event, context)
     if mode == "monitor":
         return _handle_monitor(event)
+    if mode == "dispatch_queue":
+        return _handle_dispatch_queue(event, context)
+    if mode == "enrich_backfill":
+        return _handle_enrich_backfill(event, context)
 
     # Mode 1: Multi-site batch (with optional chaining)
     sites = event.get("sites", [])
@@ -422,6 +439,39 @@ def _invoke_async(context, payload: dict):
     )
 
 
+def _handle_enrich_backfill(event, context):
+    """Re-trigger a scrape with enrichment forced on (skip_enrich=False).
+
+    Wraps the standard single-site or mode=all dispatch but overrides
+    `skip_enrich` to False. Used to backfill LLM-extracted fields for
+    sources whose normal cron runs with `skip_enrich:true` (the default
+    today). Cal eProcure attachment URLs are session-bound, so the only
+    reliable backfill path is a fresh scrape that re-discovers and
+    downloads PDFs in-session — this mode is sugar over that flow.
+
+    Payload:
+      {"mode": "enrich_backfill", "site_id": "caleprocure"}           # single site
+      {"mode": "enrich_backfill"}                                      # all sites
+    """
+    site_id = event.get("site_id")
+    if site_id:
+        per_source_default = 15 if site_id == "caleprocure" else 5
+        forwarded = {
+            "site_id": site_id,
+            "batch_offset": event.get("batch_offset", 0),
+            "batch_size": event.get("batch_size", per_source_default),
+            "skip_enrich": False,
+        }
+        logger.info(
+            f"enrich_backfill: routing to single-site chain for "
+            f"{site_id} with skip_enrich=False"
+        )
+        return _handle_single_site(site_id, forwarded, context)
+
+    logger.info("enrich_backfill: routing to mode=all with skip_enrich=False")
+    return _handle_run_all({**event, "skip_enrich": False}, context)
+
+
 def _handle_single_site(site_id, event, context):
     """Scrape a single site with optional chained batching."""
     delay_before_start = event.get("delay_before_start", 0)
@@ -661,13 +711,16 @@ def _handle_multi_site(sites, event, context):
 
 def _handle_run_all(event, context):
     """
-    Dispatch all sites as async Lambda invocations.
+    Build a dispatch queue of all enabled sites and hand it to the wave-based
+    dispatcher (`mode=dispatch_queue`). Old upfront fan-out used cumulative
+    `delay_before_start` sleeps that exceeded the 900s Lambda timeout — any
+    portal scheduled past ~895s died inside `time.sleep()` before scraping
+    or chain-fire could run. The dispatch_queue handler fires portals in
+    capped-duration waves so every invocation completes inside the budget.
 
-    Cal eProcure: chained within-portal batches (size 15 events).
-    BidSync all_ca: one invocation covers all CA agencies.
-    PlanetBids: each portal dispatched as its own chained within-portal
-        batches (size 8 events), staggered so concurrent logins don't hammer.
-    Agentic (LA, SF): chain-first multi-site batch.
+    Queue order: Cal eProcure first (it has its own internal chained
+    pagination), then BidSync, then PlanetBids portals, OpenGov portals,
+    spec-driven portals, agentic batch last.
     """
     skip_enrich = event.get("skip_enrich", False)
     include_awarded = event.get("include_awarded", False)
@@ -681,17 +734,9 @@ def _handle_run_all(event, context):
     all_sites = [sid for sid, cfg in SITE_REGISTRY.items() if cfg.enabled]
     logger.info(f"Total enabled sites: {len(all_sites)}")
 
-    # Group 1: Cal eProcure (chained batching — within-portal pagination)
-    # Group 2: BidSync all_ca (one invocation covers all CA agencies)
-    # Group 3: PlanetBids portals (each dispatched as its own chained batch
-    #          with within-portal pagination; staggered to avoid hammering)
-    # Group 4: OpenGov portals (same single-site chained pattern)
-    # Group 5: Agentic (disabled by default) — multi-site batch
     planetbids_sites = [s for s in all_sites if s.startswith("planetbids_")]
     opengov_sites = [s for s in all_sites if s.startswith("opengov_")]
 
-    # Spec-driven sites identified by scraper_type rather than site_id
-    # prefix — they're platform-agnostic and onboarded via S3 spec JSON.
     from webscraping.v2.models import ScraperType
     from webscraping.v2.orchestrator.runner import SITE_REGISTRY as _REG
     spec_driven_sites = [
@@ -708,138 +753,168 @@ def _handle_run_all(event, context):
         and sid not in spec_driven_sites
     ]
 
-    dispatched = []
+    # Per-source batch sizes — tuned so a single Lambda invocation comfortably
+    # scrapes one batch within the 15-min budget.
+    PLANETBIDS_BATCH_SIZE = 5
+    OPENGOV_BATCH_SIZE = 6
+    SPEC_DRIVEN_BATCH_SIZE = 8
 
-    # Dispatch Cal eProcure
-    try:
-        logger.info("Dispatching Cal eProcure (chained batch)")
-        _invoke_async(context, {
-            "site_id": "caleprocure",
-            "batch_offset": 0,
-            "batch_size": 15,
+    queue: list[dict] = []
+
+    queue.append({
+        "site_id": "caleprocure",
+        "batch_offset": 0,
+        "batch_size": 15,
+        "skip_enrich": skip_enrich,
+    })
+
+    if "bidsync_all_ca" in all_sites:
+        queue.append({
+            "sites": ["bidsync_all_ca"],
             "skip_enrich": skip_enrich,
         })
-        dispatched.append("caleprocure")
-    except Exception as e:
-        logger.error(f"Failed to dispatch Cal eProcure: {e}")
 
-    # Dispatch BidSync all_ca
-    if "bidsync_all_ca" in all_sites:
-        try:
-            logger.info("Dispatching BidSync all_ca")
-            _invoke_async(context, {
-                "sites": ["bidsync_all_ca"],
-                "skip_enrich": skip_enrich,
-            })
-            dispatched.append("bidsync_all_ca")
-        except Exception as e:
-            logger.error(f"Failed to dispatch BidSync: {e}")
+    for site_id in planetbids_sites:
+        queue.append({
+            "site_id": site_id,
+            "batch_offset": 0,
+            "batch_size": PLANETBIDS_BATCH_SIZE,
+            "skip_enrich": skip_enrich,
+        })
 
-    # Dispatch each PlanetBids portal as its own single-site chained job.
-    # Each portal paginates internally (5 events per Lambda invocation —
-    # each detail page is ~70-80s once login + tabs + market intel are
-    # accounted for, so 5 leaves ~10min of headroom under the 15-min
-    # Lambda budget). Stagger between portals avoids ~44 concurrent
-    # logins to the same vendor account.
-    PLANETBIDS_BATCH_SIZE = 5
-    PLANETBIDS_STAGGER_SECONDS = 90
-    for i, site_id in enumerate(planetbids_sites):
-        try:
-            _invoke_async(context, {
-                "site_id": site_id,
-                "batch_offset": 0,
-                "batch_size": PLANETBIDS_BATCH_SIZE,
-                "skip_enrich": skip_enrich,
-                "delay_before_start": i * PLANETBIDS_STAGGER_SECONDS,
-            })
-            dispatched.append(site_id)
-        except Exception as e:
-            logger.error(f"Failed to dispatch {site_id}: {e}")
-    if planetbids_sites:
-        logger.info(
-            f"Dispatched {len(planetbids_sites)} PlanetBids portals "
-            f"(stagger {PLANETBIDS_STAGGER_SECONDS}s, batch size {PLANETBIDS_BATCH_SIZE} events)"
-        )
+    for site_id in opengov_sites:
+        queue.append({
+            "site_id": site_id,
+            "batch_offset": 0,
+            "batch_size": OPENGOV_BATCH_SIZE,
+            "skip_enrich": skip_enrich,
+        })
 
-    # Dispatch each OpenGov portal as its own single-site chained job.
-    # Stagger after PlanetBids fan-out so we don't burst Lambda capacity.
-    OPENGOV_BATCH_SIZE = 6
-    OPENGOV_STAGGER_SECONDS = 60
-    opengov_offset = (
-        len(planetbids_sites) * PLANETBIDS_STAGGER_SECONDS
-        + OPENGOV_STAGGER_SECONDS
-    )
-    for i, site_id in enumerate(opengov_sites):
-        try:
-            _invoke_async(context, {
-                "site_id": site_id,
-                "batch_offset": 0,
-                "batch_size": OPENGOV_BATCH_SIZE,
-                "skip_enrich": skip_enrich,
-                "delay_before_start": opengov_offset + i * OPENGOV_STAGGER_SECONDS,
-            })
-            dispatched.append(site_id)
-        except Exception as e:
-            logger.error(f"Failed to dispatch {site_id}: {e}")
-    if opengov_sites:
-        logger.info(
-            f"Dispatched {len(opengov_sites)} OpenGov portals "
-            f"(stagger {OPENGOV_STAGGER_SECONDS}s, batch size {OPENGOV_BATCH_SIZE} events)"
-        )
+    for site_id in spec_driven_sites:
+        queue.append({
+            "site_id": site_id,
+            "batch_offset": 0,
+            "batch_size": SPEC_DRIVEN_BATCH_SIZE,
+            "skip_enrich": skip_enrich,
+        })
 
-    # Dispatch each spec-driven portal as its own chained batch — same
-    # pattern as OpenGov. These are onboarded by the investigation agent
-    # via S3 (scrapes/v2/spec_sites/*.json) with no code deploy.
-    SPEC_DRIVEN_BATCH_SIZE = 8
-    SPEC_DRIVEN_STAGGER_SECONDS = 60
-    spec_offset = (
-        opengov_offset
-        + len(opengov_sites) * OPENGOV_STAGGER_SECONDS
-        + SPEC_DRIVEN_STAGGER_SECONDS
-    )
-    for i, site_id in enumerate(spec_driven_sites):
-        try:
-            _invoke_async(context, {
-                "site_id": site_id,
-                "batch_offset": 0,
-                "batch_size": SPEC_DRIVEN_BATCH_SIZE,
-                "skip_enrich": skip_enrich,
-                "delay_before_start": spec_offset + i * SPEC_DRIVEN_STAGGER_SECONDS,
-            })
-            dispatched.append(site_id)
-        except Exception as e:
-            logger.error(f"Failed to dispatch {site_id}: {e}")
-    if spec_driven_sites:
-        logger.info(
-            f"Dispatched {len(spec_driven_sites)} spec-driven portals "
-            f"(stagger {SPEC_DRIVEN_STAGGER_SECONDS}s, batch size {SPEC_DRIVEN_BATCH_SIZE} events)"
-        )
-
-    # Dispatch agentic sites as a chain-first multi-site batch (no pagination).
     if agentic_sites:
         first_batch = agentic_sites[:1]
         remaining = agentic_sites[1:]
-        try:
-            _invoke_async(context, {
-                "sites": first_batch,
-                "remaining_sites": remaining,
-                "skip_enrich": skip_enrich,
-                "include_awarded": include_awarded,
-            })
-            dispatched.extend(first_batch)
-        except Exception as e:
-            logger.error(f"Failed to dispatch agentic batch: {e}")
+        queue.append({
+            "sites": first_batch,
+            "remaining_sites": remaining,
+            "skip_enrich": skip_enrich,
+            "include_awarded": include_awarded,
+        })
+
+    try:
+        _invoke_async(context, {
+            "mode": "dispatch_queue",
+            "queue": queue,
+            "wave_size": DISPATCH_WAVE_SIZE,
+            "portal_stagger": DISPATCH_PORTAL_STAGGER,
+        })
+    except Exception as e:
+        logger.error(f"Failed to seed dispatch_queue: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"mode": "run-all-dispatch", "error": str(e)}),
+        }
 
     return {
         "statusCode": 200,
         "body": json.dumps({
             "mode": "run-all-dispatch",
-            "dispatched": dispatched,
+            "queue_size": len(queue),
+            "wave_size": DISPATCH_WAVE_SIZE,
+            "portal_stagger": DISPATCH_PORTAL_STAGGER,
             "total_sites": len(all_sites),
             "planetbids_portals": len(planetbids_sites),
             "opengov_portals": len(opengov_sites),
             "spec_driven_portals": len(spec_driven_sites),
             "agentic_portals": len(agentic_sites),
-            "note": "Sites dispatched as async invocations. Check CloudWatch logs for progress.",
+            "note": (
+                "Queue handed off to dispatch_queue handler; portals will "
+                "fan out in waves. Check CloudWatch logs for progress."
+            ),
+        }),
+    }
+
+
+def _handle_dispatch_queue(event, context):
+    """Fire portal invocations in capped-duration waves.
+
+    Each wave dispatches up to `wave_size` portals with a per-portal
+    `delay_before_start` of `0..(wave_size-1)*portal_stagger` seconds.
+    After firing the wave, this Lambda re-invokes itself with
+    `delay_before_start = wave_size * portal_stagger` so the next wave's
+    portals don't overlap with the previous wave's batches in time.
+
+    Bounds: each portal Lambda sleeps for at most
+    `(wave_size - 1) * portal_stagger` seconds, then has the remainder of
+    the 900s budget for scrape work. Each dispatch_queue invocation sleeps
+    at most `wave_size * portal_stagger` and then runs in seconds. With
+    the defaults (wave=10, stagger=60s) both bounds are well under 900s.
+    """
+    delay_before_start = event.get("delay_before_start", 0)
+    if delay_before_start > 0:
+        logger.info(f"dispatch_queue: sleeping {delay_before_start}s before next wave")
+        time.sleep(delay_before_start)
+
+    queue = list(event.get("queue", []))
+    wave_size = int(event.get("wave_size", DISPATCH_WAVE_SIZE))
+    portal_stagger = int(event.get("portal_stagger", DISPATCH_PORTAL_STAGGER))
+
+    # Defensive: refuse to schedule a wave whose own sleep would blow the
+    # Lambda budget. Caller bug if this fires.
+    if wave_size * portal_stagger >= 850:
+        msg = (
+            f"dispatch_queue: wave_size*portal_stagger={wave_size * portal_stagger}s "
+            f"would exceed Lambda timeout; aborting chain"
+        )
+        logger.error(msg)
+        return {"statusCode": 500, "body": json.dumps({"error": msg})}
+
+    wave = queue[:wave_size]
+    rest = queue[wave_size:]
+
+    dispatched: list = []
+    for i, entry in enumerate(wave):
+        payload = dict(entry)
+        payload["delay_before_start"] = (
+            payload.get("delay_before_start", 0) + i * portal_stagger
+        )
+        try:
+            _invoke_async(context, payload)
+            dispatched.append(entry.get("site_id") or entry.get("sites"))
+        except Exception as e:
+            logger.error(f"dispatch_queue: failed to fire {entry}: {e}")
+
+    chain_error = None
+    if rest:
+        try:
+            _invoke_async(context, {
+                "mode": "dispatch_queue",
+                "queue": rest,
+                "wave_size": wave_size,
+                "portal_stagger": portal_stagger,
+                "delay_before_start": wave_size * portal_stagger,
+            })
+        except Exception as e:
+            chain_error = str(e)
+            logger.error(f"dispatch_queue: failed to chain next wave: {e}")
+
+    logger.info(
+        f"dispatch_queue: wave fired {len(dispatched)} portals "
+        f"({len(rest)} remaining)"
+    )
+    return {
+        "statusCode": 200,
+        "body": json.dumps({
+            "mode": "dispatch_queue",
+            "wave_dispatched": dispatched,
+            "remaining": len(rest),
+            "chain_error": chain_error,
         }),
     }
