@@ -1465,7 +1465,6 @@ export default function RFPDetailPage() {
                   )}
                   {anyKeyRequirement && (
                     <div className="mt-5 pt-5 border-t border-slate-200 space-y-4 text-sm">
-                      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Key requirements</h3>
                       {hasClearances && (
                         <div>
                           <h4 className="font-semibold text-slate-700 mb-1.5">Clearances required</h4>
