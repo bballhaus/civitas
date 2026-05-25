@@ -4,6 +4,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { addCapability } from "@/db/queries/profile";
+import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
 
 export async function POST(request: Request) {
   const auth = await getAuthenticatedUser(request);
@@ -21,6 +22,19 @@ export async function POST(request: Request) {
     }
 
     const row = await addCapability({ userId: auth.userId, value, canonicalId });
+
+    // Embed the new capability so the v2 matcher can score it. Same
+    // fail-soft pattern as onboarding.
+    try {
+      await refreshProfileEmbeddings(auth.userId);
+    } catch (err) {
+      if (err instanceof EmbeddingConfigError) {
+        console.warn("[capabilities] skipping embed — VOYAGE_API_KEY not set");
+      } else {
+        console.error("[capabilities] embed refresh failed:", err);
+      }
+    }
+
     return NextResponse.json(row, { status: 201 });
   } catch (err) {
     console.error("Add capability error:", err);

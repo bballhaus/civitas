@@ -14,7 +14,10 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
+
+import requests
 
 from webscraping.v2.config import (
     S3_BUCKET,
@@ -228,6 +231,41 @@ def upload_manifest(s3, source_id: str, source_name: str, events: list[EnrichedE
     logger.info(f"Uploaded manifest: {key} ({open_count} open, {closed_count} closed, {len(events)} total)")
 
 
+def notify_rfp_cache_sync(source_id: str) -> None:
+    """Fire-and-forget: tell the Next.js app to pull this source's manifest
+    into Postgres and refresh Voyage embeddings for any new rows.
+
+    The scrape is the source of truth; this call just keeps the relational
+    cache and embedding index in sync. Failures are logged and swallowed —
+    a transient sync miss self-heals on the next batch.
+
+    Requires CIVITAS_APP_ORIGIN + CIVITAS_CRON_SECRET in the Lambda env.
+    Both unset = silently skip (e.g. local CLI runs).
+    """
+    origin = os.environ.get("CIVITAS_APP_ORIGIN")
+    secret = os.environ.get("CIVITAS_CRON_SECRET")
+    if not origin or not secret:
+        logger.debug("rfp_cache sync skipped: CIVITAS_APP_ORIGIN/SECRET not set")
+        return
+    url = origin.rstrip("/") + "/api/cron/sync-rfp-cache"
+    try:
+        resp = requests.post(
+            url,
+            json={"source_id": source_id},
+            headers={"Authorization": f"Bearer {secret}"},
+            timeout=10,
+        )
+        if resp.status_code >= 300:
+            logger.warning(
+                "rfp_cache sync returned %s for %s: %s",
+                resp.status_code, source_id, resp.text[:200],
+            )
+        else:
+            logger.info("rfp_cache sync queued for %s", source_id)
+    except Exception as e:
+        logger.warning("rfp_cache sync request failed for %s: %s", source_id, e)
+
+
 def upload_legacy_format(s3, events: list[EnrichedEvent], enrichments: dict):
     """Write legacy all_events.json + attachment_extractions.json for backward compat."""
     # Convert enriched events back to legacy format
@@ -354,6 +392,9 @@ async def run_site(
         if site_id == "caleprocure":
             open_events = [e for e in merged_events if e.status == EventStatus.OPEN]
             upload_legacy_format(s3, open_events, enrichments)
+
+        # Push this source into Postgres + refresh Voyage embeddings.
+        notify_rfp_cache_sync(config.site_id)
 
         enriched_events = merged_events
 
@@ -483,6 +524,9 @@ async def run_site_batch(
     if site_id == "caleprocure":
         open_events = [e for e in all_events if e.status == EventStatus.OPEN]
         upload_legacy_format(s3, open_events, enrichments)
+
+    # Push this source into Postgres + refresh Voyage embeddings.
+    notify_rfp_cache_sync(config.site_id)
 
     return {"events_scraped": len(raw_events), "total_events": total_events}
 
