@@ -7,7 +7,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const token = (body.token || "").trim();
-    const username = (body.username || "").trim();
+    const username = (body.username || "").trim().toLowerCase();
     const newPassword = body.new_password || "";
 
     if (!token || !username || !newPassword) {
