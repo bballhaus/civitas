@@ -1431,11 +1431,14 @@ export default function RFPDetailPage() {
               <svg className={`w-4 h-4 text-slate-400 transition-transform ${aboutRfpOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
             {aboutRfpOpen && (() => {
-              const hasDeliverables = (rfp.deliverables?.length ?? 0) > 0;
+              // Deliverables and evaluation criteria intentionally omitted —
+              // the AI requirements summary above already covers both, with
+              // Deliverables explicitly prioritized in the prompt as the most
+              // important bullet list. The fields below stay as chips because
+              // chip form is scannable in a way prose isn't.
               const hasClearances = (rfp.clearancesRequired?.length ?? 0) > 0;
               const hasSetAsides = (rfp.setAsideTypes?.length ?? 0) > 0;
-              const hasEvalCriteria = (rfp.evaluationCriteria?.length ?? 0) > 0;
-              const anyKeyRequirement = hasDeliverables || hasClearances || hasSetAsides || hasEvalCriteria;
+              const anyKeyRequirement = hasClearances || hasSetAsides;
               return (
                 <>
                   {requirementsSummaryLoading && !requirementsSummary ? (
@@ -1462,17 +1465,6 @@ export default function RFPDetailPage() {
                   )}
                   {anyKeyRequirement && (
                     <div className="mt-5 pt-5 border-t border-slate-200 space-y-4 text-sm">
-                      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Key requirements</h3>
-                      {hasDeliverables && (
-                        <div>
-                          <h4 className="font-semibold text-slate-700 mb-1.5">Deliverables</h4>
-                          <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
-                            {rfp.deliverables!.slice(0, 10).map((d, i) => (
-                              <li key={i}>{d}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
                       {hasClearances && (
                         <div>
                           <h4 className="font-semibold text-slate-700 mb-1.5">Clearances required</h4>
@@ -1495,16 +1487,6 @@ export default function RFPDetailPage() {
                               </span>
                             ))}
                           </div>
-                        </div>
-                      )}
-                      {hasEvalCriteria && (
-                        <div>
-                          <h4 className="font-semibold text-slate-700 mb-1.5">Evaluation criteria</h4>
-                          <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
-                            {rfp.evaluationCriteria!.slice(0, 8).map((c, i) => (
-                              <li key={i}>{c}</li>
-                            ))}
-                          </ul>
                         </div>
                       )}
                     </div>
