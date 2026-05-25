@@ -4,6 +4,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { addSpecialty } from "@/db/queries/profile";
+import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
 
 export async function POST(request: Request) {
   const auth = await getAuthenticatedUser(request);
@@ -33,6 +34,19 @@ export async function POST(request: Request) {
       weight: weight ?? "primary",
       canonicalId,
     });
+
+    // Embed the new specialty so the v2 matcher can score it. Same
+    // fail-soft pattern as onboarding — a Voyage outage or missing key
+    // shouldn't block adding the specialty.
+    try {
+      await refreshProfileEmbeddings(auth.userId);
+    } catch (err) {
+      if (err instanceof EmbeddingConfigError) {
+        console.warn("[specialties] skipping embed — VOYAGE_API_KEY not set");
+      } else {
+        console.error("[specialties] embed refresh failed:", err);
+      }
+    }
 
     return NextResponse.json(row, { status: 201 });
   } catch (err) {

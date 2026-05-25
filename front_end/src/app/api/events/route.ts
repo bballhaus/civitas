@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getS3Client, getBucket, getObjectJSON } from "@/lib/s3";
 import { config } from "@/lib/config";
-import { mirrorManifestsToCache } from "@/lib/rfp-cache-populator";
 
 // All RFP data flows through the v2 manifests written by the scraping
 // pipeline (webscraping/v2). Each scraper emits a manifest at
@@ -88,14 +87,9 @@ async function loadV2Manifests(): Promise<V2Manifest[]> {
 
     v2Cache = { manifests, timestamp: now };
 
-    // Architecture-v2 § 11: /api/events is S3-backed but populates rfp_cache
-    // on read so the v2 matcher always has fresh data. Fire-and-forget so
-    // we don't slow down the events response; errors get logged but don't
-    // block the read path. The CLI `npm run rfp-cache:populate` remains
-    // the source of truth for cold-start backfills.
-    void mirrorManifestsToCache(manifests).catch((err) => {
-      console.warn("[events] rfp_cache write-through failed:", err);
-    });
+    // rfp_cache mirroring now happens at scrape time: the Lambda calls
+    // /api/cron/sync-rfp-cache after each batch, which upserts rows and
+    // refreshes embeddings. The read path no longer needs the workaround.
 
     return manifests;
   } catch (err) {
