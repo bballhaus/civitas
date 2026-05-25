@@ -17,6 +17,10 @@ export interface OnboardingSnapshot {
   // Multi-select: contractor may have experience at several tiers. Values:
   // 'none' | 'local' | 'state' | 'federal'.
   govExperience: string[] | null;
+  // Federal NAICS codes the contractor self-identifies with (e.g. '561720').
+  // Drives the direct code-overlap score in the matcher and feeds NAICS
+  // titles into the RFP embedding text for semantic capability matching.
+  naicsCodes: string[] | null;
   specialties: { id: string; value: string; weight: string }[];
   capabilities: { id: string; value: string }[];
   licenses: {

@@ -22,23 +22,26 @@ import { recordEvent } from "@/lib/event-log";
 import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
 
 // Maps spec § 5 step numbers to the readiness check that "moves past" that
-// step. Step 9 is the explicit completion marker (onboarded_at).
+// step. Step 10 is the explicit completion marker (onboarded_at). Step 4
+// (NAICS) is optional and never blocks resume — users who skip it land on
+// the next required step.
 function computeNextStep(profile: Awaited<ReturnType<typeof getFullProfile>>): number {
   if (!profile) return 1;
-  if (profile.onboardedAt) return 9; // already done
+  if (profile.onboardedAt) return 10; // already done
   if (!profile.companyName) return 1;
   if (profile.specialties.length === 0) return 2;
   if (profile.capabilities.length === 0) return 3;
-  if (profile.licenses.length === 0) return 4;
-  if (profile.certifications.length === 0) return 5;
-  if (profile.workAreas.length === 0) return 6;
+  // Step 4 = NAICS, optional. Skip straight to licenses.
+  if (profile.licenses.length === 0) return 5;
+  if (profile.certifications.length === 0) return 6;
+  if (profile.workAreas.length === 0) return 7;
   if (profile.scopeMinUsd == null && profile.scopeMaxUsd == null && !profile.durationPref) {
-    return 7;
+    return 8;
   }
   const hasPrime = (profile.primeVsSub?.length ?? 0) > 0;
   const hasGov = (profile.govExperience?.length ?? 0) > 0;
-  if (!hasPrime && !hasGov) return 8;
-  return 9; // ready to mark complete
+  if (!hasPrime && !hasGov) return 9;
+  return 10; // ready to mark complete
 }
 
 export async function GET(request: Request) {
@@ -72,6 +75,7 @@ export async function GET(request: Request) {
         complexityPref: profile.complexityPref,
         primeVsSub: profile.primeVsSub,
         govExperience: profile.govExperience,
+        naicsCodes: profile.naicsCodes,
         specialties: profile.specialties.map((s) => ({ id: s.id, value: s.value, weight: s.weight })),
         capabilities: profile.capabilities.map((c) => ({ id: c.id, value: c.value })),
         licenses: profile.licenses.map((l) => ({

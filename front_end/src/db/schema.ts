@@ -79,6 +79,10 @@ export const profiles = pgTable(
     // (e.g. local + state) without implying the whole hierarchy. Values:
     // 'none' | 'local' | 'state' | 'federal'. Empty array == not answered.
     govExperience: text("gov_experience").array(),
+    // Multi-select: federal NAICS codes the contractor self-identifies with.
+    // Codes only (e.g. '561720'); descriptions are looked up from the static
+    // NAICS_MAP catalog at scoring/embedding time.
+    naicsCodes: text("naics_codes").array(),
     // vendor identity (links to webscraping vendor index)
     vendorFingerprint: text("vendor_fingerprint"),
     vendorResolvedAt: timestamp("vendor_resolved_at", { withTimezone: true }),

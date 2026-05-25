@@ -29,6 +29,7 @@ const PATCHABLE_FIELDS = [
   "complexityPref",
   "primeVsSub",
   "govExperience",
+  "naicsCodes",
   "dailyRoundupEnabled",
   "dailyRoundupTimezone",
 ] as const;

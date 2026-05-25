@@ -112,15 +112,24 @@ export interface MatchResult {
 // don't penalize the total.
 // ---------------------------------------------------------------------------
 
+// Weights sum to 1.0. Any category with a null score is dropped from both
+// numerator AND denominator so unknown categories don't penalize the total.
+//
+// NAICS overlap (new) replaces the previous `description` bag-of-tokens
+// scorer, which was double-counting against the RFP embedding (the
+// description is already part of buildRfpEmbeddingText) and offered almost
+// no semantic value on its own. Specialty was rebalanced down to 0.20 and
+// capability up to 0.20 so that semantic capability matching — now
+// augmented by NAICS titles in the RFP embedding text — pulls more weight.
 const WEIGHTS: Record<string, number> = {
-  specialty: 0.3,
-  capability: 0.15,
+  specialty: 0.2,
+  capability: 0.2,
+  naics: 0.1,
   scope: 0.15,
   complexity: 0.1,
   agency: 0.1,
   location: 0.1,
   duration: 0.05,
-  description: 0.05,
 };
 
 // ---------------------------------------------------------------------------
@@ -137,12 +146,12 @@ export function matchV2(profile: FullProfile, rfp: RfpCacheRow): MatchResult {
   const primeBreakdown: CategoryBreakdown[] = [
     scoreSpecialty(profile, rfp, dataQuality),
     scoreCapability(profile, rfp, dataQuality),
+    scoreNaicsOverlap(profile, rfp),
     scoreScope(profile, rfp),
     scoreDuration(profile, rfp),
     scoreComplexity(profile, rfp),
     scoreAgency(profile, rfp),
     scoreLocation(profile, rfp),
-    scoreDescription(profile, rfp, dataQuality),
   ];
 
   const softBonus = softCertBonus(profile, rfp);
@@ -628,30 +637,50 @@ function scoreLocation(profile: FullProfile, rfp: RfpCacheRow): CategoryBreakdow
   return { category: "Location", status: "missing", score: 0, weight: WEIGHTS.location, detail: `${rfp.location} not in any of your work areas.` };
 }
 
-function scoreDescription(
-  profile: FullProfile,
-  rfp: RfpCacheRow,
-  dq: DataQuality,
-): CategoryBreakdown {
-  // Catch-all bag-of-tokens overlap against the description. Low weight on
-  // purpose — descriptions are long and noisy.
-  if (!rfp.description) return neutral("Description", "No description available.");
-  const desc = rfp.description.toLowerCase();
-  const profileTokens = [
-    ...profile.specialties.map((s) => s.value),
-    ...profile.capabilities.map((c) => c.value),
-  ];
-  if (profileTokens.length === 0) return neutral("Description", "Profile lacks tokens to compare.");
-  const hits = profileTokens.filter((t) => desc.includes(t.toLowerCase()));
-  if (hits.length === 0) return weak("Description", "No keyword overlap.");
-  const rate = hits.length / profileTokens.length;
-  const adjusted = rate * semanticConfidence(rfp, dq);
+// Direct NAICS code overlap — hard signal, not semantically dampened. When
+// both sides expose NAICS we score by coverage (matches / rfp codes) so
+// covering all of an RFP's codes maxes the component. The official NAICS
+// titles are also folded into the RFP embedding text (see embeddings.ts) so
+// semantic capability matching benefits even when the contractor hasn't
+// added NAICS to their profile — but this scorer rewards explicit overlap.
+function scoreNaicsOverlap(profile: FullProfile, rfp: RfpCacheRow): CategoryBreakdown {
+  const rfpCodes = rfp.naicsCodes ?? [];
+  const profileCodes = profile.naicsCodes ?? [];
+  if (rfpCodes.length === 0) {
+    return neutral("NAICS", "RFP doesn't list NAICS codes.");
+  }
+  if (profileCodes.length === 0) {
+    return neutral(
+      "NAICS",
+      "Add NAICS codes to your profile to score direct overlap with RFPs.",
+    );
+  }
+  const profileSet = new Set(profileCodes);
+  const matches = rfpCodes.filter((c) => profileSet.has(c));
+  if (matches.length === 0) {
+    return {
+      category: "NAICS",
+      status: "missing",
+      score: 0,
+      weight: WEIGHTS.naics,
+      detail: `No code overlap (RFP cites ${rfpCodes.join(", ")}).`,
+      rfpPhrase: rfpCodes.join(", "),
+    };
+  }
+  const coverage = matches.length / rfpCodes.length;
+  const status: CategoryStatus =
+    coverage >= 0.66 ? "strong" : coverage >= 0.33 ? "partial" : "weak";
+  // Floor at 0.6 so even a single overlap is a meaningful score — direct
+  // NAICS code agreement is high-confidence industry alignment.
+  const score = Math.max(0.6, coverage);
   return {
-    category: "Description",
-    status: adjusted >= 0.4 ? "strong" : adjusted >= 0.2 ? "partial" : "weak",
-    score: Math.max(0.1, Math.min(1, adjusted)),
-    weight: WEIGHTS.description,
-    detail: `${hits.length} of your profile tokens appear in the description.`,
+    category: "NAICS",
+    status,
+    score,
+    weight: WEIGHTS.naics,
+    detail: `${matches.length} of ${rfpCodes.length} RFP NAICS codes match your profile (${matches.join(", ")}).`,
+    rfpPhrase: rfpCodes.join(", "),
+    profileClaim: matches.join(", "),
   };
 }
 
@@ -755,8 +784,8 @@ function scoreAsSub(
   const subCapability = { ...scoreCapability(profile, rfp, dq), weight: 0.2 };
   const subLocation = { ...scoreLocation(profile, rfp), weight: 0.2 };
   const subAgency = { ...scoreAgency(profile, rfp), weight: 0.05 };
-  const subDescription = { ...scoreDescription(profile, rfp, dq), weight: 0.1 };
-  const breakdown = [subSpecialty, subCapability, subLocation, subAgency, subDescription];
+  const subNaics = { ...scoreNaicsOverlap(profile, rfp), weight: 0.1 };
+  const breakdown = [subSpecialty, subCapability, subLocation, subAgency, subNaics];
 
   const score = clamp01to100(aggregateWeighted(breakdown));
   // Eligible if any scored category is at least partial — the sub track

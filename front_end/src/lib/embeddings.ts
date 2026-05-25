@@ -9,7 +9,7 @@
 // and the volumes are tiny enough that adding an SDK is overkill (~$0.001 to
 // embed a full profile, ~$0.36 for a full RFP catalog refresh per § 8).
 
-import { eq, isNull, or } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   specialties,
@@ -20,6 +20,7 @@ import {
   type Capability,
   type RfpCacheRow,
 } from "@/db/schema";
+import { NAICS_MAP } from "@/data/filter-options";
 
 const VOYAGE_URL = "https://api.voyageai.com/v1/embeddings";
 const MODEL = "voyage-3-large";
@@ -223,6 +224,17 @@ export function buildRfpEmbeddingText(rfp: RfpCacheRow): string {
   if (rfp.deliverables && rfp.deliverables.length > 0) {
     parts.push(rfp.deliverables.join(" "));
   }
+  // Fold the official NAICS titles into the embedding so contractor
+  // specialty/capability vectors (which describe what the contractor *does*)
+  // can semantically match against the industry vocabulary RFPs cite — even
+  // when the code itself isn't on the contractor profile. Bare numeric codes
+  // would be near-noise in a sentence embedder.
+  if (rfp.naicsCodes && rfp.naicsCodes.length > 0) {
+    const titles = rfp.naicsCodes
+      .map((code) => NAICS_MAP[code])
+      .filter((title): title is string => Boolean(title));
+    if (titles.length > 0) parts.push(titles.join(" "));
+  }
   // The attachment-rollup summary lives in `raw` for now (no dedicated column
   // yet). Pull it when it's there — Cal eProcure has it; others don't.
   const raw = rfp.raw as Record<string, unknown> | null | undefined;
@@ -234,15 +246,28 @@ export function buildRfpEmbeddingText(rfp: RfpCacheRow): string {
 }
 
 /**
- * Compute and store embeddings for any RFP cache rows missing one.
- * Returns the count of embedded rows. Idempotent.
+ * Compute and store embeddings for RFP cache rows.
+ *
+ * Default behaviour (force=false) embeds only rows where embedding IS NULL —
+ * cheap, idempotent, safe to call on every scrape.
+ *
+ * With force=true, re-embeds ALL rows in the cache regardless of existing
+ * vector. Use after changing buildRfpEmbeddingText (e.g. when adding new
+ * fields like NAICS titles) so existing rows pick up the new format. Run
+ * via scripts/embed-rfp-cache-rebuild.ts, not from a cron — full rebuilds
+ * burn through the Voyage quota.
  */
-export async function refreshRfpEmbeddings(maxRows = 500): Promise<number> {
-  const rows = await db
-    .select()
-    .from(rfpCache)
-    .where(or(isNull(rfpCache.embedding)))
-    .limit(maxRows);
+export async function refreshRfpEmbeddings(
+  maxRows = 500,
+  options: { force?: boolean } = {},
+): Promise<number> {
+  const rows = options.force
+    ? await db.select().from(rfpCache).limit(maxRows)
+    : await db
+        .select()
+        .from(rfpCache)
+        .where(isNull(rfpCache.embedding))
+        .limit(maxRows);
 
   if (rows.length === 0) return 0;
 

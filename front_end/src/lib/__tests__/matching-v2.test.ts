@@ -28,6 +28,7 @@ function makeProfile(overrides: Partial<FullProfile> = {}): FullProfile {
     complexityPref: "any",
     primeVsSub: ["prime", "sub"],
     govExperience: ["local"],
+    naicsCodes: null,
     vendorFingerprint: null,
     vendorResolvedAt: null,
     completenessScore: 80,
