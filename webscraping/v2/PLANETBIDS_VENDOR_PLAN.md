@@ -1,7 +1,17 @@
 # PlanetBids Vendor Registration — Plan
 
-**Goal:** Register the shared Civitas vendor account on each of the 41
-PlanetBids agency portals in `PLANETBIDS_AGENCIES`.
+> **Status (2026-05-25):** **Paused.** PlanetBids-sourced RFPs are hidden
+> from all user-facing surfaces (matches list, RFP detail, saved/tracker,
+> daily roundup digest) via `front_end/src/lib/rfp-source-visibility.ts`.
+> Scrapers continue to run on the 12h schedule and write to `rfp_cache`,
+> so the data is preserved for resume. Resuming PB on the site requires a
+> business conversation with PlanetBids about per-bid attachment access
+> (see Risks & open questions below) — without their `*`-gated docs we
+> can't reliably score certifications / bonding / scope, so showing PB
+> matches would mislead users.
+
+**Goal (when resumed):** Register the shared Civitas vendor account on
+each of the 41 PlanetBids agency portals in `PLANETBIDS_AGENCIES`.
 
 **Important caveat (must read first).** Per-agency vendor registration
 does **not** unlock private RFP PDFs on PlanetBids. Document gating is
