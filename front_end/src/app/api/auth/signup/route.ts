@@ -48,7 +48,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const username = (body.username || "").trim();
+    const username = (body.username || "").trim().toLowerCase();
     const password = body.password || "";
     const email = (body.email || "").trim();
 

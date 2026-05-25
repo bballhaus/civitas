@@ -1604,6 +1604,10 @@ function RFPDetailPanel({
   const [proposalFeedback, setProposalFeedback] = useState("");
   const [proposalDropdownOpen, setProposalDropdownOpen] = useState(false);
   const [feedbackReason, setFeedbackReason] = useState("");
+  const [matchSummaryOpen, setMatchSummaryOpen] = useState(false);
+  const [aboutRfpOpen, setAboutRfpOpen] = useState(false);
+  const [scoreBreakdownOpen, setScoreBreakdownOpen] = useState(false);
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
 
   useEffect(() => {
     if (!rfp.id) return;
@@ -2249,11 +2253,22 @@ function RFPDetailPanel({
             </div>
             <div className="min-w-0 flex-1 md:border-l md:border-slate-200 md:pl-6">
               <div className={`rounded-lg border-2 ${match.disqualified ? "border-red-200 bg-red-50/30" : "border-blue-200 bg-blue-50"} p-4`}>
-                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Match Summary</h3>
-                {isLoadingSummary && <span className="text-xs text-slate-400 animate-pulse">Summarizing…</span>}
-                <p className="text-sm text-slate-700 leading-relaxed mt-1">{summary}</p>
-                {summaryError && (
-                  <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Using rule-based summary.</p>
+                <button
+                  type="button"
+                  onClick={() => setMatchSummaryOpen((o) => !o)}
+                  className="w-full flex items-center justify-between gap-2 text-left"
+                >
+                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Match Summary</h3>
+                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform ${matchSummaryOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </button>
+                {matchSummaryOpen && (
+                  <div className="mt-2">
+                    {isLoadingSummary && <span className="text-xs text-slate-400 animate-pulse">Summarizing…</span>}
+                    <p className="text-sm text-slate-700 leading-relaxed mt-1">{summary}</p>
+                    {summaryError && (
+                      <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Using rule-based summary.</p>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -2262,25 +2277,42 @@ function RFPDetailPanel({
 
         {/* About this RFP — in a contained text box */}
         <div className="p-5 md:p-6 border-b border-slate-100">
-          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">About this RFP</h3>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            {requirementsSummaryLoading ? (
-              <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
-            ) : requirementsSummary ? (
-              <MarkdownContent content={requirementsSummary} />
-            ) : (
-              <p className="text-sm text-slate-700 leading-relaxed">{rfp.description || "—"}</p>
-            )}
-            {requirementsSummaryError && (
-              <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => setAboutRfpOpen((o) => !o)}
+            className="w-full flex items-center justify-between gap-2 text-left mb-2"
+          >
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">About this RFP</h3>
+            <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform ${aboutRfpOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+          </button>
+          {aboutRfpOpen && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              {requirementsSummaryLoading ? (
+                <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
+              ) : requirementsSummary ? (
+                <MarkdownContent content={requirementsSummary} />
+              ) : (
+                <p className="text-sm text-slate-700 leading-relaxed">{rfp.description || "—"}</p>
+              )}
+              {requirementsSummaryError && (
+                <p className="mt-2 text-xs text-amber-600">AI summary unavailable. Showing original description.</p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Score Breakdown */}
         {match.breakdown.length > 0 && !match.disqualified && (
           <div className="p-5 md:p-6 border-b border-slate-100">
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Score Breakdown</h3>
+            <button
+              type="button"
+              onClick={() => setScoreBreakdownOpen((o) => !o)}
+              className="w-full flex items-center justify-between gap-2 text-left mb-2"
+            >
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Score Breakdown</h3>
+              <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform ${scoreBreakdownOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {scoreBreakdownOpen && (
             <div className="space-y-3">
               {match.breakdown.map((b, i) => {
                 const isNeutral = b.status === "neutral";
@@ -2369,23 +2401,33 @@ function RFPDetailPanel({
                 );
               })}
             </div>
+            )}
           </div>
         )}
 
         {/* Capabilities Analysis — in a contained text box */}
         <div className="p-5 md:p-6 border-b border-slate-100">
-          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Capabilities Analysis</h3>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            {capabilitiesAnalysisLoading ? (
-              <p className="text-slate-500 text-sm animate-pulse">Analyzing capabilities against requirements…</p>
-            ) : capabilitiesAnalysis ? (
-              <MarkdownContent content={capabilitiesAnalysis} />
-            ) : capabilitiesAnalysisError ? (
-              <p className="text-xs text-amber-600">Capabilities analysis unavailable.</p>
-            ) : (
-              <p className="text-slate-500 text-sm">No company profile available for analysis.</p>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => setCapabilitiesOpen((o) => !o)}
+            className="w-full flex items-center justify-between gap-2 text-left mb-2"
+          >
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Capabilities Analysis</h3>
+            <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform ${capabilitiesOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+          </button>
+          {capabilitiesOpen && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              {capabilitiesAnalysisLoading ? (
+                <p className="text-slate-500 text-sm animate-pulse">Analyzing capabilities against requirements…</p>
+              ) : capabilitiesAnalysis ? (
+                <MarkdownContent content={capabilitiesAnalysis} />
+              ) : capabilitiesAnalysisError ? (
+                <p className="text-xs text-amber-600">Capabilities analysis unavailable.</p>
+              ) : (
+                <p className="text-slate-500 text-sm">No company profile available for analysis.</p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Disqualifier banner */}
