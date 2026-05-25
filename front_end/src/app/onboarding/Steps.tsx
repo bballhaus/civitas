@@ -221,13 +221,12 @@ function NaicsPicker({
     // Store the title so the matcher's embedding sees semantic content and
     // substring fallback finds matches against RFP descriptions.
     onPick(entry.title);
-    setQuery("");
-    // Intentionally keep the dropdown open so the user can rapid-add several
-    // codes without re-clicking the input. The empty query reverts the list
-    // to the default head of NAICS_ENTRIES. Reset the highlight so Enter
-    // doesn't pick whatever row was last hovered. setOpen(true) is
-    // defensive — guards against a focus race after the parent's async
-    // refresh.
+    // Keep the query intact so the user can rapid-add several codes from the
+    // same search (e.g. typing "construction" once and picking three matches
+    // without re-typing). The picked entry will show "Added" in the list.
+    // Reset highlight to the top so Enter doesn't re-fire on the just-added
+    // row, and re-focus the input as a defensive guard against focus races
+    // after the parent's async refresh.
     setHighlighted(0);
     setOpen(true);
     inputRef.current?.focus();
@@ -247,7 +246,11 @@ function NaicsPicker({
     } else if (e.key === "Enter") {
       if (open && filtered[highlighted]) {
         e.preventDefault();
-        pick(filtered[highlighted]);
+        const entry = filtered[highlighted];
+        // Mirror the click path: skip already-picked rows instead of
+        // re-firing onPick (which would duplicate or no-op).
+        if (selectedValues?.has(entry.title.toLowerCase())) return;
+        pick(entry);
       }
     } else if (e.key === "Escape") {
       setOpen(false);
@@ -293,9 +296,10 @@ function NaicsPicker({
                     e.preventDefault();
                     if (isAlreadyPicked) {
                       // Already in the user's profile — picking again would
-                      // either duplicate or no-op depending on backend; we
-                      // just close instead of confusing them.
-                      setOpen(false);
+                      // either duplicate or no-op depending on backend. Skip
+                      // the add but keep the dropdown and query intact so the
+                      // user can continue picking from the same search.
+                      inputRef.current?.focus();
                       return;
                     }
                     pick(entry);
@@ -1054,9 +1058,10 @@ export function StepGeography({ snapshot }: StepProps) {
 
 // City autocomplete combobox — same UX pattern as NaicsPicker but
 // against the 481-entry CA cities list. Picking a city posts immediately
-// (uses the hard/radius state from the parent), then clears the query
-// and keeps the dropdown open so users can rapid-add several. No cap
-// on results — the dropdown body scrolls so the whole list is reachable.
+// (uses the hard/radius state from the parent) and keeps the dropdown
+// open with the query intact so users can rapid-add several matches from
+// the same search. No cap on results — the dropdown body scrolls so the
+// whole list is reachable.
 
 function CityPicker({
   selectedCities,
@@ -1113,7 +1118,10 @@ function CityPicker({
 
   const pick = (city: string) => {
     void onPick(city);
-    setQuery("");
+    // Keep the query intact so the user can rapid-add several cities from the
+    // same search without re-typing. The picked entry will show "Added" in
+    // the list. Reset highlight to the top so Enter doesn't re-fire on the
+    // just-added row.
     setHighlighted(0);
     setOpen(true);
     inputRef.current?.focus();
@@ -1133,7 +1141,11 @@ function CityPicker({
     } else if (e.key === "Enter") {
       if (open && filtered[highlighted]) {
         e.preventDefault();
-        pick(filtered[highlighted]);
+        const city = filtered[highlighted];
+        // Mirror the click path: skip already-picked cities instead of
+        // re-firing onPick.
+        if (selectedCities.has(city.toLowerCase())) return;
+        pick(city);
       }
     } else if (e.key === "Escape") {
       setOpen(false);
@@ -1172,7 +1184,9 @@ function CityPicker({
                   onMouseDown={(e) => {
                     e.preventDefault();
                     if (isAlreadyPicked) {
-                      setOpen(false);
+                      // Skip the add but keep the dropdown and query intact
+                      // so the user can continue picking from the same search.
+                      inputRef.current?.focus();
                       return;
                     }
                     pick(city);
