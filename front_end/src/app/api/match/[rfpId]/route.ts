@@ -7,12 +7,13 @@
 // and the explanation copy.
 
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/db/client";
 import { rfpCache } from "@/db/schema";
 import { getFullProfile } from "@/db/queries/profile";
 import { matchV2 } from "@/lib/matching-v2";
+import { visibleRfpSourceClause } from "@/lib/rfp-source-visibility";
 
 export async function GET(
   request: Request,
@@ -26,7 +27,11 @@ export async function GET(
   const { rfpId } = await context.params;
   const [profile, rfpRow] = await Promise.all([
     getFullProfile(auth.userId),
-    db.select().from(rfpCache).where(eq(rfpCache.id, rfpId)).limit(1),
+    db
+      .select()
+      .from(rfpCache)
+      .where(and(eq(rfpCache.id, rfpId), visibleRfpSourceClause()))
+      .limit(1),
   ]);
   if (!profile) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });

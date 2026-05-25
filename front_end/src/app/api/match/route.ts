@@ -14,12 +14,13 @@
 //     job that persists scored results into match_state.
 
 import { NextResponse } from "next/server";
-import { asc, gte } from "drizzle-orm";
+import { and, asc, gte } from "drizzle-orm";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/db/client";
 import { rfpCache } from "@/db/schema";
 import { getFullProfile } from "@/db/queries/profile";
 import { matchV2 } from "@/lib/matching-v2";
+import { visibleRfpSourceClause } from "@/lib/rfp-source-visibility";
 
 const DEFAULT_LIMIT = 1000;
 const MAX_LIMIT = 1000;
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
   const rows = await db
     .select()
     .from(rfpCache)
-    .where(gte(rfpCache.deadline, now))
+    .where(and(gte(rfpCache.deadline, now), visibleRfpSourceClause()))
     .orderBy(asc(rfpCache.deadline))
     .limit(limit);
 
