@@ -53,6 +53,11 @@ export default function RFPDetailPage() {
   const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
   const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
   const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
+  const [matchSummaryOpen, setMatchSummaryOpen] = useState(false);
+  const [scoreBreakdownOpen, setScoreBreakdownOpen] = useState(false);
+  const [aboutRfpOpen, setAboutRfpOpen] = useState(false);
+  const [keyRequirementsOpen, setKeyRequirementsOpen] = useState(false);
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
   const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
   const [savedRfpIds, setSavedRfpIds] = useState<Set<string>>(new Set());
@@ -1125,23 +1130,30 @@ export default function RFPDetailPage() {
           {/* Groq-generated summary */}
           <div className="p-6 md:p-8 border-b border-slate-100">
             <div className={`rounded-xl border-2 ${rfp.match.disqualified ? "border-red-200" : "border-blue-200"} bg-white p-5`}>
-              <div className="flex items-start justify-between gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => setMatchSummaryOpen((o) => !o)}
+                className="w-full flex items-center justify-between gap-2 text-left"
+              >
                 <h2 className="text-sm font-bold text-slate-900">
                   {rfp.match.disqualified ? "Match Analysis" : "Why this is a good match"}
                 </h2>
-                {summaryLoading ? (
-                  <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
-                ) : (
-                  <svg className={`w-5 h-5 ${rfp.match.disqualified ? "text-red-400" : "text-blue-500"} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-              </div>
-              <p className="text-slate-700 leading-relaxed">{displaySummary}</p>
-              {summaryError && (
-                <p className="mt-2 text-xs text-amber-600">
-                  AI summary unavailable. Showing rule-based summary.
-                </p>
+                <div className="flex items-center gap-2 shrink-0">
+                  {summaryLoading && (
+                    <span className="text-xs text-slate-400 animate-pulse">AI summarizing…</span>
+                  )}
+                  <svg className={`w-4 h-4 text-slate-400 transition-transform ${matchSummaryOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </div>
+              </button>
+              {matchSummaryOpen && (
+                <div className="mt-3">
+                  <p className="text-slate-700 leading-relaxed">{displaySummary}</p>
+                  {summaryError && (
+                    <p className="mt-2 text-xs text-amber-600">
+                      AI summary unavailable. Showing rule-based summary.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -1149,7 +1161,15 @@ export default function RFPDetailPage() {
           {/* Score Breakdown */}
           {rfp.match.breakdown.length > 0 && !rfp.match.disqualified && (
             <div className="p-6 md:p-8 border-b border-slate-100">
-              <h2 className="text-sm font-bold text-slate-900 mb-3">Score Breakdown</h2>
+              <button
+                type="button"
+                onClick={() => setScoreBreakdownOpen((o) => !o)}
+                className="w-full flex items-center justify-between gap-2 text-left mb-3"
+              >
+                <h2 className="text-sm font-bold text-slate-900">Score Breakdown</h2>
+                <svg className={`w-4 h-4 text-slate-400 transition-transform ${scoreBreakdownOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {scoreBreakdownOpen && (
               <div className="space-y-3">
                 {rfp.match.breakdown.filter((b) => b.maxPoints > 0 || b.status !== "neutral").map((b, i) => {
                   const pct = b.maxPoints > 0 ? (b.points / b.maxPoints) * 100 : 0;
@@ -1231,6 +1251,7 @@ export default function RFPDetailPage() {
                   );
                 })}
               </div>
+              )}
             </div>
           )}
 
@@ -1400,28 +1421,39 @@ export default function RFPDetailPage() {
               has failed. Long-form context for what the contract actually asks
               for, beyond the chip-sized industry/location labels at the top. */}
           <div className="p-6 md:p-8 border-b border-slate-100">
-            <h2 className="text-sm font-bold text-slate-900 mb-3">About this RFP</h2>
-            {requirementsSummaryLoading && !requirementsSummary ? (
-              <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
-            ) : requirementsSummary ? (
-              <MarkdownContent content={requirementsSummary} />
-            ) : rfp.description?.trim() ? (
-              <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                {rfp.description}
-              </p>
-            ) : (
-              <p className="text-slate-500 text-sm">No description available for this RFP.</p>
-            )}
-            {requirementsSummaryError && rfp.description?.trim() && (
-              <p className="mt-2 text-xs text-amber-600">
-                AI summary unavailable. Showing original description.
-              </p>
-            )}
-            {rfp.contractDuration && (
-              <p className="mt-3 text-xs text-slate-500">
-                <span className="font-semibold text-slate-700">Contract duration:</span>{" "}
-                {rfp.contractDuration}
-              </p>
+            <button
+              type="button"
+              onClick={() => setAboutRfpOpen((o) => !o)}
+              className="w-full flex items-center justify-between gap-2 text-left mb-3"
+            >
+              <h2 className="text-sm font-bold text-slate-900">About this RFP</h2>
+              <svg className={`w-4 h-4 text-slate-400 transition-transform ${aboutRfpOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {aboutRfpOpen && (
+              <>
+                {requirementsSummaryLoading && !requirementsSummary ? (
+                  <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
+                ) : requirementsSummary ? (
+                  <MarkdownContent content={requirementsSummary} />
+                ) : rfp.description?.trim() ? (
+                  <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
+                    {rfp.description}
+                  </p>
+                ) : (
+                  <p className="text-slate-500 text-sm">No description available for this RFP.</p>
+                )}
+                {requirementsSummaryError && rfp.description?.trim() && (
+                  <p className="mt-2 text-xs text-amber-600">
+                    AI summary unavailable. Showing original description.
+                  </p>
+                )}
+                {rfp.contractDuration && (
+                  <p className="mt-3 text-xs text-slate-500">
+                    <span className="font-semibold text-slate-700">Contract duration:</span>{" "}
+                    {rfp.contractDuration}
+                  </p>
+                )}
+              </>
             )}
           </div>
 
@@ -1439,7 +1471,15 @@ export default function RFPDetailPage() {
             if (!anyRequirement) return null;
             return (
               <div className="p-6 md:p-8 border-b border-slate-100">
-                <h2 className="text-sm font-bold text-slate-900 mb-3">Key requirements</h2>
+                <button
+                  type="button"
+                  onClick={() => setKeyRequirementsOpen((o) => !o)}
+                  className="w-full flex items-center justify-between gap-2 text-left mb-3"
+                >
+                  <h2 className="text-sm font-bold text-slate-900">Key requirements</h2>
+                  <svg className={`w-4 h-4 text-slate-400 transition-transform ${keyRequirementsOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </button>
+                {keyRequirementsOpen && (
                 <div className="space-y-4 text-sm">
                   {hasDeliverables && (
                     <div>
@@ -1486,6 +1526,7 @@ export default function RFPDetailPage() {
                     </div>
                   )}
                 </div>
+                )}
               </div>
             );
           })()}
@@ -1495,23 +1536,34 @@ export default function RFPDetailPage() {
               strong, partial, or missing. Distinct from the score breakdown
               above: that's deterministic + token-level; this is prose. */}
           <div className="p-6 md:p-8 border-b border-slate-100">
-            <h2 className="text-sm font-bold text-slate-900 mb-3">Capabilities Analysis</h2>
-            {!profileLoaded ? (
-              <p className="text-slate-500 text-sm animate-pulse">Loading profile…</p>
-            ) : !profile ? (
-              <p className="text-slate-500 text-sm">
-                Complete your company profile to see a capabilities analysis.
-              </p>
-            ) : capabilitiesAnalysisLoading && !capabilitiesAnalysis ? (
-              <p className="text-slate-500 text-sm animate-pulse">
-                Analyzing your capabilities against the requirements…
-              </p>
-            ) : capabilitiesAnalysis ? (
-              <MarkdownContent content={capabilitiesAnalysis} />
-            ) : capabilitiesAnalysisError ? (
-              <p className="text-xs text-amber-600">Capabilities analysis unavailable right now.</p>
-            ) : (
-              <p className="text-slate-500 text-sm">No analysis available.</p>
+            <button
+              type="button"
+              onClick={() => setCapabilitiesOpen((o) => !o)}
+              className="w-full flex items-center justify-between gap-2 text-left mb-3"
+            >
+              <h2 className="text-sm font-bold text-slate-900">Capabilities Analysis</h2>
+              <svg className={`w-4 h-4 text-slate-400 transition-transform ${capabilitiesOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {capabilitiesOpen && (
+              <>
+                {!profileLoaded ? (
+                  <p className="text-slate-500 text-sm animate-pulse">Loading profile…</p>
+                ) : !profile ? (
+                  <p className="text-slate-500 text-sm">
+                    Complete your company profile to see a capabilities analysis.
+                  </p>
+                ) : capabilitiesAnalysisLoading && !capabilitiesAnalysis ? (
+                  <p className="text-slate-500 text-sm animate-pulse">
+                    Analyzing your capabilities against the requirements…
+                  </p>
+                ) : capabilitiesAnalysis ? (
+                  <MarkdownContent content={capabilitiesAnalysis} />
+                ) : capabilitiesAnalysisError ? (
+                  <p className="text-xs text-amber-600">Capabilities analysis unavailable right now.</p>
+                ) : (
+                  <p className="text-slate-500 text-sm">No analysis available.</p>
+                )}
+              </>
             )}
           </div>
 
