@@ -157,6 +157,9 @@ export default function RfpDetailPage() {
   const [capabilitiesAnalysis, setCapabilitiesAnalysis] = useState<string | null>(null);
   const [capabilitiesAnalysisLoading, setCapabilitiesAnalysisLoading] = useState(false);
   const [capabilitiesAnalysisError, setCapabilitiesAnalysisError] = useState(false);
+  const [matchSummaryOpen, setMatchSummaryOpen] = useState(false);
+  const [aboutRfpOpen, setAboutRfpOpen] = useState(false);
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
 
   // Save state (server-persisted via match_state). Hydrated from
   // /api/auth/me's saved_rfp_ids snapshot.
@@ -790,56 +793,197 @@ export default function RfpDetailPage() {
             what it did, anchored to the user's profile. Falls back to the
             rule-based summary on failure. */}
         <section className="mb-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
-          <div className="flex items-center justify-between mb-3">
+          <button
+            type="button"
+            onClick={() => setMatchSummaryOpen((o) => !o)}
+            className="w-full flex items-center justify-between gap-2 text-left"
+          >
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
               Match summary
             </h2>
-            {matchSummaryLoading && (
-              <span className="text-xs text-slate-400 animate-pulse">Summarizing…</span>
-            )}
-          </div>
-          {matchSummary ? (
-            <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{matchSummary}</p>
-          ) : matchSummaryLoading ? (
-            <p className="text-sm text-slate-400 animate-pulse">Generating match summary…</p>
-          ) : (
-            <p className="text-sm text-slate-500">{buildRuleBasedSummary(data)}</p>
-          )}
-          {matchSummaryError && (
-            <p className="mt-2 text-xs text-amber-600">
-              AI summary unavailable — showing rule-based summary.
-            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              {matchSummaryLoading && (
+                <span className="text-xs text-slate-400 animate-pulse">Summarizing…</span>
+              )}
+              <svg className={`w-4 h-4 text-slate-400 transition-transform ${matchSummaryOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </div>
+          </button>
+          {matchSummaryOpen && (
+            <div className="mt-3">
+              {matchSummary ? (
+                <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{matchSummary}</p>
+              ) : matchSummaryLoading ? (
+                <p className="text-sm text-slate-400 animate-pulse">Generating match summary…</p>
+              ) : (
+                <p className="text-sm text-slate-500">{buildRuleBasedSummary(data)}</p>
+              )}
+              {matchSummaryError && (
+                <p className="mt-2 text-xs text-amber-600">
+                  AI summary unavailable — showing rule-based summary.
+                </p>
+              )}
+            </div>
           )}
         </section>
 
-        {/* About this RFP — Claude-generated structured requirements summary.
-            Long-form context for what the contract actually asks for. */}
+        {/* About this RFP — Claude-generated structured requirements summary
+            plus the structured key-requirements fields (deliverables,
+            licenses, NAICS, set-asides, evaluation criteria, etc.) extracted
+            from the RFP PDFs. One collapsible covering all of it. */}
         <section className="mb-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
-          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
-            About this RFP
-          </h2>
-          {requirementsSummaryLoading && !requirementsSummary ? (
-            <p className="text-sm text-slate-400 animate-pulse">Summarizing contract requirements…</p>
-          ) : requirementsSummary ? (
-            <MarkdownContent content={requirementsSummary} />
-          ) : data.rfp.description?.trim() ? (
-            <p className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">
-              {data.rfp.description}
-            </p>
-          ) : (
-            <p className="text-sm text-slate-500">No description available for this RFP.</p>
-          )}
-          {requirementsSummaryError && data.rfp.description?.trim() && (
-            <p className="mt-2 text-xs text-amber-600">
-              AI summary unavailable — showing original description.
-            </p>
-          )}
-          {data.rfp.contractDuration && (
-            <p className="mt-3 text-xs text-slate-500">
-              <span className="font-semibold text-slate-700">Contract duration:</span>{" "}
-              {data.rfp.contractDuration}
-            </p>
-          )}
+          <button
+            type="button"
+            onClick={() => setAboutRfpOpen((o) => !o)}
+            className="w-full flex items-center justify-between gap-2 text-left"
+          >
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+              About this RFP
+            </h2>
+            <svg className={`w-4 h-4 text-slate-400 transition-transform ${aboutRfpOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+          </button>
+          {aboutRfpOpen && (() => {
+            const hasDeliverables = data.rfp.deliverables.length > 0;
+            const hasClearances = data.rfp.clearancesRequired.length > 0;
+            const hasSetAsides = data.rfp.setAsideTypes.length > 0;
+            const hasEvalCriteria = data.rfp.evaluationCriteria.length > 0;
+            const hasLicenses = data.rfp.licensesRequired.length > 0;
+            const hasNaics = data.rfp.naicsCodes.length > 0;
+            const hasCerts = data.rfp.certificationsRequired.length > 0;
+            const anyKeyRequirement =
+              hasDeliverables ||
+              hasClearances ||
+              hasSetAsides ||
+              hasEvalCriteria ||
+              hasLicenses ||
+              hasNaics ||
+              hasCerts;
+            return (
+              <div className="mt-3">
+                {requirementsSummaryLoading && !requirementsSummary ? (
+                  <p className="text-sm text-slate-400 animate-pulse">Summarizing contract requirements…</p>
+                ) : requirementsSummary ? (
+                  <MarkdownContent content={requirementsSummary} />
+                ) : data.rfp.description?.trim() ? (
+                  <p className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">
+                    {data.rfp.description}
+                  </p>
+                ) : (
+                  <p className="text-sm text-slate-500">No description available for this RFP.</p>
+                )}
+                {requirementsSummaryError && data.rfp.description?.trim() && (
+                  <p className="mt-2 text-xs text-amber-600">
+                    AI summary unavailable — showing original description.
+                  </p>
+                )}
+                {data.rfp.contractDuration && (
+                  <p className="mt-3 text-xs text-slate-500">
+                    <span className="font-semibold text-slate-700">Contract duration:</span>{" "}
+                    {data.rfp.contractDuration}
+                  </p>
+                )}
+                {anyKeyRequirement && (
+                  <div className="mt-5 pt-5 border-t border-slate-200 space-y-5 text-sm">
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Key requirements</h3>
+                    {hasDeliverables && (
+                      <div>
+                        <h4 className="font-semibold text-slate-700 mb-1.5">Deliverables</h4>
+                        <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
+                          {data.rfp.deliverables.slice(0, 10).map((d, i) => (
+                            <li key={i}>{d}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {hasEvalCriteria && (
+                      <div>
+                        <h4 className="font-semibold text-slate-700 mb-1.5">Evaluation criteria</h4>
+                        <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
+                          {data.rfp.evaluationCriteria.slice(0, 8).map((c, i) => (
+                            <li key={i}>{c}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {hasNaics && (
+                      <div>
+                        <h4 className="font-semibold text-slate-700 mb-1.5">NAICS codes</h4>
+                        <div className="flex flex-wrap gap-1.5">
+                          {data.rfp.naicsCodes.map((n) => (
+                            <span
+                              key={n}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200"
+                            >
+                              {n}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {hasCerts && (
+                      <div>
+                        <h4 className="font-semibold text-slate-700 mb-1.5">Certifications</h4>
+                        <div className="flex flex-wrap gap-1.5">
+                          {data.rfp.certificationsRequired.map((c, i) => (
+                            <span
+                              key={i}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100"
+                            >
+                              {c}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {hasLicenses && (
+                      <div>
+                        <h4 className="font-semibold text-slate-700 mb-1.5">Licenses</h4>
+                        <div className="flex flex-wrap gap-1.5">
+                          {data.rfp.licensesRequired.map((l, i) => (
+                            <span
+                              key={i}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100"
+                            >
+                              {l}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {hasClearances && (
+                      <div>
+                        <h4 className="font-semibold text-slate-700 mb-1.5">Clearances required</h4>
+                        <div className="flex flex-wrap gap-1.5">
+                          {data.rfp.clearancesRequired.map((c, i) => (
+                            <span
+                              key={i}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-100"
+                            >
+                              {c}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {hasSetAsides && (
+                      <div>
+                        <h4 className="font-semibold text-slate-700 mb-1.5">Set-asides</h4>
+                        <div className="flex flex-wrap gap-1.5">
+                          {data.rfp.setAsideTypes.map((s, i) => (
+                            <span
+                              key={i}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-violet-50 text-violet-700 border border-violet-100"
+                            >
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </section>
 
         {/* Eligibility callouts when prime gates failed */}
@@ -906,152 +1050,38 @@ export default function RfpDetailPage() {
             profile to the RFP's stated requirements. Distinct from the
             score breakdown above (that's deterministic + token-level). */}
         <section className="mt-8 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
-          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
-            Capabilities analysis
-          </h2>
-          {!profileLoaded ? (
-            <p className="text-sm text-slate-400 animate-pulse">Loading profile…</p>
-          ) : !profile ? (
-            <p className="text-sm text-slate-500">
-              Complete your company profile to see a capabilities analysis.
-            </p>
-          ) : capabilitiesAnalysisLoading && !capabilitiesAnalysis ? (
-            <p className="text-sm text-slate-400 animate-pulse">
-              Analyzing your capabilities against the requirements…
-            </p>
-          ) : capabilitiesAnalysis ? (
-            <MarkdownContent content={capabilitiesAnalysis} />
-          ) : capabilitiesAnalysisError ? (
-            <p className="text-xs text-amber-600">Capabilities analysis unavailable right now.</p>
-          ) : (
-            <p className="text-sm text-slate-500">No analysis available.</p>
+          <button
+            type="button"
+            onClick={() => setCapabilitiesOpen((o) => !o)}
+            className="w-full flex items-center justify-between gap-2 text-left"
+          >
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+              Capabilities analysis
+            </h2>
+            <svg className={`w-4 h-4 text-slate-400 transition-transform ${capabilitiesOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+          </button>
+          {capabilitiesOpen && (
+            <div className="mt-3">
+              {!profileLoaded ? (
+                <p className="text-sm text-slate-400 animate-pulse">Loading profile…</p>
+              ) : !profile ? (
+                <p className="text-sm text-slate-500">
+                  Complete your company profile to see a capabilities analysis.
+                </p>
+              ) : capabilitiesAnalysisLoading && !capabilitiesAnalysis ? (
+                <p className="text-sm text-slate-400 animate-pulse">
+                  Analyzing your capabilities against the requirements…
+                </p>
+              ) : capabilitiesAnalysis ? (
+                <MarkdownContent content={capabilitiesAnalysis} />
+              ) : capabilitiesAnalysisError ? (
+                <p className="text-xs text-amber-600">Capabilities analysis unavailable right now.</p>
+              ) : (
+                <p className="text-sm text-slate-500">No analysis available.</p>
+              )}
+            </div>
           )}
         </section>
-
-        {/* Key requirements — structured fields extracted from the RFP
-            PDFs. Renders only when at least one field has content. */}
-        {(() => {
-          const hasDeliverables = data.rfp.deliverables.length > 0;
-          const hasClearances = data.rfp.clearancesRequired.length > 0;
-          const hasSetAsides = data.rfp.setAsideTypes.length > 0;
-          const hasEvalCriteria = data.rfp.evaluationCriteria.length > 0;
-          const hasLicenses = data.rfp.licensesRequired.length > 0;
-          const hasNaics = data.rfp.naicsCodes.length > 0;
-          const hasCerts = data.rfp.certificationsRequired.length > 0;
-          const any =
-            hasDeliverables ||
-            hasClearances ||
-            hasSetAsides ||
-            hasEvalCriteria ||
-            hasLicenses ||
-            hasNaics ||
-            hasCerts;
-          if (!any) return null;
-          return (
-            <section className="mt-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
-              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">
-                Key requirements
-              </h2>
-              <div className="space-y-5 text-sm">
-                {hasDeliverables && (
-                  <div>
-                    <h3 className="font-semibold text-slate-700 mb-1.5">Deliverables</h3>
-                    <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
-                      {data.rfp.deliverables.slice(0, 10).map((d, i) => (
-                        <li key={i}>{d}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {hasEvalCriteria && (
-                  <div>
-                    <h3 className="font-semibold text-slate-700 mb-1.5">Evaluation criteria</h3>
-                    <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
-                      {data.rfp.evaluationCriteria.slice(0, 8).map((c, i) => (
-                        <li key={i}>{c}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {hasNaics && (
-                  <div>
-                    <h3 className="font-semibold text-slate-700 mb-1.5">NAICS codes</h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {data.rfp.naicsCodes.map((n) => (
-                        <span
-                          key={n}
-                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200"
-                        >
-                          {n}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {hasCerts && (
-                  <div>
-                    <h3 className="font-semibold text-slate-700 mb-1.5">Certifications</h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {data.rfp.certificationsRequired.map((c, i) => (
-                        <span
-                          key={i}
-                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100"
-                        >
-                          {c}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {hasLicenses && (
-                  <div>
-                    <h3 className="font-semibold text-slate-700 mb-1.5">Licenses</h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {data.rfp.licensesRequired.map((l, i) => (
-                        <span
-                          key={i}
-                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100"
-                        >
-                          {l}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {hasClearances && (
-                  <div>
-                    <h3 className="font-semibold text-slate-700 mb-1.5">Clearances required</h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {data.rfp.clearancesRequired.map((c, i) => (
-                        <span
-                          key={i}
-                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-100"
-                        >
-                          {c}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {hasSetAsides && (
-                  <div>
-                    <h3 className="font-semibold text-slate-700 mb-1.5">Set-asides</h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {data.rfp.setAsideTypes.map((s, i) => (
-                        <span
-                          key={i}
-                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-violet-50 text-violet-700 border border-violet-100"
-                        >
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </section>
-          );
-        })()}
 
         {/* Attachments — links to source-portal PDFs. */}
         {data.rfp.attachmentUrls.length > 0 && (
