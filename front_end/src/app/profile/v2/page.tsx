@@ -20,6 +20,7 @@ import {
   StepIdentity,
   StepSpecialties,
   StepCapabilities,
+  StepNaics,
   StepLicenses,
   StepCertifications,
   StepGeography,
@@ -41,6 +42,7 @@ import {
   GOV_EXPERIENCE,
   EMPLOYEE_BANDS,
 } from "@/lib/onboarding-data";
+import { NAICS_MAP } from "@/data/filter-options";
 
 interface FullProfile {
   userId: string;
@@ -54,6 +56,7 @@ interface FullProfile {
   complexityPref: string | null;
   primeVsSub: string[] | null;
   govExperience: string[] | null;
+  naicsCodes: string[] | null;
   dailyRoundupEnabled: boolean;
   dailyRoundupTimezone: string | null;
   vendorFingerprint: string | null;
@@ -79,6 +82,7 @@ function profileToSnapshot(profile: FullProfile): OnboardingSnapshot {
     complexityPref: profile.complexityPref,
     primeVsSub: profile.primeVsSub,
     govExperience: profile.govExperience,
+    naicsCodes: profile.naicsCodes,
     dailyRoundupEnabled: profile.dailyRoundupEnabled,
     dailyRoundupTimezone: profile.dailyRoundupTimezone,
     specialties: profile.specialties.map((s) => ({
@@ -240,6 +244,15 @@ export default function ProfileV2Page() {
           refresh={refresh}
           readView={<ChipRead items={profile.capabilities.map((c) => c.value)} variant="emerald" />}
           renderEditor={(s) => <StepCapabilities snapshot={s} />}
+        />
+
+        <EditableSection
+          title="NAICS codes"
+          accent="from-slate-500 to-slate-600"
+          originalSnapshot={snapshot}
+          refresh={refresh}
+          readView={<NaicsRead profile={profile} />}
+          renderEditor={(s) => <StepNaics snapshot={s} />}
         />
 
         <EditableSection
@@ -640,6 +653,28 @@ function ScopeRead({ profile }: { profile: FullProfile }) {
       <Field label="Scope range" value={scope} />
       <Field label="Duration" value={dur} />
       <Field label="Complexity" value={comp} />
+    </div>
+  );
+}
+
+function NaicsRead({ profile }: { profile: FullProfile }) {
+  const codes = profile.naicsCodes ?? [];
+  if (codes.length === 0) {
+    return (
+      <EmptyHint>
+        No NAICS codes yet. Click <strong>Edit</strong> to add the codes you
+        work in — they&apos;re a hard-signal match component when RFPs name them.
+      </EmptyHint>
+    );
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      {codes.map((code) => (
+        <ReadOnlyChip key={code} variant="blue">
+          <span className="font-mono text-xs opacity-70">{code}</span>
+          <span className="ml-1">{NAICS_MAP[code] ?? "Unknown code"}</span>
+        </ReadOnlyChip>
+      ))}
     </div>
   );
 }

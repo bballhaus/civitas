@@ -387,6 +387,7 @@ const COMPLETENESS_WEIGHTS = {
   complexityPref: 3,
   primeVsSub: 2,
   govExperience: 2,
+  naicsCodes: 5,
 } as const;
 
 const TOTAL_WEIGHT = Object.values(COMPLETENESS_WEIGHTS).reduce((a, b) => a + b, 0);
@@ -406,6 +407,7 @@ export function computeCompletenessScore(profile: FullProfile): number {
   if (profile.complexityPref) earned += COMPLETENESS_WEIGHTS.complexityPref;
   if (profile.primeVsSub && profile.primeVsSub.length > 0) earned += COMPLETENESS_WEIGHTS.primeVsSub;
   if (profile.govExperience && profile.govExperience.length > 0) earned += COMPLETENESS_WEIGHTS.govExperience;
+  if (profile.naicsCodes && profile.naicsCodes.length > 0) earned += COMPLETENESS_WEIGHTS.naicsCodes;
 
   return Math.round((earned / TOTAL_WEIGHT) * 100);
 }
