@@ -56,7 +56,6 @@ export default function RFPDetailPage() {
   const [matchSummaryOpen, setMatchSummaryOpen] = useState(false);
   const [scoreBreakdownOpen, setScoreBreakdownOpen] = useState(false);
   const [aboutRfpOpen, setAboutRfpOpen] = useState(false);
-  const [keyRequirementsOpen, setKeyRequirementsOpen] = useState(false);
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const [appliedRfpIds, setAppliedRfpIds] = useState<Set<string>>(new Set());
   const [inProgressRfpIds, setInProgressRfpIds] = useState<Set<string>>(new Set());
@@ -1416,10 +1415,12 @@ export default function RFPDetailPage() {
           {/* Match view: generate button, summary, capabilities, about RFP, details. Generated view: POE content. */}
           {viewMode === "match" && (
             <>
-          {/* About this RFP — AI-generated requirements summary, with the raw
-              description as a fallback when the LLM call is still pending or
-              has failed. Long-form context for what the contract actually asks
-              for, beyond the chip-sized industry/location labels at the top. */}
+          {/* About this RFP — AI-generated requirements summary + the
+              structured key-requirements fields (deliverables, clearances,
+              set-asides, evaluation criteria) extracted from the RFP PDFs by
+              webscraping/v2/pipeline/enrich.py. Quality of the structured
+              fields varies by source (Cal eProcure + OpenGov are reliable;
+              PlanetBids leaves them empty — see COVERAGE.md). */}
           <div className="p-6 md:p-8 border-b border-slate-100">
             <button
               type="button"
@@ -1429,107 +1430,89 @@ export default function RFPDetailPage() {
               <h2 className="text-sm font-bold text-slate-900">About this RFP</h2>
               <svg className={`w-4 h-4 text-slate-400 transition-transform ${aboutRfpOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
-            {aboutRfpOpen && (
-              <>
-                {requirementsSummaryLoading && !requirementsSummary ? (
-                  <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
-                ) : requirementsSummary ? (
-                  <MarkdownContent content={requirementsSummary} />
-                ) : rfp.description?.trim() ? (
-                  <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                    {rfp.description}
-                  </p>
-                ) : (
-                  <p className="text-slate-500 text-sm">No description available for this RFP.</p>
-                )}
-                {requirementsSummaryError && rfp.description?.trim() && (
-                  <p className="mt-2 text-xs text-amber-600">
-                    AI summary unavailable. Showing original description.
-                  </p>
-                )}
-                {rfp.contractDuration && (
-                  <p className="mt-3 text-xs text-slate-500">
-                    <span className="font-semibold text-slate-700">Contract duration:</span>{" "}
-                    {rfp.contractDuration}
-                  </p>
-                )}
-              </>
-            )}
+            {aboutRfpOpen && (() => {
+              const hasDeliverables = (rfp.deliverables?.length ?? 0) > 0;
+              const hasClearances = (rfp.clearancesRequired?.length ?? 0) > 0;
+              const hasSetAsides = (rfp.setAsideTypes?.length ?? 0) > 0;
+              const hasEvalCriteria = (rfp.evaluationCriteria?.length ?? 0) > 0;
+              const anyKeyRequirement = hasDeliverables || hasClearances || hasSetAsides || hasEvalCriteria;
+              return (
+                <>
+                  {requirementsSummaryLoading && !requirementsSummary ? (
+                    <p className="text-slate-500 text-sm animate-pulse">Summarizing contract requirements…</p>
+                  ) : requirementsSummary ? (
+                    <MarkdownContent content={requirementsSummary} />
+                  ) : rfp.description?.trim() ? (
+                    <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
+                      {rfp.description}
+                    </p>
+                  ) : (
+                    <p className="text-slate-500 text-sm">No description available for this RFP.</p>
+                  )}
+                  {requirementsSummaryError && rfp.description?.trim() && (
+                    <p className="mt-2 text-xs text-amber-600">
+                      AI summary unavailable. Showing original description.
+                    </p>
+                  )}
+                  {rfp.contractDuration && (
+                    <p className="mt-3 text-xs text-slate-500">
+                      <span className="font-semibold text-slate-700">Contract duration:</span>{" "}
+                      {rfp.contractDuration}
+                    </p>
+                  )}
+                  {anyKeyRequirement && (
+                    <div className="mt-5 pt-5 border-t border-slate-200 space-y-4 text-sm">
+                      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Key requirements</h3>
+                      {hasDeliverables && (
+                        <div>
+                          <h4 className="font-semibold text-slate-700 mb-1.5">Deliverables</h4>
+                          <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
+                            {rfp.deliverables!.slice(0, 10).map((d, i) => (
+                              <li key={i}>{d}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {hasClearances && (
+                        <div>
+                          <h4 className="font-semibold text-slate-700 mb-1.5">Clearances required</h4>
+                          <div className="flex flex-wrap gap-1.5">
+                            {rfp.clearancesRequired!.map((c, i) => (
+                              <span key={i} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-100">
+                                {c}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {hasSetAsides && (
+                        <div>
+                          <h4 className="font-semibold text-slate-700 mb-1.5">Set-asides</h4>
+                          <div className="flex flex-wrap gap-1.5">
+                            {rfp.setAsideTypes!.map((s, i) => (
+                              <span key={i} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-violet-50 text-violet-700 border border-violet-100">
+                                {s}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {hasEvalCriteria && (
+                        <div>
+                          <h4 className="font-semibold text-slate-700 mb-1.5">Evaluation criteria</h4>
+                          <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
+                            {rfp.evaluationCriteria!.slice(0, 8).map((c, i) => (
+                              <li key={i}>{c}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
-
-          {/* Key requirements — structured fields extracted from the RFP PDFs.
-              Renders only when at least one field has content. These come from
-              webscraping/v2/pipeline/enrich.py so values are LLM-derived;
-              quality varies by source (Cal eProcure + OpenGov are reliable;
-              PlanetBids leaves these empty — see COVERAGE.md). */}
-          {(() => {
-            const hasDeliverables = (rfp.deliverables?.length ?? 0) > 0;
-            const hasClearances = (rfp.clearancesRequired?.length ?? 0) > 0;
-            const hasSetAsides = (rfp.setAsideTypes?.length ?? 0) > 0;
-            const hasEvalCriteria = (rfp.evaluationCriteria?.length ?? 0) > 0;
-            const anyRequirement = hasDeliverables || hasClearances || hasSetAsides || hasEvalCriteria;
-            if (!anyRequirement) return null;
-            return (
-              <div className="p-6 md:p-8 border-b border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setKeyRequirementsOpen((o) => !o)}
-                  className="w-full flex items-center justify-between gap-2 text-left mb-3"
-                >
-                  <h2 className="text-sm font-bold text-slate-900">Key requirements</h2>
-                  <svg className={`w-4 h-4 text-slate-400 transition-transform ${keyRequirementsOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                </button>
-                {keyRequirementsOpen && (
-                <div className="space-y-4 text-sm">
-                  {hasDeliverables && (
-                    <div>
-                      <h3 className="font-semibold text-slate-700 mb-1.5">Deliverables</h3>
-                      <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
-                        {rfp.deliverables!.slice(0, 10).map((d, i) => (
-                          <li key={i}>{d}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {hasClearances && (
-                    <div>
-                      <h3 className="font-semibold text-slate-700 mb-1.5">Clearances required</h3>
-                      <div className="flex flex-wrap gap-1.5">
-                        {rfp.clearancesRequired!.map((c, i) => (
-                          <span key={i} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-100">
-                            {c}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {hasSetAsides && (
-                    <div>
-                      <h3 className="font-semibold text-slate-700 mb-1.5">Set-asides</h3>
-                      <div className="flex flex-wrap gap-1.5">
-                        {rfp.setAsideTypes!.map((s, i) => (
-                          <span key={i} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-violet-50 text-violet-700 border border-violet-100">
-                            {s}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {hasEvalCriteria && (
-                    <div>
-                      <h3 className="font-semibold text-slate-700 mb-1.5">Evaluation criteria</h3>
-                      <ul className="list-disc list-inside space-y-1 text-slate-600 leading-relaxed">
-                        {rfp.evaluationCriteria!.slice(0, 8).map((c, i) => (
-                          <li key={i}>{c}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-                )}
-              </div>
-            );
-          })()}
 
           {/* Capabilities Analysis — LLM compares the user's company profile
               against the RFP's stated requirements to tell them where they're
