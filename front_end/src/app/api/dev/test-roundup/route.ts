@@ -7,9 +7,15 @@
 // URLs require Vercel SSO).
 
 import { NextResponse } from "next/server";
+import { and, gte, sql } from "drizzle-orm";
+import { db } from "@/db/client";
+import { rfpCache } from "@/db/schema";
+import { visibleRfpSourceClause } from "@/lib/rfp-source-visibility";
 import { sendDailyRoundupEmail, type RoundupRfp } from "@/lib/email";
 
 export const runtime = "nodejs";
+
+const SAMPLE_SCORES = [92, 88, 81, 76];
 
 async function handle(request: Request) {
   if (process.env.VERCEL_ENV !== "preview" && process.env.NODE_ENV !== "development") {
@@ -24,40 +30,33 @@ async function handle(request: Request) {
 
   const origin = process.env.CIVITAS_APP_ORIGIN ?? "https://civitas-ai.net";
 
-  const items: RoundupRfp[] = [
-    {
-      rfpId: "sample-1",
-      title: "IT Managed Services for County Health Department",
-      agency: "Alameda County, CA",
-      matchScore: 92,
-      deadline: "2026-06-12",
-      detailUrl: `${origin}/home`,
-    },
-    {
-      rfpId: "sample-2",
-      title: "Cybersecurity Assessment Services",
-      agency: "City of Sacramento",
-      matchScore: 88,
-      deadline: "2026-06-05",
-      detailUrl: `${origin}/home`,
-    },
-    {
-      rfpId: "sample-3",
-      title: "Network Infrastructure Modernization",
-      agency: "CalProcure",
-      matchScore: 81,
-      deadline: "2026-06-20",
-      detailUrl: `${origin}/home`,
-    },
-    {
-      rfpId: "sample-4",
-      title: "Cloud Migration Advisory Services",
-      agency: "San Mateo County",
-      matchScore: 76,
-      deadline: "2026-06-30",
-      detailUrl: `${origin}/home`,
-    },
-  ];
+  const rows = await db
+    .select({
+      id: rfpCache.id,
+      title: rfpCache.title,
+      agency: rfpCache.agency,
+      deadline: rfpCache.deadline,
+    })
+    .from(rfpCache)
+    .where(and(gte(rfpCache.deadline, new Date()), visibleRfpSourceClause()))
+    .orderBy(sql`RANDOM()`)
+    .limit(SAMPLE_SCORES.length);
+
+  if (rows.length === 0) {
+    return NextResponse.json(
+      { ok: false, error: "No open RFPs in rfp_cache to sample from" },
+      { status: 500 },
+    );
+  }
+
+  const items: RoundupRfp[] = rows.map((r, i) => ({
+    rfpId: r.id,
+    title: r.title,
+    agency: r.agency,
+    matchScore: SAMPLE_SCORES[i] ?? 75,
+    deadline: r.deadline ? r.deadline.toISOString().slice(0, 10) : null,
+    detailUrl: `${origin}/dashboard/rfp/${encodeURIComponent(r.id)}`,
+  }));
 
   const ok = await sendDailyRoundupEmail(to, items, origin);
   return NextResponse.json({ ok, to, count: items.length });
