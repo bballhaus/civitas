@@ -25,6 +25,11 @@
 import type { FullProfile } from "@/db/queries/profile";
 import type { RfpCacheRow } from "@/db/schema";
 import { cosine } from "@/lib/embeddings";
+import {
+  lookupNaicsSimilarity,
+  lookupNaicsSimilarityDetailed,
+} from "@/lib/naics-similarity";
+import { NAICS_MAP } from "@/data/filter-options";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -112,19 +117,18 @@ export interface MatchResult {
 // don't penalize the total.
 // ---------------------------------------------------------------------------
 
-// Weights sum to 1.0. Any category with a null score is dropped from both
-// numerator AND denominator so unknown categories don't penalize the total.
-//
-// NAICS overlap (new) replaces the previous `description` bag-of-tokens
-// scorer, which was double-counting against the RFP embedding (the
-// description is already part of buildRfpEmbeddingText) and offered almost
-// no semantic value on its own. Specialty was rebalanced down to 0.20 and
-// capability up to 0.20 so that semantic capability matching — now
-// augmented by NAICS titles in the RFP embedding text — pulls more weight.
+// Capability is now the NAICS-substitutes scorer (see data/naics-substitutes.json
+// + lib/naics-similarity.ts) — replaces the regex bag-of-tokens version that
+// produced ~32% wrong tags AND subsumes the standalone NAICS-overlap scorer
+// from origin/main (4fe4941) since the substitutes matrix already does direct
+// overlap as a special case (sim=1.0 on exact code match). Specialty stays
+// as a small cosine bonus for free-text niches NAICS doesn't cover (e.g.
+// "concrete flatwork"). Scope is the dollar-value/budget-band scorer
+// (unchanged from v1). The old description scorer is deleted — it was a
+// bag-of-tokens duplicating signal already in the RFP embedding.
 const WEIGHTS: Record<string, number> = {
-  specialty: 0.2,
-  capability: 0.2,
-  naics: 0.1,
+  capability: 0.4,
+  specialty: 0.1,
   scope: 0.15,
   complexity: 0.1,
   agency: 0.1,
@@ -144,9 +148,8 @@ export function matchV2(profile: FullProfile, rfp: RfpCacheRow): MatchResult {
   const incumbent = computeIncumbentState(rfp);
 
   const primeBreakdown: CategoryBreakdown[] = [
+    scoreCapability(profile, rfp),
     scoreSpecialty(profile, rfp, dataQuality),
-    scoreCapability(profile, rfp, dataQuality),
-    scoreNaicsOverlap(profile, rfp),
     scoreScope(profile, rfp),
     scoreDuration(profile, rfp),
     scoreComplexity(profile, rfp),
@@ -249,6 +252,24 @@ function checkHardGates(profile: FullProfile, rfp: RfpCacheRow): string[] {
     failures.push("Requires past government contract experience");
   }
 
+  // NAICS-capability gate (Moderate eligibility per design notes 2026-05-26).
+  // Prime requires vendor to hold ANY code with substitutability >= 0.5
+  // against the RFP's primary NAICS. Fires only when BOTH sides have
+  // codes — unknown on either side falls through to "pass" so we don't
+  // lock out profiles that haven't yet picked NAICS or RFPs from
+  // sources without NAICS extraction.
+  const primaryNaics = rfp.naicsCodes?.[0];
+  const profileNaics = profile.naicsCodes ?? [];
+  if (primaryNaics && profileNaics.length > 0) {
+    const bestSim = Math.max(
+      ...profileNaics.map((vc) => lookupNaicsSimilarity(vc, primaryNaics)),
+    );
+    if (bestSim < 0.5) {
+      const primaryTitle = NAICS_MAP[primaryNaics] ?? primaryNaics;
+      failures.push(`Required capability (NAICS ${primaryNaics} — ${primaryTitle}) doesn't substantially match your industries`);
+    }
+  }
+
   return failures;
 }
 
@@ -296,85 +317,32 @@ function semanticConfidence(rfp: RfpCacheRow, dq: DataQuality): number {
   return 0.6;
 }
 
+// Specialty is now a small 10% cosine bonus — catches free-text niches
+// the user typed that aren't NAICS titles (e.g. "concrete flatwork",
+// "fiber optic installation"). The Capability scorer handles the formal
+// NAICS-based scope match; this just adds signal for the long-tail.
+//
+// Pre-2026-05-26 this function had a literal-substring short-circuit and
+// a no-embedding fallback. Both are dropped — the short-circuit existed
+// only because cosine on whole-RFP vectors was the only scope signal we
+// had, and length asymmetry made literal hits score low. Capability now
+// owns that responsibility cleanly via the NAICS matrix.
 function scoreSpecialty(
   profile: FullProfile,
   rfp: RfpCacheRow,
   dq: DataQuality,
 ): CategoryBreakdown {
   if (profile.specialties.length === 0) {
-    return neutral("Specialty", "Add specialties to your profile to enable semantic match.");
+    return neutral("Specialty", "No specialties on profile.");
   }
-
-  // Literal-first short-circuit. Same problem shape as scoreCapability —
-  // cosine compares a single specialty phrase against the whole-RFP vector,
-  // so even a definitive textual hit lands well below 1.0. If your
-  // specialty appears literally in the RFP title or in its structured
-  // capabilities[] array, that's a strong signal — bypass cosine and
-  // return strong directly.
-  const titleLower = rfp.title.toLowerCase();
-  const titleHit = profile.specialties.find((s) =>
-    titleLower.includes(s.value.toLowerCase()),
-  );
-  if (titleHit) {
-    return {
-      category: "Specialty",
-      status: "strong",
-      score: 1.0,
-      weight: WEIGHTS.specialty,
-      detail: `RFP title references your specialty: "${titleHit.value}".`,
-      rfpPhrase: rfp.title,
-      profileClaim: titleHit.value,
-    };
-  }
-  const rfpCapsLower = (rfp.capabilities ?? []).map((s) => s.toLowerCase());
-  if (rfpCapsLower.length > 0) {
-    const capHit = profile.specialties.find((s) =>
-      rfpCapsLower.some((c) => c.includes(s.value.toLowerCase())),
-    );
-    if (capHit) {
-      return {
-        category: "Specialty",
-        status: "strong",
-        score: 1.0,
-        weight: WEIGHTS.specialty,
-        detail: `RFP capabilities reference your specialty: "${capHit.value}".`,
-        rfpPhrase: rfp.title,
-        profileClaim: capHit.value,
-      };
-    }
-  }
-
   if (!rfp.embedding) {
-    // Without an RFP embedding we can't run semantic. Fall back to substring
-    // match on title/description so the score is non-zero when there's a
-    // clear textual hit.
-    const textBag = `${rfp.title} ${rfp.description ?? ""}`.toLowerCase();
-    const hits = profile.specialties.filter((s) =>
-      textBag.includes(s.value.toLowerCase()),
-    );
-    if (hits.length > 0) {
-      return {
-        category: "Specialty",
-        status: "partial",
-        score: 0.6,
-        weight: WEIGHTS.specialty,
-        detail: `Title/description references your specialty (no embedding yet).`,
-        rfpPhrase: rfp.title,
-        profileClaim: hits[0].value,
-      };
-    }
-    return neutral("Specialty", "No embedding available for this RFP yet.");
+    return neutral("Specialty", "No embedding available for this RFP.");
   }
-
   const withEmb = profile.specialties.filter((s) => !!s.embedding);
   if (withEmb.length === 0) {
-    return neutral(
-      "Specialty",
-      "Specialty embeddings haven't been generated yet (Voyage backfill pending).",
-    );
+    return neutral("Specialty", "Specialty embeddings not yet generated.");
   }
 
-  // pgvector stores as number[] already; cosine works directly.
   const rfpVec = rfp.embedding as unknown as number[];
   const sims = withEmb.map((s) => ({
     s,
@@ -398,77 +366,131 @@ function scoreSpecialty(
   };
 }
 
+// Capability = NAICS-substitutes fit. Replaced the pre-2026-05-26 regex
+// bag-of-tokens scorer, which used the polluted rfp.capabilities[] field
+// (~32% wrong tags from over-broad regex patterns). The new scorer reads
+// the LLM-tagged + Sonnet-audited rfp.naics_codes plus the hand-curated
+// substitutes matrix at data/naics-substitutes.json.
+//
+// Score: for each profile NAICS code, find its best match against the
+// RFP's primary NAICS (weighted 2x) AND the best match against any RFP
+// secondary NAICS (weighted 1x). Then combine: primary_best * 0.75 +
+// secondary_best * 0.25. Captures the intuition that matching the prime
+// scope dominates but a sub-trade match still earns credit.
 function scoreCapability(
   profile: FullProfile,
   rfp: RfpCacheRow,
-  dq: DataQuality,
 ): CategoryBreakdown {
-  if (profile.capabilities.length === 0) {
-    return neutral("Capability", "No capabilities on file.");
+  const profileCodes = profile.naicsCodes ?? [];
+  const rfpCodes = rfp.naicsCodes ?? [];
+  if (profileCodes.length === 0) {
+    return neutral(
+      "Capability",
+      "Add NAICS industries to your profile to enable capability matching.",
+    );
+  }
+  if (rfpCodes.length === 0) {
+    return neutral("Capability", "RFP has no NAICS classification yet.");
   }
 
-  // Literal-first short-circuit. Embedding cosine compares one capability
-  // string against the whole-RFP vector, so even an exact textual hit lands
-  // around 0.55–0.65 — misleading when the RFP explicitly lists the same
-  // capability. If any of the user's capabilities matches an entry in the
-  // RFP's structured capabilities[] (case-insensitive), score it strong
-  // directly and skip cosine.
-  const rfpCapsLower = (rfp.capabilities ?? []).map((s) => s.toLowerCase());
-  if (rfpCapsLower.length > 0) {
-    const literalHit = profile.capabilities.find((c) =>
-      rfpCapsLower.includes(c.value.toLowerCase()),
-    );
-    if (literalHit) {
-      return {
-        category: "Capability",
-        status: "strong",
-        score: 1.0,
-        weight: WEIGHTS.capability,
-        detail: `Exact capability match: "${literalHit.value}".`,
-        profileClaim: literalHit.value,
-      };
+  const rfpPrimary = rfpCodes[0];
+  const rfpSecondaries = rfpCodes.slice(1);
+
+  // Best primary match across vendor's codes, with the matched details so
+  // we can cite which substitute fired and why.
+  let bestPrimary = { vendor: "", sim: 0, rationale: undefined as string | undefined };
+  for (const vc of profileCodes) {
+    const r = lookupNaicsSimilarityDetailed(vc, rfpPrimary);
+    if (r && r.sim > bestPrimary.sim) {
+      bestPrimary = { vendor: vc, sim: r.sim, rationale: r.rationale };
     }
   }
 
-  if (!rfp.embedding) {
-    const textBag = `${rfp.title} ${rfp.description ?? ""} ${rfp.capabilities?.join(" ") ?? ""}`.toLowerCase();
-    const hits = profile.capabilities.filter((c) =>
-      textBag.includes(c.value.toLowerCase()),
-    );
-    if (hits.length > 0) {
-      return {
-        category: "Capability",
-        status: "partial",
-        score: 0.5,
-        weight: WEIGHTS.capability,
-        detail: `Textual match on ${hits.length} of your capabilities.`,
-        profileClaim: hits[0].value,
-      };
+  // Best secondary match — only meaningful if the RFP has secondaries.
+  let bestSecondary = { vendor: "", rfp: "", sim: 0 };
+  for (const vc of profileCodes) {
+    for (const rs of rfpSecondaries) {
+      const r = lookupNaicsSimilarityDetailed(vc, rs);
+      if (r && r.sim > bestSecondary.sim) {
+        bestSecondary = { vendor: vc, rfp: rs, sim: r.sim };
+      }
     }
-    return neutral("Capability", "No textual overlap.");
   }
 
-  const withEmb = profile.capabilities.filter((c) => !!c.embedding);
-  if (withEmb.length === 0) {
-    return neutral("Capability", "Capability embeddings pending.");
-  }
-  const rfpVec = rfp.embedding as unknown as number[];
-  const sims = withEmb.map((c) => ({ c, sim: cosine(c.embedding as unknown as number[], rfpVec) }));
-  sims.sort((a, b) => b.sim - a.sim);
-  const best = sims[0];
-  const adjusted = best.sim * semanticConfidence(rfp, dq);
-
-  // Capability thresholds slightly looser than specialty (spec § 9.4 note).
+  const combined = bestPrimary.sim * 0.75 + bestSecondary.sim * 0.25;
   const status: CategoryStatus =
-    adjusted >= 0.65 ? "strong" : adjusted >= 0.45 ? "partial" : adjusted >= 0.25 ? "weak" : "missing";
+    combined >= 0.85 ? "strong"
+    : combined >= 0.55 ? "partial"
+    : combined >= 0.30 ? "weak"
+    : "missing";
+
+  // Build the citation. Prefer the primary match since it dominates the
+  // score; fall back to secondary if primary returned nothing.
+  const primaryTitle = NAICS_MAP[rfpPrimary] ?? rfpPrimary;
+  const detail = bestPrimary.sim > 0
+    ? `Your NAICS ${bestPrimary.vendor} (${NAICS_MAP[bestPrimary.vendor] ?? bestPrimary.vendor}) substitutes for required ${rfpPrimary} (${primaryTitle}) at ${(bestPrimary.sim * 100).toFixed(0)}%${bestPrimary.rationale ? ` — ${bestPrimary.rationale}` : ""}.`
+    : bestSecondary.sim > 0
+      ? `Partial fit via secondary NAICS — your ${bestSecondary.vendor} substitutes for the RFP's ${bestSecondary.rfp} at ${(bestSecondary.sim * 100).toFixed(0)}%.`
+      : `None of your industries (${profileCodes.length}) substitute for required ${rfpPrimary} (${primaryTitle}).`;
 
   return {
     category: "Capability",
     status,
-    score: status === "missing" ? 0.1 : Math.max(0, Math.min(1, adjusted)),
+    score: status === "missing" ? 0.1 : Math.max(0, Math.min(1, combined)),
     weight: WEIGHTS.capability,
-    detail: `Closest capability: "${best.c.value}" (similarity ${best.sim.toFixed(2)}).`,
-    profileClaim: best.c.value,
+    detail,
+    rfpPhrase: `${rfpPrimary} ${primaryTitle}`,
+    profileClaim: bestPrimary.vendor || bestSecondary.vendor || undefined,
+  };
+}
+
+// Sub-track variant of scoreCapability. Same per-pair similarity math but:
+//   - Considers ALL RFP NAICS equally (not weighted toward primary), since
+//     a sub vendor matches a single trade slice
+//   - Looser status thresholds (≥0.50 strong, ≥0.30 partial, ≥0.15 weak)
+//     so a vendor that's only a partial fit for a sub slot still surfaces
+function scoreCapabilityForSub(
+  profile: FullProfile,
+  rfp: RfpCacheRow,
+): CategoryBreakdown {
+  const profileCodes = profile.naicsCodes ?? [];
+  const rfpCodes = rfp.naicsCodes ?? [];
+  if (profileCodes.length === 0) {
+    return neutral("Capability", "No NAICS industries on profile.");
+  }
+  if (rfpCodes.length === 0) {
+    return neutral("Capability", "RFP has no NAICS classification.");
+  }
+
+  let best = { vendor: "", rfp: "", sim: 0, rationale: undefined as string | undefined };
+  for (const vc of profileCodes) {
+    for (const rc of rfpCodes) {
+      const r = lookupNaicsSimilarityDetailed(vc, rc);
+      if (r && r.sim > best.sim) {
+        best = { vendor: vc, rfp: rc, sim: r.sim, rationale: r.rationale };
+      }
+    }
+  }
+
+  const status: CategoryStatus =
+    best.sim >= 0.50 ? "strong"
+    : best.sim >= 0.30 ? "partial"
+    : best.sim >= 0.15 ? "weak"
+    : "missing";
+
+  const rfpTitle = NAICS_MAP[best.rfp] ?? best.rfp;
+  const vendorTitle = NAICS_MAP[best.vendor] ?? best.vendor;
+  const detail = best.sim > 0
+    ? `As sub: your NAICS ${best.vendor} (${vendorTitle}) covers the RFP's ${best.rfp} (${rfpTitle}) at ${(best.sim * 100).toFixed(0)}%${best.rationale ? ` — ${best.rationale}` : ""}.`
+    : `None of your industries overlap any RFP NAICS.`;
+
+  return {
+    category: "Capability",
+    status,
+    score: status === "missing" ? 0 : Math.max(0, Math.min(1, best.sim)),
+    weight: WEIGHTS.capability,
+    detail,
+    profileClaim: best.vendor || undefined,
   };
 }
 
@@ -637,52 +659,11 @@ function scoreLocation(profile: FullProfile, rfp: RfpCacheRow): CategoryBreakdow
   return { category: "Location", status: "missing", score: 0, weight: WEIGHTS.location, detail: `${rfp.location} not in any of your work areas.` };
 }
 
-// Direct NAICS code overlap — hard signal, not semantically dampened. When
-// both sides expose NAICS we score by coverage (matches / rfp codes) so
-// covering all of an RFP's codes maxes the component. The official NAICS
-// titles are also folded into the RFP embedding text (see embeddings.ts) so
-// semantic capability matching benefits even when the contractor hasn't
-// added NAICS to their profile — but this scorer rewards explicit overlap.
-function scoreNaicsOverlap(profile: FullProfile, rfp: RfpCacheRow): CategoryBreakdown {
-  const rfpCodes = rfp.naicsCodes ?? [];
-  const profileCodes = profile.naicsCodes ?? [];
-  if (rfpCodes.length === 0) {
-    return neutral("NAICS", "RFP doesn't list NAICS codes.");
-  }
-  if (profileCodes.length === 0) {
-    return neutral(
-      "NAICS",
-      "Add NAICS codes to your profile to score direct overlap with RFPs.",
-    );
-  }
-  const profileSet = new Set(profileCodes);
-  const matches = rfpCodes.filter((c) => profileSet.has(c));
-  if (matches.length === 0) {
-    return {
-      category: "NAICS",
-      status: "missing",
-      score: 0,
-      weight: WEIGHTS.naics,
-      detail: `No code overlap (RFP cites ${rfpCodes.join(", ")}).`,
-      rfpPhrase: rfpCodes.join(", "),
-    };
-  }
-  const coverage = matches.length / rfpCodes.length;
-  const status: CategoryStatus =
-    coverage >= 0.66 ? "strong" : coverage >= 0.33 ? "partial" : "weak";
-  // Floor at 0.6 so even a single overlap is a meaningful score — direct
-  // NAICS code agreement is high-confidence industry alignment.
-  const score = Math.max(0.6, coverage);
-  return {
-    category: "NAICS",
-    status,
-    score,
-    weight: WEIGHTS.naics,
-    detail: `${matches.length} of ${rfpCodes.length} RFP NAICS codes match your profile (${matches.join(", ")}).`,
-    rfpPhrase: rfpCodes.join(", "),
-    profileClaim: matches.join(", "),
-  };
-}
+// scoreNaicsOverlap (origin/main 4fe4941) was deleted as part of the
+// merge — its direct-overlap logic is now a special case of scoreCapability
+// (exact code match returns sim=1.0 from the substitutes matrix, with the
+// added benefit that partial/related codes also score via the curated
+// weights instead of returning 0).
 
 // ---------------------------------------------------------------------------
 // Stage 4 — Soft cert bonus (spec § 9.5)
@@ -769,23 +750,27 @@ function scoreAsSub(
   rfp: RfpCacheRow,
   dq: DataQuality,
 ): { eligible: boolean; score: number; breakdown: CategoryBreakdown[] } {
-  // If the user has zero specialties, they can't credibly sub. Otherwise
-  // sub eligibility is much looser than prime — subs aren't the entity
-  // holding the prime contract, so prime-only gates (gov experience,
-  // set-aside lockouts) don't apply.
-  if (profile.specialties.length === 0) {
-    return { eligible: false, score: 0, breakdown: [] };
-  }
-
-  // Loosened categories: specialty weight up, agency weight down, scope/
-  // duration kept neutral (subs don't drive these). Reuses scorers for
-  // consistency; weights are local to the sub track.
-  const subSpecialty = { ...scoreSpecialty(profile, rfp, dq), weight: 0.45 };
-  const subCapability = { ...scoreCapability(profile, rfp, dq), weight: 0.2 };
-  const subLocation = { ...scoreLocation(profile, rfp), weight: 0.2 };
-  const subAgency = { ...scoreAgency(profile, rfp), weight: 0.05 };
-  const subNaics = { ...scoreNaicsOverlap(profile, rfp), weight: 0.1 };
-  const breakdown = [subSpecialty, subCapability, subLocation, subAgency, subNaics];
+  // Sub eligibility is looser than prime — subs aren't the entity holding
+  // the prime contract, so prime-only gates (gov experience, set-aside
+  // lockouts) don't apply. Pre-2026-05-26 this function also required
+  // profile.specialties.length > 0, on the theory that "no specialties =
+  // can't sub credibly." That was specialty-driven thinking from the
+  // bag-of-tokens era; sub eligibility is now driven by NAICS overlap
+  // (any RFP code at sim ≥ 0.3 via the matrix), so an empty specialty
+  // list is fine if the user has NAICS coverage.
+  //
+  // Loosened weighting for sub track: capability (NAICS) gets the largest
+  // share because the sub-eligibility floor is sim ≥ 0.3 against any RFP
+  // code (vs ≥ 0.5 against the primary for prime). Location stays
+  // important since subs are typically local. Specialty as a small cosine
+  // bonus when embeddings exist. scoreNaicsOverlap from origin/main was
+  // dropped here for the same reason as in the prime track — its logic is
+  // subsumed by scoreCapability's matrix lookup.
+  const subCapability = { ...scoreCapabilityForSub(profile, rfp), weight: 0.4 };
+  const subSpecialty = { ...scoreSpecialty(profile, rfp, dq), weight: 0.25 };
+  const subLocation = { ...scoreLocation(profile, rfp), weight: 0.25 };
+  const subAgency = { ...scoreAgency(profile, rfp), weight: 0.1 };
+  const breakdown = [subCapability, subSpecialty, subLocation, subAgency];
 
   const score = clamp01to100(aggregateWeighted(breakdown));
   // Eligible if any scored category is at least partial — the sub track

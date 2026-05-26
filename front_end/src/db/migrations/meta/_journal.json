@@ -64,6 +64,13 @@
       "when": 1779776251833,
       "tag": "0008_match_state_cache",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1779784239689,
+      "tag": "0009_rfp_scope_summary",
+      "breakpoints": true
     }
   ]
 }

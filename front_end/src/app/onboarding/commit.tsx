@@ -59,11 +59,18 @@ export interface AddAgencyInput {
   role: "prime" | "sub";
 }
 
+/** Returned by addSpecialty / addCapability so the UI can show the user
+ *  which NAICS codes were freshly inferred from their input. Empty array
+ *  on the deferred handler (no API call fires until commit). */
+export interface AddSpecCapResult {
+  addedNaicsCodes: string[];
+}
+
 export interface CommitHandler {
   patch(p: TopLevelPatch): Promise<void>;
-  addSpecialty(input: { value: string; weight: "primary" | "secondary" }): Promise<void>;
+  addSpecialty(input: { value: string; weight: "primary" | "secondary" }): Promise<AddSpecCapResult>;
   removeSpecialty(id: string): Promise<void>;
-  addCapability(input: { value: string }): Promise<void>;
+  addCapability(input: { value: string }): Promise<AddSpecCapResult>;
   removeCapability(id: string): Promise<void>;
   addLicense(input: AddLicenseInput): Promise<void>;
   removeLicense(id: string): Promise<void>;
@@ -116,24 +123,46 @@ export function makeAutoCommitHandler(refresh: () => Promise<void> | void): Comm
       await after();
     },
     async addSpecialty({ value, weight }) {
-      await fetch("/api/profile/specialties/", {
+      const res = await fetch("/api/profile/specialties/", {
         method: "POST",
         headers: JSON_HEADERS,
         body: JSON.stringify({ value, weight }),
       });
+      // Tolerate older API versions / parse failures by defaulting to []
+      // — the inferred-NAICS chip is a nice-to-have, not load-bearing.
+      let addedNaicsCodes: string[] = [];
+      try {
+        const body = (await res.json()) as { addedNaicsCodes?: unknown };
+        if (Array.isArray(body.addedNaicsCodes)) {
+          addedNaicsCodes = body.addedNaicsCodes.filter((c): c is string => typeof c === "string");
+        }
+      } catch {
+        // ignore — response body wasn't JSON, no chips to show
+      }
       await after();
+      return { addedNaicsCodes };
     },
     async removeSpecialty(id) {
       await fetch(`/api/profile/specialties/${id}/`, { method: "DELETE" });
       await after();
     },
     async addCapability({ value }) {
-      await fetch("/api/profile/capabilities/", {
+      const res = await fetch("/api/profile/capabilities/", {
         method: "POST",
         headers: JSON_HEADERS,
         body: JSON.stringify({ value }),
       });
+      let addedNaicsCodes: string[] = [];
+      try {
+        const body = (await res.json()) as { addedNaicsCodes?: unknown };
+        if (Array.isArray(body.addedNaicsCodes)) {
+          addedNaicsCodes = body.addedNaicsCodes.filter((c): c is string => typeof c === "string");
+        }
+      } catch {
+        // ignore
+      }
       await after();
+      return { addedNaicsCodes };
     },
     async removeCapability(id) {
       await fetch(`/api/profile/capabilities/${id}/`, { method: "DELETE" });
@@ -229,11 +258,14 @@ export function makeDeferredCommitHandler(setDraft: DraftSetter): CommitHandler 
     patch(p) {
       return mutate((s) => ({ ...s, ...p }));
     },
-    addSpecialty({ value, weight }) {
-      return mutate((s) => ({
+    async addSpecialty({ value, weight }) {
+      await mutate((s) => ({
         ...s,
         specialties: [...s.specialties, { id: makeDraftId(), value, weight }],
       }));
+      // Deferred handler doesn't call the API, so no NAICS inference happens
+      // until the user clicks Save and the queued mutations replay.
+      return { addedNaicsCodes: [] };
     },
     removeSpecialty(id) {
       return mutate((s) => ({
@@ -241,11 +273,12 @@ export function makeDeferredCommitHandler(setDraft: DraftSetter): CommitHandler 
         specialties: s.specialties.filter((x) => x.id !== id),
       }));
     },
-    addCapability({ value }) {
-      return mutate((s) => ({
+    async addCapability({ value }) {
+      await mutate((s) => ({
         ...s,
         capabilities: [...s.capabilities, { id: makeDraftId(), value }],
       }));
+      return { addedNaicsCodes: [] };
     },
     removeCapability(id) {
       return mutate((s) => ({

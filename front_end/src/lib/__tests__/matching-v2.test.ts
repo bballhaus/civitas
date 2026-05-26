@@ -57,6 +57,7 @@ function makeRfp(overrides: Partial<RfpCacheRow> = {}): RfpCacheRow {
     sourceId: "caleprocure",
     title: "Sidewalk and curb ramp installation",
     description: "City-wide sidewalk and curb ramp installation per ADA standards.",
+    scopeSummary: null,
     agency: "Caltrans District 4",
     location: "San Francisco, CA",
     deadline: new Date("2026-08-01"),
@@ -209,19 +210,19 @@ test("data_quality coverage classification", () => {
   assert.equal(thin.dataQuality.coverage, "thin");
 });
 
-test("failed prime routes to sub track if specialty match exists", () => {
+test("failed prime routes to sub track if NAICS capability match exists", () => {
+  // Profile holds the RFP's exact NAICS (237310 Highway/Street/Bridge),
+  // satisfying the NAICS gate. Prime still fails because the required
+  // license isn't held — but sub-track capability fires at sim=1.0
+  // (exact code match), so the user surfaces as sub-eligible.
   const profile = makeProfile({
-    specialties: [{
-      id: "s1", userId: "u1", value: "concrete flatwork",
-      canonicalId: null, weight: "primary", embedding: null,
-      createdAt: new Date(),
-    }],
+    naicsCodes: ["237310"],
     licenses: [],
   });
   const rfp = makeRfp({
     licensesRequired: ["A"],
+    naicsCodes: ["237310"],
     title: "Concrete flatwork project",
-    description: "Concrete flatwork installation and repair.",
   });
   const result = matchV2(profile, rfp);
   assert.equal(result.primeEligible, false);
@@ -236,20 +237,60 @@ test("tier 'not_eligible' when prime gates fail and sub track is empty", () => {
   assert.equal(result.tier, "not_eligible");
 });
 
-test("citations carry RFP phrase and profile claim", () => {
-  const profile = makeProfile({
-    specialties: [{
-      id: "s1", userId: "u1", value: "concrete flatwork installation",
-      canonicalId: null, weight: "primary", embedding: null,
-      createdAt: new Date(),
-    }],
-  });
-  const rfp = makeRfp({
-    title: "concrete flatwork installation downtown",
-    description: "concrete flatwork installation downtown",
-  });
+test("NAICS gate blocks prime when profile NAICS don't substitute for RFP primary", () => {
+  // Profile is a tile contractor (238340) — totally different trade from
+  // the RFP's primary NAICS (237310 Highway/Street/Bridge). Matrix gives
+  // similarity < 0.5, so the prime gate fires.
+  const profile = makeProfile({ naicsCodes: ["238340"] });
+  const rfp = makeRfp({ naicsCodes: ["237310"] });
   const result = matchV2(profile, rfp);
-  const spec = result.breakdown.find((b) => b.category === "Specialty")!;
-  // No embedding fallback path — should still produce a citation.
-  assert.ok(spec.profileClaim, "specialty citation missing profile claim");
+  assert.equal(result.primeEligible, false);
+  assert.ok(
+    result.gateFailures.some((f) => f.toLowerCase().includes("capability")),
+    "expected a capability gate failure",
+  );
+});
+
+test("NAICS gate is unknown-as-pass when either side lacks codes", () => {
+  // RFP has no NAICS → gate can't evaluate → must NOT fire.
+  const noRfpCodes = matchV2(
+    makeProfile({ naicsCodes: ["999999"] }),
+    makeRfp({ naicsCodes: null }),
+  );
+  assert.equal(noRfpCodes.primeEligible, true);
+
+  // Profile has no NAICS → gate can't evaluate → must NOT fire (don't
+  // lock out users who haven't picked NAICS yet).
+  const noProfileCodes = matchV2(
+    makeProfile({ naicsCodes: null }),
+    makeRfp({ naicsCodes: ["237310"] }),
+  );
+  assert.equal(noProfileCodes.primeEligible, true);
+});
+
+test("Capability matches via matrix substitute (not just exact code)", () => {
+  // 541511 (Custom Programming) ↔ 541512 (Systems Design) is a curated
+  // substitute pair with weight ~0.9. A vendor at 541511 should pass the
+  // gate AND score strong on an RFP at 541512, even though codes differ.
+  const profile = makeProfile({ naicsCodes: ["541511"] });
+  const rfp = makeRfp({ naicsCodes: ["541512"] });
+  const result = matchV2(profile, rfp);
+  assert.equal(result.primeEligible, true);
+  const cap = result.breakdown.find((b) => b.category === "Capability")!;
+  assert.ok(
+    cap.status === "strong" || cap.status === "partial",
+    `expected capability status to be strong/partial via substitute, got ${cap.status}`,
+  );
+});
+
+test("Capability citation includes RFP phrase and matched profile NAICS", () => {
+  // Capability now owns the scope-match signal — its citation should name
+  // both the RFP's primary NAICS (with title) and the vendor's matched code.
+  const profile = makeProfile({ naicsCodes: ["237310"] });
+  const rfp = makeRfp({ naicsCodes: ["237310"] });
+  const result = matchV2(profile, rfp);
+  const cap = result.breakdown.find((b) => b.category === "Capability")!;
+  assert.ok(cap.profileClaim, "capability citation missing profile claim");
+  assert.equal(cap.profileClaim, "237310");
+  assert.ok(cap.rfpPhrase && cap.rfpPhrase.includes("237310"), "capability citation missing RFP phrase");
 });

@@ -216,33 +216,46 @@ export async function refreshProfileEmbeddings(userId: string): Promise<{
 // ---------------------------------------------------------------------------
 
 export function buildRfpEmbeddingText(rfp: RfpCacheRow): string {
-  const parts: string[] = [rfp.title];
-  if (rfp.description) parts.push(rfp.description);
-  if (rfp.capabilities && rfp.capabilities.length > 0) {
-    parts.push(rfp.capabilities.join(" "));
-  }
+  // Section-labeled format. Voyage handles labeled blocks well and the
+  // labels give the embedder explicit signal about what each chunk is
+  // (vs the pre-2026-05-26 implementation which joined everything by
+  // single space and forced the model to guess section boundaries).
+  const sections: string[] = [`Title: ${rfp.title}`];
+
+  // Scope summary is the LLM-generated 1-2 sentence description (from
+  // scripts/tag-rfp-naics.ts). For thin sources (PlanetBids/SF City/
+  // BidSync, ~75% of catalog) this is the densest signal we have — it
+  // expands abbreviated titles ("EXT REC CON26-0047 Union Sq Cafe") into
+  // factual scope ("Operate a full-service café in Union Square...").
+  if (rfp.scopeSummary) sections.push(`Scope: ${rfp.scopeSummary}`);
+
+  if (rfp.description) sections.push(`Description: ${rfp.description}`);
+
   if (rfp.deliverables && rfp.deliverables.length > 0) {
-    parts.push(rfp.deliverables.join(" "));
+    sections.push(`Deliverables: ${rfp.deliverables.join(", ")}`);
   }
-  // Fold the official NAICS titles into the embedding so contractor
-  // specialty/capability vectors (which describe what the contractor *does*)
-  // can semantically match against the industry vocabulary RFPs cite — even
-  // when the code itself isn't on the contractor profile. Bare numeric codes
-  // would be near-noise in a sentence embedder.
+
+  // NAICS titles (resolved from codes) give the embedder formal industry
+  // vocabulary so contractor specialty/capability vectors can match against
+  // the language RFPs use. Bare numeric codes would be near-noise.
   if (rfp.naicsCodes && rfp.naicsCodes.length > 0) {
     const titles = rfp.naicsCodes
       .map((code) => NAICS_MAP[code])
       .filter((title): title is string => Boolean(title));
-    if (titles.length > 0) parts.push(titles.join(" "));
+    if (titles.length > 0) sections.push(`Industries: ${titles.join("; ")}`);
   }
-  // The attachment-rollup summary lives in `raw` for now (no dedicated column
-  // yet). Pull it when it's there — Cal eProcure has it; others don't.
+
+  // Attachment-rollup summary lives in `raw` jsonb (Cal eProcure populates
+  // it from PDF extraction; other sources empty). Worth keeping alongside
+  // scope_summary because the attachment summary often surfaces concrete
+  // technical specs the LLM-generated scope_summary won't.
   const raw = rfp.raw as Record<string, unknown> | null | undefined;
-  const summary = raw && typeof raw === "object" && "attachment_rollup" in raw
+  const attachSummary = raw && typeof raw === "object" && "attachment_rollup" in raw
     ? (raw.attachment_rollup as { summary?: string } | null)?.summary
     : undefined;
-  if (summary) parts.push(summary);
-  return parts.join(" ").slice(0, 16_000); // hard cap on token waste
+  if (attachSummary) sections.push(`Attachment Summary: ${attachSummary}`);
+
+  return sections.join("\n\n").slice(0, 16_000); // hard cap on token waste
 }
 
 /**

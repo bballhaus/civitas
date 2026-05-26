@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { addCapability } from "@/db/queries/profile";
 import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
+import { recomputeProfileNaics } from "@/lib/profile-naics";
 import { triggerProfileChangedRescore } from "@/lib/match-rescore-trigger";
 
 export async function POST(request: Request) {
@@ -24,6 +25,19 @@ export async function POST(request: Request) {
 
     const row = await addCapability({ userId: auth.userId, value, canonicalId });
 
+    // Derive profile.naics_codes from NAICS-titled capabilities. Server-side
+    // mirror of the specialties path — covers every write path, not just
+    // the onboarding picker. The `added` list bubbles back in the response
+    // so the onboarding UI can surface freshly-inferred codes (esp. LLM
+    // inferences on free text) for the user to review.
+    let addedNaicsCodes: string[] = [];
+    try {
+      const result = await recomputeProfileNaics(auth.userId);
+      addedNaicsCodes = result.added;
+    } catch (err) {
+      console.error("[capabilities] naics recompute failed:", err);
+    }
+
     // Embed the new capability so the v2 matcher can score it. Same
     // fail-soft pattern as onboarding.
     try {
@@ -37,7 +51,7 @@ export async function POST(request: Request) {
     }
 
     await triggerProfileChangedRescore(auth.userId);
-    return NextResponse.json(row, { status: 201 });
+    return NextResponse.json({ ...row, addedNaicsCodes }, { status: 201 });
   } catch (err) {
     console.error("Add capability error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

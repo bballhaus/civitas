@@ -271,6 +271,31 @@ export default function OnboardingPage() {
             )}
           </div>
 
+          {/* Pre-finish warning when the profile has zero NAICS coverage.
+              The matcher's Capability scorer (40% of the score) needs at
+              least one NAICS code to produce a non-neutral result; without
+              codes the user lands on /matches with almost no hits. */}
+          {step === TOTAL_STEPS &&
+            !editMode &&
+            snapshot &&
+            (snapshot.naicsCodes ?? []).length === 0 && (
+              <div className="mx-6 mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <p className="font-semibold mb-1">No industries on your profile yet.</p>
+                <p className="opacity-90">
+                  Matching uses NAICS industry codes as its primary signal. Finishing
+                  with none means most RFPs won&rsquo;t fit — you&rsquo;ll see an empty matches
+                  page. Add at least one to get started.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setStep(4)}
+                  className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-amber-800 underline hover:text-amber-900"
+                >
+                  Pick NAICS codes now →
+                </button>
+              </div>
+            )}
+
           <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between rounded-b-2xl">
             <button
               type="button"

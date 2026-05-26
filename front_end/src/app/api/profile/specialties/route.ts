@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { addSpecialty } from "@/db/queries/profile";
 import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
+import { recomputeProfileNaics } from "@/lib/profile-naics";
 import { triggerProfileChangedRescore } from "@/lib/match-rescore-trigger";
 
 export async function POST(request: Request) {
@@ -36,6 +37,20 @@ export async function POST(request: Request) {
       canonicalId,
     });
 
+    // Derive profile.naics_codes from NAICS-titled specialties. Server-side
+    // so it covers API-direct adds and /profile-setup edits, not just the
+    // onboarding picker. Fail-soft — a stale naics_codes column shouldn't
+    // block adding a specialty. The `added` list is bubbled back in the
+    // response so the onboarding UI can show the user which codes were
+    // just inferred (and let them remove bad LLM picks).
+    let addedNaicsCodes: string[] = [];
+    try {
+      const result = await recomputeProfileNaics(auth.userId);
+      addedNaicsCodes = result.added;
+    } catch (err) {
+      console.error("[specialties] naics recompute failed:", err);
+    }
+
     // Embed the new specialty so the v2 matcher can score it. Same
     // fail-soft pattern as onboarding — a Voyage outage or missing key
     // shouldn't block adding the specialty.
@@ -50,7 +65,7 @@ export async function POST(request: Request) {
     }
 
     await triggerProfileChangedRescore(auth.userId);
-    return NextResponse.json(row, { status: 201 });
+    return NextResponse.json({ ...row, addedNaicsCodes }, { status: 201 });
   } catch (err) {
     console.error("Add specialty error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
