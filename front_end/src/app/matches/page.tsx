@@ -59,6 +59,10 @@ interface MatchListItem {
 interface MatchResponse {
   count: number;
   profileCompleteness: number;
+  // ISO timestamp set when a profile mutation kicks off a background rescore;
+  // cleared (null) when the rescore lands. Drives the "Updating your matches…"
+  // banner and the poll loop in MatchesPageInner.
+  matchScoresPendingSince: string | null;
   matches: MatchListItem[];
 }
 
@@ -116,27 +120,50 @@ function MatchesPageInner() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/match/", { cache: "no-store" })
-      .then(async (res) => {
+    const load = async (opts: { setLoading: boolean }) => {
+      if (opts.setLoading) setLoading(true);
+      try {
+        const res = await fetch("/api/match/", { cache: "no-store" });
         if (res.status === 401) {
           router.replace("/login");
           return null;
         }
         if (!res.ok) throw new Error(`Failed to load matches (${res.status})`);
-        return res.json() as Promise<MatchResponse>;
-      })
-      .then((d) => {
-        if (cancelled || !d) return;
+        const d = (await res.json()) as MatchResponse;
+        if (cancelled) return null;
         setData(d);
-      })
-      .catch((e) => {
+        return d;
+      } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        return null;
+      } finally {
+        if (!cancelled && opts.setLoading) setLoading(false);
+      }
+    };
+
+    // Poll loop: while a background rescore is in flight, refetch every 3s
+    // so the banner clears and cards refresh as soon as the new scores land.
+    // First load uses the loading state; polled refreshes don't toggle it
+    // (avoids a flicker every 3 seconds).
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      const d = await load({ setLoading: false });
+      if (cancelled) return;
+      if (d?.matchScoresPendingSince) {
+        pollTimer = setTimeout(tick, 3000);
+      }
+    };
+    (async () => {
+      const d = await load({ setLoading: true });
+      if (cancelled || !d) return;
+      if (d.matchScoresPendingSince) {
+        pollTimer = setTimeout(tick, 3000);
+      }
+    })();
+
     return () => {
       cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
     };
   }, [router]);
 
@@ -188,6 +215,23 @@ function MatchesPageInner() {
             </p>
           </div>
         </div>
+
+        {data?.matchScoresPendingSince && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="mb-4 flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50/80 backdrop-blur-sm px-4 py-3 text-sm text-blue-800 shadow-sm"
+          >
+            <span
+              aria-hidden="true"
+              className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-400 border-t-transparent"
+            />
+            <span>
+              Updating your matches… The cards below may briefly show the
+              previous scores.
+            </span>
+          </div>
+        )}
 
         <FilterPanel
           filters={filters}

@@ -14,9 +14,10 @@
 // the catalog is cold. Anything not embedded this call gets picked up on
 // the next sync.
 
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { loadAndMirrorOneSource, populateRfpCacheFromV2Manifests } from "@/lib/rfp-cache-populator";
 import { refreshRfpEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
+import { rescoreRfpsRefreshedSince } from "@/lib/match-rescore";
 
 export const runtime = "nodejs";
 // Vercel Pro tier allows up to 300s. Voyage's 21s inter-batch sleep means
@@ -48,6 +49,11 @@ export async function POST(request: Request) {
     // Empty body is fine — falls through to full sweep.
   }
 
+  // Capture before we touch rfp_cache. Any row whose refreshedAt is >= this
+  // cutoff after the sync completes is something the populator just touched
+  // (inserted or updated), and is a candidate for background re-scoring.
+  const syncStartedAt = new Date();
+
   try {
     const mirror = sourceId
       ? await loadAndMirrorOneSource(sourceId)
@@ -69,6 +75,15 @@ export async function POST(request: Request) {
         embedError = err instanceof Error ? err.message : String(err);
         console.error("[cron/sync-rfp-cache] embed pass failed:", err);
       }
+    }
+
+    // Background rescore: new/updated RFPs should appear in every user's
+    // cached match_state. Runs after the response is returned so the Lambda
+    // can hold the timeout for the populator + embed work above.
+    if (mirror.rowsUpserted > 0) {
+      after(async () => {
+        await rescoreRfpsRefreshedSince(syncStartedAt);
+      });
     }
 
     return NextResponse.json({

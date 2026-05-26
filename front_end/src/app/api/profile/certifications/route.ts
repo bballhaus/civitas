@@ -4,6 +4,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { addCertification } from "@/db/queries/profile";
+import { triggerProfileChangedRescore } from "@/lib/match-rescore-trigger";
 
 export async function POST(request: Request) {
   const auth = await getAuthenticatedUser(request);
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
       kind,
       expiresOn,
     });
+    await triggerProfileChangedRescore(auth.userId);
     return NextResponse.json(row, { status: 201 });
   } catch (err) {
     console.error("Add certification error:", err);
