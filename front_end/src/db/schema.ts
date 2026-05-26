@@ -468,6 +468,19 @@ export const rfpCache = pgTable(
     requiresPastGovExp: boolean("requires_past_gov_exp"),
     incumbentVendor: text("incumbent_vendor"),
     incumbentContractEnd: date("incumbent_contract_end"),
+    // Key dates extracted from attachments by the LLM enrichment step.
+    // Distinct from `deadline` (which is the listing-level proposal due date).
+    // Each is nullable because the source document may not state it.
+    qaDeadline: timestamp("qa_deadline", { withTimezone: true }),
+    qaResponseDate: date("qa_response_date"),
+    prebidMeetingAt: timestamp("prebid_meeting_at", { withTimezone: true }),
+    siteVisitAt: timestamp("site_visit_at", { withTimezone: true }),
+    awardDate: date("award_date"),
+    contractStart: date("contract_start"),
+    contractEnd: date("contract_end"),
+    // Per-date {value, snippet} provenance, keyed by date-field name. Lets
+    // the UI show "found in attachment X" tooltips for explainability.
+    keyDatesSources: jsonb("key_dates_sources"),
     // Market intel (PlanetBids today; Cal eProcure / BidSync empty)
     prospectiveBidderCount: integer("prospective_bidder_count"),
     bidCount: integer("bid_count"),

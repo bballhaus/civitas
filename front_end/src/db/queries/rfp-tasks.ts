@@ -6,18 +6,44 @@
 
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "../client";
-import { rfpTasks, type RfpTask } from "../schema";
+import { rfpCache, rfpTasks, type RfpTask } from "../schema";
 
-/** Default 7-item checklist seeded once when an RFP first enters the tracker. */
-export const DEFAULT_TASK_TEMPLATE: ReadonlyArray<{ label: string }> = [
+/**
+ * Default 7-item checklist seeded once when an RFP first enters the tracker.
+ *
+ * `dateSource` controls auto-population of `dueDate` from the rfp_cache row:
+ *   - "deadline": main proposal due date (rfp_cache.deadline)
+ *   - "qa_deadline": Q&A deadline extracted from attachments
+ *   - "prebid_or_site": pre-bid meeting, falling back to site visit
+ *
+ * Tasks without a `dateSource` are seeded with `due_date = NULL` so the user
+ * can fill it in manually. We keep labels stable so existing tracker UIs
+ * (which match by label) continue to render correctly.
+ */
+type TaskDateSource = "deadline" | "qa_deadline" | "prebid_or_site";
+
+export const DEFAULT_TASK_TEMPLATE: ReadonlyArray<{
+  label: string;
+  dateSource?: TaskDateSource;
+}> = [
   { label: "Review RFP and attachments" },
   { label: "Confirm bid / no-bid decision" },
-  { label: "Submit questions by Q&A deadline" },
-  { label: "Attend pre-bid meeting" },
+  { label: "Submit questions by Q&A deadline", dateSource: "qa_deadline" },
+  { label: "Attend pre-bid meeting", dateSource: "prebid_or_site" },
   { label: "Draft proposal" },
   { label: "Internal review" },
-  { label: "Submit bid by deadline" },
+  { label: "Submit bid by deadline", dateSource: "deadline" },
 ] as const;
+
+// Convert a Date or date-string to the YYYY-MM-DD shape the `due_date`
+// column expects. Drops the time component intentionally — tracker tasks
+// are day-granularity.
+function toDateOnly(d: Date | string | null): string | null {
+  if (!d) return null;
+  const date = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
 
 export async function getTasksForRfp(userId: string, rfpId: string): Promise<RfpTask[]> {
   return db
@@ -38,6 +64,11 @@ export async function getAllTasksForUser(userId: string): Promise<RfpTask[]> {
 /**
  * Idempotent: only seeds if no rows exist for this (user, RFP).
  * Returns the seeded rows, or [] if a template already existed.
+ *
+ * Looks up the RFP's deadline + extracted key dates (qa_deadline,
+ * prebid_meeting_at, site_visit_at) from rfp_cache to auto-populate the
+ * matching seeded task `dueDate`s. Tasks whose source date is null (or
+ * whose RFP isn't in rfp_cache) seed with `due_date = NULL`.
  */
 export async function seedDefaultTasks(userId: string, rfpId: string): Promise<RfpTask[]> {
   const existing = await db
@@ -46,6 +77,28 @@ export async function seedDefaultTasks(userId: string, rfpId: string): Promise<R
     .where(and(eq(rfpTasks.userId, userId), eq(rfpTasks.rfpId, rfpId)))
     .limit(1);
   if (existing.length > 0) return [];
+
+  const [cacheRow] = await db
+    .select({
+      deadline: rfpCache.deadline,
+      qaDeadline: rfpCache.qaDeadline,
+      prebidMeetingAt: rfpCache.prebidMeetingAt,
+      siteVisitAt: rfpCache.siteVisitAt,
+    })
+    .from(rfpCache)
+    .where(eq(rfpCache.id, rfpId))
+    .limit(1);
+
+  const dueDateFor = (src: TaskDateSource | undefined): string | null => {
+    if (!src || !cacheRow) return null;
+    if (src === "deadline") return toDateOnly(cacheRow.deadline);
+    if (src === "qa_deadline") return toDateOnly(cacheRow.qaDeadline);
+    if (src === "prebid_or_site") {
+      return toDateOnly(cacheRow.prebidMeetingAt ?? cacheRow.siteVisitAt);
+    }
+    return null;
+  };
+
   const rows = await db
     .insert(rfpTasks)
     .values(
@@ -53,6 +106,7 @@ export async function seedDefaultTasks(userId: string, rfpId: string): Promise<R
         userId,
         rfpId,
         label: t.label,
+        dueDate: dueDateFor(t.dateSource),
         sortOrder: i,
         isCustom: false,
       })),

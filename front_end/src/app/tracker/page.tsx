@@ -31,7 +31,30 @@ interface TrackerRfp {
   sourceId: string | null;
   status: PipelineStatus;
   statusChangedAt: string | null;
+  qaDeadline: string | null;
+  qaResponseDate: string | null;
+  prebidMeetingAt: string | null;
+  siteVisitAt: string | null;
+  awardDate: string | null;
+  contractStart: string | null;
+  contractEnd: string | null;
 }
+
+// Calendar styling for the key-date event types extracted from attachments.
+// Distinct from STATUS_META (which colors RFP-deadline events by pipeline
+// status) so users can tell at a glance which kind of date they're seeing.
+const KEY_DATE_META: Record<
+  "qaDeadline" | "qaResponseDate" | "prebidMeetingAt" | "siteVisitAt" | "awardDate" | "contractStart" | "contractEnd",
+  { label: string; color: string; icon: string }
+> = {
+  qaDeadline: { label: "Q&A deadline", color: "#EAB308", icon: "❓" },
+  qaResponseDate: { label: "Q&A answers posted", color: "#CA8A04", icon: "💬" },
+  prebidMeetingAt: { label: "Pre-bid meeting", color: "#A855F7", icon: "🗣️" },
+  siteVisitAt: { label: "Site visit", color: "#A855F7", icon: "📍" },
+  awardDate: { label: "Award decision", color: "#16A34A", icon: "🏆" },
+  contractStart: { label: "Contract starts", color: "#0EA5E9", icon: "▶" },
+  contractEnd: { label: "Contract ends", color: "#64748B", icon: "■" },
+};
 
 interface TrackerPayload {
   rfps: TrackerRfp[];
@@ -196,6 +219,37 @@ export default function TrackerPage() {
           borderColor: meta.color,
           textColor: "#ffffff",
           extendedProps: { kind: "deadline", rfpId: rfp.id },
+        });
+      }
+      // Extracted key dates (Q&A, pre-bid, award, contract). Each is rendered
+      // with its own color so the user can distinguish them from the main
+      // proposal deadline above.
+      const keyDateFields = [
+        "qaDeadline",
+        "qaResponseDate",
+        "prebidMeetingAt",
+        "siteVisitAt",
+        "awardDate",
+        "contractStart",
+        "contractEnd",
+      ] as const;
+      for (const field of keyDateFields) {
+        const raw = rfp[field];
+        if (!raw) continue;
+        const kdIso = isoForFullCalendar(raw);
+        if (!kdIso) continue;
+        const m = KEY_DATE_META[field];
+        events.push({
+          id: `${field}:${rfp.id}`,
+          title: `${m.icon} ${m.label}: ${rfp.title}`,
+          start: kdIso,
+          // qa_response_date / award / contract_* are stored as `date` (no
+          // time component), so they should render as all-day on the cal.
+          allDay: field === "qaResponseDate" || field === "awardDate" || field === "contractStart" || field === "contractEnd",
+          backgroundColor: m.color,
+          borderColor: m.color,
+          textColor: "#ffffff",
+          extendedProps: { kind: field, rfpId: rfp.id },
         });
       }
     }
@@ -394,6 +448,23 @@ export default function TrackerPage() {
                 {STATUS_META[s].label}
               </span>
             ))}
+            <span className="text-slate-400">|</span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: KEY_DATE_META.qaDeadline.color }} />
+              Q&amp;A
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: KEY_DATE_META.prebidMeetingAt.color }} />
+              Pre-bid / site visit
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: KEY_DATE_META.awardDate.color }} />
+              Award
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: KEY_DATE_META.contractStart.color }} />
+              Contract
+            </span>
           </div>
         </div>
 
