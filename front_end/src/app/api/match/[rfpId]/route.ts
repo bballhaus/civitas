@@ -5,14 +5,18 @@
 // includes every CategoryBreakdown row, the sub-track parallel scoring,
 // and the incumbent state machine output so the UI can render the chips
 // and the explanation copy.
+//
+// Read path: prefer match_state.matchData if present (populated by the
+// background rescore). Fall back to live matchV2() if not yet cached —
+// same function as the writer, so the result is byte-identical.
 
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/db/client";
-import { rfpCache } from "@/db/schema";
+import { matchState, rfpCache } from "@/db/schema";
 import { getFullProfile } from "@/db/queries/profile";
-import { matchV2 } from "@/lib/matching-v2";
+import { matchV2, type MatchResult } from "@/lib/matching-v2";
 import { visibleRfpSourceClause } from "@/lib/rfp-source-visibility";
 
 export async function GET(
@@ -25,23 +29,38 @@ export async function GET(
   }
 
   const { rfpId } = await context.params;
-  const [profile, rfpRow] = await Promise.all([
-    getFullProfile(auth.userId),
+  const [rfpRow, cachedRow] = await Promise.all([
     db
       .select()
       .from(rfpCache)
       .where(and(eq(rfpCache.id, rfpId), visibleRfpSourceClause()))
       .limit(1),
+    db
+      .select({ matchData: matchState.matchData })
+      .from(matchState)
+      .where(and(eq(matchState.userId, auth.userId), eq(matchState.rfpId, rfpId)))
+      .limit(1),
   ]);
-  if (!profile) {
-    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-  }
   if (rfpRow.length === 0) {
     return NextResponse.json({ error: "RFP not found" }, { status: 404 });
   }
 
   const rfp = rfpRow[0];
-  const m = matchV2(profile, rfp);
+
+  // Cache hit: return the pre-scored MatchResult directly. No FullProfile
+  // fetch needed (saves 6 queries).
+  let m: MatchResult | null = cachedRow[0]?.matchData
+    ? (cachedRow[0].matchData as MatchResult)
+    : null;
+
+  // Cache miss: score live. Same matchV2 as the rescore writer.
+  if (!m) {
+    const profile = await getFullProfile(auth.userId);
+    if (!profile) {
+      return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+    }
+    m = matchV2(profile, rfp);
+  }
 
   // The richer fields (contact, eventUrl, attachments, evaluation criteria,
   // contract duration, attachment_rollup) live in rfp_cache.raw — the

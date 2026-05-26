@@ -97,6 +97,13 @@ export const profiles = pgTable(
     dailyRoundupEnabled: boolean("daily_roundup_enabled").notNull().default(false),
     dailyRoundupTimezone: text("daily_roundup_timezone"),
     dailyRoundupLastSentAt: timestamp("daily_roundup_last_sent_at", { withTimezone: true }),
+    // Signal for the background rescore pipeline. Set whenever the profile
+    // (or any child collection: specialties, capabilities, licenses, certs,
+    // work areas, agency relationships, NAICS) is mutated; cleared at the
+    // end of a successful rescoreUserMatches(userId). The /api/match list
+    // surfaces this so /matches can show an "Updating your matches…" banner
+    // until the cached match_state rows catch up.
+    matchScoresPendingSince: timestamp("match_scores_pending_since", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -339,6 +346,11 @@ export const matchState = pgTable(
     // Bidding-tracker pipeline. null = not in the tracker.
     // 'saved' | 'in_progress' | 'bid_submitted' | 'won' | 'lost' | 'no_bid'
     status: text("status"),
+    // FEEDBACK SNAPSHOT (not the live cache). These four columns capture the
+    // score the user saw at the moment they rated good/bad — so good/bad
+    // ratings stay explainable even after the live score changes. They are
+    // written only by setMatchFeedback and must NOT be overwritten by the
+    // background rescore. See cached* columns below for the live cache.
     matchScore: real("match_score"),
     matchTier: text("match_tier"),
     winProbability: real("win_probability"),
@@ -352,11 +364,24 @@ export const matchState = pgTable(
     // roundup digest (unviewed >75% matches only) and any future "new
     // since last visit" UI. Set once and never cleared.
     viewedAt: timestamp("viewed_at", { withTimezone: true }),
+    // LIVE MATCH CACHE — populated by the background rescore job. The list
+    // view sorts on cachedScore; the detail view hydrates from matchData.
+    // null means "not yet scored for this (user, RFP)" — caller falls back
+    // to live matchV2() and queues a background populate. These columns
+    // are NEVER set by user-action endpoints; the rescore helper is the
+    // sole writer.
+    cachedScore: real("cached_score"),
+    cachedTier: text("cached_tier"),
+    cachedWinProbability: real("cached_win_probability"),
+    cachedIncumbentState: text("cached_incumbent_state"),
+    matchData: jsonb("match_data"), // full MatchResult; see lib/matching-v2.ts
+    scoredAt: timestamp("scored_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("idx_match_state_user_status").on(t.userId, t.status),
     index("idx_match_state_user_viewed").on(t.userId, t.viewedAt),
+    index("idx_match_state_user_cached_score").on(t.userId, t.cachedScore),
     unique("uq_match_state_user_rfp").on(t.userId, t.rfpId),
   ],
 );
