@@ -55,7 +55,7 @@ async function handle(request: Request) {
     agency: r.agency,
     matchScore: SAMPLE_SCORES[i] ?? 75,
     deadline: r.deadline ? r.deadline.toISOString().slice(0, 10) : null,
-    detailUrl: `${origin}/dashboard/rfp/${encodeURIComponent(r.id)}`,
+    detailUrl: `${origin}/matches/${encodeURIComponent(r.id)}`,
   }));
 
   const ok = await sendDailyRoundupEmail(to, items, origin);

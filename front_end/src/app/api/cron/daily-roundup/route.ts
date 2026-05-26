@@ -175,7 +175,7 @@ async function runRoundup() {
       agency: rfp.agency,
       matchScore: m.score,
       deadline: rfp.deadline ? rfp.deadline.toISOString().slice(0, 10) : null,
-      detailUrl: `${origin}/dashboard/rfp/${encodeURIComponent(rfp.id)}`,
+      detailUrl: `${origin}/matches/${encodeURIComponent(rfp.id)}`,
     }));
 
     const ok = await sendDailyRoundupEmail(c.email, items, origin);

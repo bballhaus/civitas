@@ -121,7 +121,7 @@ export async function sendDailyRoundupEmail(
       return lines.join("\n");
     }),
     "",
-    `Open the dashboard: ${appOrigin}/home`,
+    `View matches: ${appOrigin}/matches`,
     "",
     "You're getting this because you opted in at the end of onboarding. Manage notifications in your profile settings.",
   ];
@@ -161,8 +161,8 @@ export async function sendDailyRoundupEmail(
         </p>
         <table style="width:100%; border-collapse:collapse; margin-top:16px;">${htmlRows}</table>
         <p style="margin: 24px 0;">
-          <a href="${escapeHtml(appOrigin)}/home" style="background:#3C89C6; color:white; padding:12px 20px; border-radius:6px; text-decoration:none; font-weight:600;">
-            Open dashboard
+          <a href="${escapeHtml(appOrigin)}/matches" style="background:#3C89C6; color:white; padding:12px 20px; border-radius:6px; text-decoration:none; font-weight:600;">
+            View matches
           </a>
         </p>
         <p style="color:#94a3b8; font-size:12px;">
