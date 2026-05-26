@@ -1,36 +1,49 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Civitas — Frontend (Next.js)
 
-## Getting Started
+The Next.js application that powers the Civitas web UI and API. The same deployment serves the public pages, the authenticated app (matches, tracker, profile, contracts, onboarding), and every server-side API route. See [docs/Frontend.md](../docs/Frontend.md) and [docs/Backend.md](../docs/Backend.md) for the full architecture, and [src/db/README.md](src/db/README.md) for the Postgres + Drizzle layer.
 
-First, run the development server:
+## Quick start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# from the repo root
+docker compose up -d postgres        # local Postgres with pgvector + pg_trgm
+cd front_end
+cp .env.example .env.local           # then fill in the required env vars
+npm install
+npm run db:migrate                   # applies migrations + creates trigram indexes
+npm run dev                          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Required env vars (`.env.local`)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+JWT_SECRET=...                  # >= 32 chars
+DATABASE_URL=postgres://...     # docker-compose default works locally
+AWS_ACCESS_KEY_ID=...           # S3 + DynamoDB
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
+AWS_S3_BUCKET=civitas-ai
+GROQ_API_KEY=...                # set whichever LLM keys match civitas.config.json
+ANTHROPIC_API_KEY=...
+OPENAI_API_KEY=...
+RESEND_API_KEY=...              # transactional email; optional in dev (logs to console)
+CIVITAS_FROM_EMAIL="Civitas <register@civitas-ai.net>"
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Scripts
 
-## Learn More
+| Command | What it does |
+|---|---|
+| `npm run dev` | Start the Next.js dev server on `localhost:3000` |
+| `npm run build` | Production build |
+| `npm run lint` | ESLint |
+| `npm run db:generate` | Generate a new Drizzle migration from `src/db/schema.ts` |
+| `npm run db:migrate` | Apply pending migrations + ensure trigram indexes |
+| `npm run db:studio` | Open Drizzle Studio |
+| `npm run rfp-cache:populate` | Refresh `rfp_cache` from scraped manifests |
+| `npm run rfp-cache:embed` | Embed RFPs for semantic matching |
+| `npm run kpi:funnel [username]` | Run the KPI funnel CLI report — see [docs/KPIs.md](../docs/KPIs.md) |
 
-To learn more about Next.js, take a look at the following resources:
+## Deployment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Pushed to `main` deploys to Vercel (`civitas-ai.net`). All API routes run as serverless functions; the Postgres connection points at the AWS RDS instance via the `DATABASE_URL` env var set in the Vercel dashboard.

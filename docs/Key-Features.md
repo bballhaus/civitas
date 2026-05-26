@@ -7,24 +7,24 @@ This page describes Civitas's major features and how they work end-to-end, from 
 ## 1. RFP Discovery & Search
 
 ### What It Does
-Users browse a catalog of 500+ California government RFPs scraped from the Cal eProcurement portal. Each RFP is automatically scored against the user's company profile and ranked by relevance.
+Users browse a catalog of California government RFPs scraped from 57+ procurement portals (Cal eProcure, PlanetBids, BidSync, OpenGov). Each RFP is automatically scored against the user's company profile and ranked by relevance.
 
 ### How It Works
 
-**Data Pipeline:**
-1. A Selenium scraper (`webscraping/cal_eprocure_store.py`) navigates the Cal eProcurement site, extracting event metadata (title, agency, dates, description, attachments)
-2. Scraped events are saved to S3 as `scrapes/caleprocure/all_events.json`
-3. An attachment extraction script (`webscraping/extract_attachments.py`) processes downloaded PDFs with Groq LLM to extract structured requirements (NAICS codes, certifications, deliverables)
-4. Extraction results are saved to `scrapes/caleprocure/attachment_extractions.json`
+**Data Pipeline** (see [webscraping/v2/README.md](../webscraping/v2/README.md) for full details):
+1. A Playwright-based scraper running on AWS Lambda (`webscraping/v2/scrapers/*.py`) hits each portal, fetches detail pages, and (where available) downloads PDF attachments inline.
+2. Per-source manifests are written to `s3://civitas-ai/scrapes/v2/{source}/`.
+3. PDF text is extracted via PyMuPDF and enriched by an LLM (Claude Haiku 4.5 by default; Groq as fallback) into structured requirements: NAICS codes, certifications, licenses, clearances, deliverables, evaluation criteria, incumbent vendor.
+4. A post-scrape hook calls `/api/cron/sync-rfp-cache` to refresh the Postgres `rfp_cache` read view.
 
 **Serving to Frontend:**
-1. The Next.js API route (`/api/events`) loads both files from S3 (5-minute cache)
+1. The Next.js API route (`/api/events`) reads from `rfp_cache` (or the S3 manifests directly, depending on the route), with the configured cache TTL.
 2. Raw events are transformed into structured RFP objects with inferred fields:
    - **Location**: Extracted from title/description using regex and California city/county matching
    - **Industry**: Inferred via keyword pattern matching (22+ industry categories)
    - **Capabilities**: Extracted from description text (50+ capability types)
    - **Value**: Parsed from various formats ($1.5M, $100K-$500K, TBD)
-3. Attachment extraction data is merged in (NAICS codes, certifications, deliverables, evaluation criteria)
+3. LLM-extracted requirements are merged in where the source supports them (see [webscraping/v2/COVERAGE.md](../webscraping/v2/COVERAGE.md) for the per-source field matrix).
 
 **Dashboard UI:**
 - RFPs displayed as cards with match percentage, agency, deadline, and estimated value
@@ -42,14 +42,15 @@ Users can upload past contracts and proposals, and the system automatically extr
 ### How It Works
 
 **Upload Flow:**
-1. User uploads one or more documents (PDF, DOCX, TXT) on the `/upload` page
-2. Files are sent to the Django backend via `POST /api/profile/extract/`
+1. User uploads one or more documents (PDF, DOCX, TXT) on the `/upload` or `/contracts` page
+2. Files are sent to the Next.js API via `POST /api/profile/extract/` or `POST /api/contracts/`
 3. For each document:
-   - Text is extracted using pdfplumber (PDF) or python-docx (DOCX)
-   - Text is sent to Groq LLM (llama-3.1-8b-instant) with a structured extraction prompt
-   - LLM returns JSON with: contractor name, certifications, clearances, NAICS codes, work locations, capabilities, contract value, and more
+   - Text is extracted using `mupdf` (PDF) or `mammoth` (DOCX)
+   - A PII redaction pass runs before any LLM call (see `lib/pii-redaction.ts`)
+   - Text is sent through the provider-agnostic `lib/llm.ts` (defaults to Groq `llama-3.1-8b-instant`; configurable via `civitas.config.json`)
+   - The LLM returns JSON with: contractor name, certifications, clearances, NAICS codes, work locations, capabilities, contract value, and more
 4. Results from all documents are aggregated and deduplicated
-5. The aggregated profile is returned to the frontend for user review
+5. The aggregated profile is returned to the frontend for user review (the v2 contracts flow surfaces a claims review screen — see [Architecture-v2 § 6.5](Architecture-v2.md))
 
 **Profile Fields Extracted:**
 - Company name
@@ -107,11 +108,11 @@ Users can generate a complete proposal draft tailored to a specific RFP, using t
 
 1. User clicks "Generate Proposal" on an RFP detail page
 2. Frontend sends the RFP data, company profile, and optional past proposals to `POST /api/generate-proposal`
-3. The server-side API route constructs a prompt for Groq LLM including:
+3. The server-side API route constructs a prompt and calls the configured LLM (`lib/llm.ts`) with:
    - Full RFP details (requirements, deliverables, evaluation criteria)
    - Company profile (capabilities, certifications, experience)
    - Optional: text from past proposals for style matching (up to 80K characters)
-4. Groq generates a structured proposal with 5 sections:
+4. The LLM generates a structured proposal with 5 sections:
    - Executive Summary
    - Understanding of Requirements
    - Approach & Methodology
@@ -135,7 +136,7 @@ Generates an internal planning document to help users decide whether to pursue a
 
 1. User clicks "Generate Plan" on an RFP detail page
 2. Frontend sends data to `POST /api/generate-plan-of-execution`
-3. Groq LLM generates a plan with 5 sections:
+3. The configured LLM generates a plan with 5 sections:
    - **Contract Requirements Summary** — Scope, deliverables, timeline, compliance needs
    - **Capability Gap Analysis** — What the company has vs. what the RFP requires
    - **Action Items** — Concrete steps to close gaps (hiring, certifications, partnerships), each with priority and timeline
@@ -154,18 +155,12 @@ Users can track their progress on RFPs through three states: Saved, Applied, and
 ### How It Works
 
 **Status States:**
-- **Saved** — Bookmarked for later review (stored in frontend)
+- **Saved** — Bookmarked for later review
 - **Applied** — User has submitted an application
 - **In Progress** — User is actively working on the RFP (plan/proposal generated)
 
 **Backend Storage:**
-Status is tracked via `PATCH /api/user/rfp-status/` and stored in the user's S3 JSON:
-```json
-{
-  "applied_rfp_ids": ["evt-123", "evt-456"],
-  "in_progress_rfp_ids": ["evt-789"]
-}
-```
+Status is tracked via `PATCH /api/user/rfp-status/` (and the v2 `/api/match/{rfp_id}/` endpoint) and persisted in the Postgres `match_state` table, keyed by `(user_id, rfp_id)`.
 
 The Home page (`/home`) displays quick stats and lists for each status category, with upcoming deadline alerts for the next 30 days.
 
@@ -178,7 +173,7 @@ Users maintain a portfolio of past contracts that feeds their profile. Contracts
 
 ### How It Works
 
-**Upload:** `POST /api/contracts/` with a file and optional metadata. The backend extracts text, calls Groq for metadata extraction, saves the file to S3, and adds the contract to the user's profile.
+**Upload:** `POST /api/contracts/` with a file and optional metadata. The backend extracts text via `mupdf`/`mammoth`, runs PII redaction, calls the configured LLM for metadata extraction, saves the raw file to S3 (`uploads/{user_id}/{contract_id}/...`), and records the contract + extracted claims in Postgres.
 
 **Auto-Extraction:** On upload, the LLM identifies:
 - Issuing agency and contractor name
@@ -187,40 +182,33 @@ Users maintain a portfolio of past contracts that feeds their profile. Contracts
 - NAICS codes and industry tags
 - Work locations and scope
 
-**Profile Sync:** After any contract change (create, update, delete), the user's aggregate profile is recomputed from all their contracts, keeping certifications, capabilities, and experience up to date.
+**Provenance:** Each extracted fact lands in the `claims` table with the source snippet, confidence score, and a `pending`/`accepted`/`rejected` status. Users review claims before they're applied to the profile (see [Architecture-v2 § 6.5](Architecture-v2.md)).
 
 ---
 
 ## 8. Web Scraping Pipeline
 
 ### What It Does
-Automatically collects California government RFPs from the Cal eProcurement portal and enriches them with data extracted from PDF attachments.
+Automatically collects California government RFPs from 57+ procurement portals and enriches them with data extracted from PDF attachments. Full details in [webscraping/v2/README.md](../webscraping/v2/README.md) and the per-source field matrix in [webscraping/v2/COVERAGE.md](../webscraping/v2/COVERAGE.md).
 
 ### How It Works
 
-**Stage 1: Scraping** (`webscraping/cal_eprocure_store.py`)
-- Uses Selenium to navigate the dynamically-rendered Cal eProcurement search page
-- Extracts event metadata: title, department, dates, description, contact info
-- Downloads attachment files (PDFs, docs)
-- Uploads everything to S3
+**Stage 1: Scraping** (`webscraping/v2/scrapers/*.py`)
+- Playwright + Chromium (containerized) in an AWS Lambda; EventBridge fires every 12 hours.
+- Source-specific scrapers: `caleprocure.py`, `planetbids.py`, `bidsync.py`, `opengov.py`, `agentic.py`.
+- Cal eProcure downloads PDFs inline via the session-bound href; PlanetBids gathers market intel (prospective bidders / bid results / awards) but most PDFs are gated; BidSync gives only search-result metadata; OpenGov hits the direct JSON API.
+- Manifests are written per-source to `s3://civitas-ai/scrapes/v2/{source}/...`.
 
-**Stage 2: Attachment Enrichment** (`webscraping/extract_attachments.py`)
-- Downloads PDF attachments from S3
-- Extracts text via pdfplumber
-- Sends to Groq LLM to extract structured requirements:
-  - NAICS codes, certifications, clearances
-  - Contract value, duration, location details
-  - Deliverables, evaluation criteria, key requirements
-- Includes rate limit retry with exponential backoff for Groq API
-- Supports resume via S3 download-first logic (downloads existing extractions from S3, merges with local, skips already-processed events)
-- Saves extraction results to S3 as `attachment_extractions.json`
+**Stage 2: Enrichment** (`webscraping/v2/pipeline/enrich.py`)
+- Extracts text from downloaded PDFs via PyMuPDF.
+- Sends text through the configured LLM (Claude Haiku 4.5 default with prompt caching on the system message; Groq fallback via `LLM_PROVIDER=groq`).
+- Extracts structured requirements: NAICS codes, certifications, licenses, clearances, deliverables, evaluation criteria, key requirements, incumbent vendor and contract end date.
+- SSRF protection blocks fetches to private IPs and metadata endpoints (see [Security & Optimization](Security.md)).
 
 **Stage 3: Serving**
-- The frontend `/api/events` route merges base events with attachment extractions
-- Text-based certification detection provides a fallback when the structured extraction misses contractor licenses (Class A/B/C/C-XX), DIR registration, and other professional certifications
-- No frontend code changes needed when new data is scraped
-
-The pipeline can be run independently of the main application, and new data is automatically picked up by the frontend's cached S3 reads.
+- A post-scrape hook calls `/api/cron/sync-rfp-cache` to refresh the Postgres `rfp_cache` and re-embed RFPs for semantic matching.
+- The frontend `/api/events` and `/api/match` routes read from `rfp_cache`.
+- Match scoring treats empty fields as **unknown, not zero** — important because PlanetBids `licenses_required: []` means "we don't know," not "no license required."
 
 ---
 
@@ -231,21 +219,19 @@ Secure user authentication with session cookies and Bearer tokens, supporting bo
 
 ### How It Works
 
-**Dual Auth System:**
-- **Session Auth**: Django session cookies, used by the web frontend. CSRF protection for cross-origin POST requests.
-- **Bearer Token Auth**: `Authorization: Bearer <token>` header, used for API access. Tokens stored in S3.
+**JWT Auth:**
+- HS256 JWT signed via `jose`; secret loaded from `JWT_SECRET` env var (server throws on missing/default).
+- Stored in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie; never accessible to JS.
+- Token expiry: 7 days (configurable via `auth.jwtExpiryDays` in `civitas.config.json`).
 
 **Password Security:**
-- Minimum 8 characters
-- At least one uppercase letter, one lowercase letter, one special character
-- Validated on both frontend (real-time) and backend (server-side)
-
-**CORS Configuration:**
-- Explicit allowed origins for localhost (dev) and Render.com (prod)
-- Credentials included in cross-origin requests
-- CSRF tokens required for state-changing operations
+- Minimum 8 characters, at least one uppercase letter, one lowercase letter, one special character.
+- Bcrypt with 12 rounds. Legacy Django PBKDF2 hashes are transparently re-hashed to bcrypt on first login.
+- Validated on both frontend (real-time) and backend (server-side).
 
 **Data Isolation:**
-- Each user's data is stored in a separate S3 object
-- Authentication is checked before any data access
-- No cross-user data leakage possible through the API
+- User and profile rows live in Postgres, scoped by `user_id`; every query joins through `users(id)` so cross-user reads require explicit query bugs.
+- Raw uploads live in S3 under `uploads/{user_id}/...` and are never publicly accessible.
+- Auth is checked at the API route boundary before any DB or S3 read.
+
+See [Security & Optimization](Security.md) for the full security control matrix.

@@ -1,14 +1,18 @@
 # Civitas
 
-Civitas reduces the time it takes small and medium government contractors to find compatible RFPs. It aggregates procurement opportunities from 62 California government sites into a single searchable dashboard with AI-powered matching.
+Civitas reduces the time it takes small and medium government contractors to find compatible RFPs. It aggregates procurement opportunities from 57+ California government sites into a single searchable dashboard with AI-powered matching.
 
 ## Documentation
 
 - [Frontend Architecture](docs/Frontend.md)
 - [Backend Architecture](docs/Backend.md)
 - [Key Features](docs/Key-Features.md)
-- [Matching Algorithm](docs/Matching-Algorithm.md)
+- [Matching Algorithm (v1)](docs/Matching-Algorithm.md)
+- [Architecture v2 (working spec)](docs/Architecture-v2.md)
+- [Matching Values](docs/Matching-Values.md)
+- [Matching Fine-Tuning](docs/Matching-Finetuning.md)
 - [Security & Optimization](docs/Security.md)
+- [KPIs](docs/KPIs.md)
 - [TODO](docs/TODO.md)
 - [Example Test Profiles](docs/Example-Test-Profiles.md)
 
@@ -18,11 +22,13 @@ Civitas reduces the time it takes small and medium government contractors to fin
 |-----------|-----------|------------|
 | Frontend + API | Next.js 16 (App Router) | Vercel |
 | Auth | bcrypt + JWT (HttpOnly cookies) | Vercel serverless |
-| Storage | S3 (`civitas-ai` bucket, SSE-S3 encrypted, versioned) | AWS us-east-1 |
-| Email | AWS SES (sandbox) | AWS us-east-1 |
-| LLM | Groq (llama-3.1-8b-instant) | API |
+| Database | Postgres + Drizzle (RDS, with `pgvector` + `pg_trgm`) | AWS us-east-1 |
+| Object storage | S3 (`civitas-ai` bucket, SSE-S3 encrypted, versioned) | AWS us-east-1 |
+| Email | Resend (transactional) | API |
+| LLM | Provider-agnostic (Groq / OpenAI / Anthropic) via `civitas.config.json` | API |
+| PDF enrichment (scraping) | Claude Haiku 4.5 (default) with prompt caching; Groq fallback | API |
 | Scraping | Playwright + Python | AWS Lambda (container, non-root) |
-| Scheduling | EventBridge | Every 4 hours |
+| Scheduling | EventBridge | Every 12 hours |
 
 ## Project Structure
 
@@ -58,20 +64,21 @@ civitas/
 | S3 security | Encryption at rest (SSE-S3), versioning, public access blocked, ETag optimistic locking |
 | Credentials | Default AWS credential provider chain (no hardcoded keys) |
 | Container | Non-root user in Lambda Docker image |
-| Email verification | Token-based (auto-verified in dev mode) |
+| Email verification | Token-based via Resend (auto-verified in dev mode if no `RESEND_API_KEY`) |
 | Security logging | Structured JSON for all auth events |
 | Security headers | HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-Permitted-Cross-Domain-Policies |
 
 ## Scraping Coverage
 
-62 California procurement sites across 3 platforms:
+57+ California procurement sites across four platforms:
 
-- **PlanetBids** (43 agencies) -- cities including San Diego, Sacramento, Fresno, Anaheim, Riverside, and others
-- **BidSync/Periscope** (15 agencies) -- counties and special districts including Orange County, Santa Clara County, LAUSD, SFMTA
-- **Cal eProcure** (1) -- California state-level procurement
-- **Agentic** (2) -- LA City and SF City via LLM-powered auto-discovery
+- **Cal eProcure** (1) -- California state-level procurement; full pipeline including inline PDF download and LLM-extracted requirements
+- **PlanetBids** (41 agencies) -- cities and counties including San Diego, Sacramento, Fresno, Anaheim, Riverside; market intel (prospective bidders / bid results / awards) via shared cross-portal vendor login; PDFs gated per-bid
+- **BidSync / Periscope** (15 agencies) -- counties and special districts; search-result metadata only (detail pages require login)
+- **OpenGov Procurement** (S3-onboarded portals) -- direct JSON API at `api.procurement.opengov.com`; full pipeline including PDFs
+- **Agentic** (LA City, SF City) -- disabled pending Lambda fixes
 
-See [webscraping/v2/README.md](webscraping/v2/README.md) for details on the scraping system.
+See [webscraping/v2/README.md](webscraping/v2/README.md) for details on the scraping system and [webscraping/v2/COVERAGE.md](webscraping/v2/COVERAGE.md) for the per-source field matrix.
 
 ## Local Development
 
@@ -84,28 +91,26 @@ npm run dev     # http://localhost:3000
 ```
 
 Environment variables needed in `front_end/.env.local`:
+- `DATABASE_URL` (Postgres connection string; matches the docker-compose service for local dev)
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_S3_BUCKET`
-- `GROQ_API_KEY`, `JWT_SECRET` (min 32 chars)
-- `CIVITAS_FROM_EMAIL` (optional, SES-verified sender email for email features)
+- `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (whichever providers are enabled in `civitas.config.json`)
+- `JWT_SECRET` (min 32 chars)
+- `RESEND_API_KEY`, `CIVITAS_FROM_EMAIL` (e.g. `Civitas <register@civitas-ai.net>`) for transactional email
+
+The database runs locally via `docker compose up -d postgres`; see [front_end/src/db/README.md](front_end/src/db/README.md) for migration commands.
 
 In development (`NODE_ENV=development`):
-- Email verification is auto-approved (no SES needed)
+- Email helpers log to console when `RESEND_API_KEY` or `CIVITAS_FROM_EMAIL` is unset
 - Password reset URLs are logged to console
 - Cookies use `Secure=false` for localhost
 
-### Email Setup (SES Sandbox)
+### Email Setup (Resend)
 
 ```bash
-# 1. Verify your sender email
-aws ses verify-email-identity --email-address you@example.com --region us-east-1
-
-# 2. Check your inbox and click the verification link
-
-# 3. Set env var
-CIVITAS_FROM_EMAIL=you@example.com
-
-# Note: In sandbox mode, recipients must also be verified.
-# Request production access via AWS console when ready for real users.
+# 1. Add your domain (e.g. civitas-ai.net) to the Resend dashboard and verify DNS.
+# 2. Set env vars
+RESEND_API_KEY=re_...
+CIVITAS_FROM_EMAIL="Civitas <register@civitas-ai.net>"
 ```
 
 ### Scraping
@@ -125,4 +130,4 @@ python -m webscraping.v2.orchestrator.runner --list
 
 - **Frontend**: Push to `main` triggers Vercel deployment
 - **Scraping**: `aws codebuild start-build --project-name civitas-scraper-build --source-version main` rebuilds the Lambda container
-- **Schedule**: EventBridge rule `civitas-scrape-all` triggers Lambda every 4 hours
+- **Schedule**: EventBridge rule `civitas-scrape-all` triggers Lambda every 12 hours (`cron(0 6,18 * * ? *)`); a separate daily exploration/onboarding rule fires at 13:00 UTC

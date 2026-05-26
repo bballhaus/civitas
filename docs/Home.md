@@ -10,7 +10,10 @@
 
 ### Product
 - **[Key Features](Key-Features)** — End-to-end explanation of each major feature: RFP discovery, profile building, matching, proposal generation, status tracking, and web scraping pipeline
-- **[Matching Algorithm](Matching-Algorithm)** — Deep dive into the 3-stage scoring pipeline, 10 scoring categories, synonym expansion, canonicalization, and explanation generation
+- **[Matching Algorithm (v1)](Matching-Algorithm)** — The shipping v1 client-side matcher: 3-stage pipeline, 10 scoring categories, synonym expansion, canonicalization
+- **[Architecture v2](Architecture-v2)** — Working spec for the source-aware v2 matcher, Postgres schema, claims-based extraction, onboarding flow, and incumbent state machine
+- **[Matching Values](Matching-Values)** — The dimensions of fit between a contractor and an RFP; what the algorithm should optimize for
+- **[Matching Fine-Tuning](Matching-Finetuning)** — Plan for empirically learning the v2 dimension weights from user application behavior
 
 ### Security
 - **[Security & Optimization](Security)** — Full security audit results, all implemented controls (nonce CSP, HttpOnly cookies, rate limiting, SSRF protection, LLM safety, SES email), and remaining work
@@ -28,8 +31,9 @@
 
 | Component | Dev URL | Prod URL |
 |---|---|---|
-| App | `localhost:3000` | `civitas-mu.vercel.app` |
+| App | `localhost:3000` | `civitas-ai.net` |
 | S3 Bucket | — | `civitas-ai` (us-east-1) |
+| Postgres | docker-compose `postgres` service | RDS `civitas-postgres` (us-east-1) |
 
 ## Tech Stack
 
@@ -37,9 +41,10 @@
 |---|---|
 | Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 |
 | Backend | Next.js API Routes (same deployment) |
-| Auth | JWT (HS256, HttpOnly cookies, 24h expiry) via jose + bcryptjs |
-| Storage | AWS S3 (JSON files, SSE-S3 encrypted, versioned) |
-| Email | AWS SES (sandbox) |
-| AI/LLM | Groq (llama-3.1-8b-instant) for extraction & generation |
-| Scraping | Playwright, Python, pdfplumber |
-| Deployment | Vercel (frontend), AWS Lambda (scraping) |
+| Auth | JWT (HS256, HttpOnly cookies, 7-day expiry) via jose + bcryptjs |
+| Database | Postgres + Drizzle ORM, with `pgvector` (semantic match) and `pg_trgm` (fuzzy vendor search) |
+| Object storage | AWS S3 (raw uploads, scraped manifests, KPI aggregates; SSE-S3, versioned) |
+| Email | Resend (transactional: signup verification, password reset, daily roundup) |
+| AI/LLM | Provider-agnostic via `civitas.config.json` (Groq / OpenAI / Anthropic); front-end uploads default to Groq, scraping enrichment defaults to Claude Haiku 4.5 |
+| Scraping | Playwright, Python, PyMuPDF |
+| Deployment | Vercel (frontend), AWS Lambda (scraping), AWS RDS (Postgres) |
