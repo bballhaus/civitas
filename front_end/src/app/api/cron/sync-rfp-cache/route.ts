@@ -17,6 +17,7 @@
 import { NextResponse, after } from "next/server";
 import { loadAndMirrorOneSource, populateRfpCacheFromV2Manifests } from "@/lib/rfp-cache-populator";
 import { refreshRfpEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
+import { tagUntaggedRfps, TaggerConfigError } from "@/lib/rfp-tagger";
 import { rescoreRfpsRefreshedSince } from "@/lib/match-rescore";
 
 export const runtime = "nodejs";
@@ -59,6 +60,28 @@ export async function POST(request: Request) {
       ? await loadAndMirrorOneSource(sourceId)
       : await populateRfpCacheFromV2Manifests();
 
+    // Tag freshly-populated rows with NAICS codes + scope_summary before the
+    // embed pass, so buildRfpEmbeddingText picks up the LLM-generated scope
+    // and NAICS titles in the same cron run. Failures here are surfaced but
+    // never fail the cron — embeddings still run on whatever the populator
+    // wrote, and the next sync will retry the un-tagged rows.
+    let rowsTagged = 0;
+    let lowConfidence = 0;
+    let tagError: string | null = null;
+    try {
+      const tagResult = await tagUntaggedRfps();
+      rowsTagged = tagResult.tagged;
+      lowConfidence = tagResult.lowConfidence;
+    } catch (err) {
+      if (err instanceof TaggerConfigError) {
+        tagError = "ANTHROPIC_API_KEY not set";
+        console.warn("[cron/sync-rfp-cache] skipping tagger: ANTHROPIC_API_KEY missing");
+      } else {
+        tagError = err instanceof Error ? err.message : String(err);
+        console.error("[cron/sync-rfp-cache] tagger pass failed:", err);
+      }
+    }
+
     let totalEmbedded = 0;
     let embedError: string | null = null;
     try {
@@ -93,6 +116,9 @@ export async function POST(request: Request) {
       events_total: mirror.eventsTotal,
       rows_upserted: mirror.rowsUpserted,
       bidders_inserted: mirror.biddersInserted,
+      rows_tagged: rowsTagged,
+      rows_tagged_low_conf: lowConfidence,
+      tag_error: tagError,
       rows_embedded: totalEmbedded,
       embed_error: embedError,
     });

@@ -86,6 +86,7 @@ function makeRfp(overrides: Partial<RfpCacheRow> = {}): RfpCacheRow {
     winningBidCents: null,
     winningVendorFingerprint: null,
     embedding: null,
+    naicsCritiquedAt: null,
     raw: null,
     refreshedAt: new Date(),
     ...overrides,
