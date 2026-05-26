@@ -268,25 +268,36 @@ export function makeOptimisticCommitHandler(
   setSnapshot: SnapshotSetter,
   refresh: () => Promise<void> | void,
 ): CommitHandler {
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-  const scheduleRefresh = () => {
-    if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      void refresh();
-    }, 400);
-  };
-
-  // Track every fire-and-forget background POST so `drainPending` can wait
-  // for them all to settle. Without this, clicking Continue immediately
-  // after a NAICS pick races a stale GET against the in-flight POST — the
-  // refresh wins, server hasn't seen the row yet, and the optimistic chip
-  // gets wiped out when setSnapshot replaces it with server state.
+  // Track every fire-and-forget background POST so `drainPending` and
+  // `scheduleRefresh` can both wait for them. Without this, two bad things
+  // happen: clicking Continue races the in-flight POST (the refresh wins
+  // and wipes the optimistic chip on the next step), and a debounced
+  // refresh that fires while a second click is still in flight returns a
+  // server snapshot missing the new row — setSnapshot replaces state and
+  // the chip visibly bounces out until the next refresh catches up.
   const pending = new Set<Promise<unknown>>();
   const track = <T,>(p: Promise<T>): Promise<T> => {
     pending.add(p);
     p.finally(() => pending.delete(p));
     return p;
+  };
+
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleRefresh = () => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(async () => {
+      refreshTimer = null;
+      // Wait for any still-in-flight POSTs before refreshing. Otherwise a
+      // rapid Pick → Pick sequence can fire the GET between the first
+      // POST resolving and the second POST resolving — the snapshot comes
+      // back without the second row and setSnapshot wipes the optimistic
+      // chip until the second POST's own scheduleRefresh re-fires ~400ms
+      // later. Visible to the user as chips bouncing in and out.
+      if (pending.size > 0) {
+        await Promise.allSettled([...pending]);
+      }
+      void refresh();
+    }, 400);
   };
 
   const parseAddedNaicsCodes = async (res: Response): Promise<string[]> => {
