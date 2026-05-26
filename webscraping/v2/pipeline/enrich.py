@@ -391,7 +391,9 @@ def enrich_event(
         return None
 
     event_id = make_event_id(event.source_id, event.source_event_id)
-    mirrored: list[dict] = []
+    # Eager-stash sink for the public-URL fallback path. setdefault →
+    # append == idempotent if normalize.py is re-run on the same event.
+    mirror_sink = event.raw_metadata.setdefault("mirrored_attachments", [])
 
     # Classify and sort by priority
     attachments = []
@@ -450,7 +452,7 @@ def enrich_event(
                 # we capture whatever the canonical filename is here.
                 s3_key = mirror_pdf_from_path(event_id, filename, tmp_path)
                 if s3_key:
-                    mirrored.append({
+                    mirror_sink.append({
                         "filename": filename,
                         "s3_key": s3_key,
                         "original_url": url,
@@ -476,13 +478,6 @@ def enrich_event(
             finally:
                 if tmp_path and os.path.exists(tmp_path):
                     os.unlink(tmp_path)
-
-    # Stash any S3 mirrors collected on the fallback path back onto the
-    # event so normalize.py picks them up alongside scraper-side mirrors.
-    if mirrored:
-        existing_m = event.raw_metadata.get("mirrored_attachments") or []
-        existing_m.extend(mirrored)
-        event.raw_metadata["mirrored_attachments"] = existing_m
 
     if not extractions:
         return None

@@ -406,7 +406,7 @@ class SpecDrivenScraper(BaseScraper):
 
         event_id = make_event_id(event.source_id, event.source_event_id)
         attachment_texts: dict[str, str] = {}
-        mirrored: list[dict] = []
+        mirror_sink = event.raw_metadata.setdefault("mirrored_attachments", [])
         headers = dict(_BASELINE_HEADERS)
 
         for idx, att in enumerate(atts[:_MAX_PDFS_PER_EVENT]):
@@ -442,7 +442,7 @@ class SpecDrivenScraper(BaseScraper):
                     )
                 s3_key = mirror_pdf(event_id, filename, resp.content, fallback_index=idx)
                 if s3_key:
-                    mirrored.append({
+                    mirror_sink.append({
                         "filename": filename,
                         "s3_key": s3_key,
                         "original_url": url,
@@ -462,10 +462,6 @@ class SpecDrivenScraper(BaseScraper):
             existing = event.raw_metadata.get("attachment_texts") or {}
             existing.update(attachment_texts)
             event.raw_metadata["attachment_texts"] = existing
-        if mirrored:
-            existing_m = event.raw_metadata.get("mirrored_attachments") or []
-            existing_m.extend(mirrored)
-            event.raw_metadata["mirrored_attachments"] = existing_m
 
     # ------------------------------------------------------------------
     # HTTP

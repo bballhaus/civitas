@@ -301,7 +301,9 @@ class OpenGovScraper(BaseScraper):
 
         event_id = make_event_id(event.source_id, event.source_event_id)
         attachment_texts: dict[str, str] = {}
-        mirrored: list[dict] = []
+        # Eager-stash sink: append to the live raw_metadata list so partial
+        # progress isn't lost if a later attachment fetch raises.
+        mirror_sink = event.raw_metadata.setdefault("mirrored_attachments", [])
         for idx, att in enumerate(attachments[:MAX_PDFS_PER_EVENT]):
             url = (att.get("url") or "").strip()
             if not url:
@@ -345,7 +347,7 @@ class OpenGovScraper(BaseScraper):
                     logger.info(f"  PDF: {filename} ({len(text)} chars)")
                 s3_key = mirror_pdf(event_id, filename, body, fallback_index=idx)
                 if s3_key:
-                    mirrored.append({
+                    mirror_sink.append({
                         "filename": filename,
                         "s3_key": s3_key,
                         "original_url": url,
@@ -363,10 +365,6 @@ class OpenGovScraper(BaseScraper):
             existing = event.raw_metadata.get("attachment_texts") or {}
             existing.update(attachment_texts)
             event.raw_metadata["attachment_texts"] = existing
-        if mirrored:
-            existing_m = event.raw_metadata.get("mirrored_attachments") or []
-            existing_m.extend(mirrored)
-            event.raw_metadata["mirrored_attachments"] = existing_m
 
 
 # ---------------------------------------------------------------------------

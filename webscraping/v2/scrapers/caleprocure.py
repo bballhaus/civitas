@@ -311,25 +311,14 @@ class CalEprocureScraper(BaseScraper):
                 logger.info(f"[{index + 1}/{total}] {event_data.title[:60]}")
 
             # Download attachments inline (session-bound URLs expire after browser closes).
-            # event_id is needed to key the S3 mirror, so compute it now.
-            event_id = make_event_id(event_data.source_id, event_data.source_event_id)
-            attachments = await self._download_attachments(page, event_id)
+            # _download_attachments stashes mirrors directly onto event_data.raw_metadata
+            # as each PDF uploads — so a later exception can't orphan an already-mirrored PDF.
+            attachments = await self._download_attachments(page, event_data)
             event_data.attachment_urls = [a["url"] for a in attachments if a.get("url")]
             if attachments:
                 event_data.raw_metadata["attachment_texts"] = {
                     a["filename"]: a["text"] for a in attachments if a.get("text")
                 }
-                mirrored = [
-                    {
-                        "filename": a["filename"],
-                        "s3_key": a["s3_key"],
-                        "original_url": a.get("url"),
-                    }
-                    for a in attachments
-                    if a.get("s3_key")
-                ]
-                if mirrored:
-                    event_data.raw_metadata["mirrored_attachments"] = mirrored
 
             return event_data
 
@@ -396,7 +385,9 @@ class CalEprocureScraper(BaseScraper):
             },
         )
 
-    async def _download_attachments(self, page: Page, event_id: str) -> list[dict]:
+    async def _download_attachments(
+        self, page: Page, event: RawScrapedEvent
+    ) -> list[dict]:
         """Click 'View Event Package', fetch PDFs via session cookies, extract text.
 
         Cal eProcure download URLs are session-bound tokens that expire when the
@@ -406,6 +397,11 @@ class CalEprocureScraper(BaseScraper):
         fetch it directly through the browser context (same cookies → same
         session) — no click required.
         Returns a list of dicts: [{"filename": str, "url": str, "text": str, "s3_key": str|None}, ...]
+
+        Side effect: appends to `event.raw_metadata['mirrored_attachments']`
+        the moment each PDF lands in S3 — *before* moving on to the next
+        attachment — so a later per-attachment timeout or caller-level
+        exception can't orphan an already-mirrored PDF.
 
         Logs the specific failure step at INFO level (was previously a single
         debug-level catch that obscured why ~90% of events end up with empty
@@ -421,6 +417,11 @@ class CalEprocureScraper(BaseScraper):
 
         results = []
         url = page.url
+        event_id = make_event_id(event.source_id, event.source_event_id)
+        # Mirror records live on event.raw_metadata so they survive any
+        # exception in the loop below. setdefault → append == idempotent
+        # under per-attachment retries.
+        mirror_sink = event.raw_metadata.setdefault("mirrored_attachments", [])
 
         # Diagnostic helper: detect alternative buttons that explain why
         # viewPackage is absent. Doesn't block — best-effort.
@@ -535,6 +536,15 @@ class CalEprocureScraper(BaseScraper):
                     if body:
                         from webscraping.v2.pipeline.attachments_mirror import mirror_pdf
                         s3_key = mirror_pdf(event_id, filename, body, fallback_index=i)
+                        if s3_key:
+                            # Eager stash: record the mirror NOW, while we still
+                            # have the bytes and before the next iteration's
+                            # modal-open timeout can blow up this event entirely.
+                            mirror_sink.append({
+                                "filename": filename,
+                                "s3_key": s3_key,
+                                "original_url": pdf_url,
+                            })
                     results.append({
                         "filename": filename,
                         "url": pdf_url,
