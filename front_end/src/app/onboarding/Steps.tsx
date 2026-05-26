@@ -137,6 +137,26 @@ function EmptyHint({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Append a NAICS code to profile.naicsCodes if it isn't already there.
+// Called from Specialties + Capabilities steps when the user picks from
+// the NAICS combobox — saves them from re-selecting the same code on the
+// dedicated NAICS step.
+//
+// Race caveat: rapid back-to-back picks may read a stale `snapshot.naicsCodes`
+// (React props don't update mid-handler), so the second pick could drop the
+// first. Acceptable for v1 — the user can verify on Step 4 and add anything
+// missing. If this becomes painful, switch to a server-side append endpoint
+// using Postgres array_append for race-free merging.
+async function propagateNaicsCode(
+  code: string,
+  snapshot: OnboardingSnapshot,
+  commit: ReturnType<typeof useCommit>,
+): Promise<void> {
+  const current = snapshot.naicsCodes ?? [];
+  if (current.includes(code)) return;
+  await commit.patch({ naicsCodes: [...current, code] });
+}
+
 // NAICS-backed combobox used by Specialties + Capabilities. The 1,012
 // NAICS titles are what RFPs reference verbatim when listing required
 // scopes, so wiring them here also lifts matching accuracy.
@@ -158,8 +178,11 @@ function NaicsPicker({
 }: {
   label: string;
   // Receives whatever field `pickBy` selects (title text in default mode,
-  // 6-digit code string when pickBy="code"). Caller decides what to store.
-  onPick: (value: string) => void;
+  // 6-digit code string when pickBy="code") as the first arg. The full
+  // entry is passed as the second arg so callers can grab the underlying
+  // NAICS code even when pickBy="title" — used by Specialties/Capabilities
+  // to auto-propagate the code into profile.naicsCodes.
+  onPick: (value: string, entry: NaicsEntry) => void;
   // Lowercased values already picked. Keyed by title in "title" mode and by
   // code in "code" mode — must match whatever onPick passes back so the
   // "Added" affordance stays accurate.
@@ -239,7 +262,7 @@ function NaicsPicker({
     // semantic content (Specialties/Capabilities path).
     // pickBy="code"  → store the 6-digit code for direct RFP↔profile overlap
     // scoring (dedicated NAICS step).
-    onPick(pickBy === "code" ? entry.code : entry.title);
+    onPick(pickBy === "code" ? entry.code : entry.title, entry);
     // Keep the query intact so the user can rapid-add several codes from the
     // same search (e.g. typing "construction" once and picking three matches
     // without re-typing). The picked entry will show "Added" in the list.
@@ -558,10 +581,16 @@ export function StepSpecialties({ snapshot }: StepProps) {
   const commit = useCommit();
   const [input, setInput] = useState("");
 
-  const add = async (value: string) => {
+  // Picking a NAICS-backed specialty also implies the user works in that
+  // industry code, so we auto-propagate entry.code into profile.naicsCodes.
+  // That way the dedicated NAICS step (Step 4) doesn't have to ask again
+  // and the direct-overlap scorer gets the signal immediately. Free-text
+  // adds (no entry) and SuggestionPill clicks don't touch naicsCodes.
+  const add = async (value: string, entry?: NaicsEntry) => {
     const v = value.trim();
     if (!v) return;
     await commit.addSpecialty({ value: v, weight: "primary" });
+    if (entry) await propagateNaicsCode(entry.code, snapshot, commit);
     setInput("");
   };
   const remove = async (id: string) => {
@@ -642,10 +671,14 @@ export function StepCapabilities({ snapshot }: StepProps) {
     [snapshot.capabilities],
   );
 
-  const add = async (value: string) => {
+  // Same auto-propagation as Specialties — NAICS picks imply the underlying
+  // code belongs in profile.naicsCodes. Free-text adds skip the propagation
+  // since there's no associated code to import.
+  const add = async (value: string, entry?: NaicsEntry) => {
     const v = value.trim();
     if (!v) return;
     await commit.addCapability({ value: v });
+    if (entry) await propagateNaicsCode(entry.code, snapshot, commit);
     setInput("");
   };
   const remove = async (id: string) => {
