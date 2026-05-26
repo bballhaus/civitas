@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
-import { chatCompletion } from "@/lib/llm";
+import { chatCompletionStream } from "@/lib/llm";
 
-// Haiku 4.5 with a full RFP + profile + breakdown can take 10–15s end-to-end;
-// the default Vercel function ceiling cuts it off and surfaces as a 500 in the
-// UI ("Capabilities analysis unavailable right now.").
+// Streaming response: first byte typically lands in 200-500ms vs. the 10-15s
+// non-streaming turnaround that used to dominate the RFP detail page load.
+// The client reads res.body and re-renders progressively. Mirrors
+// /api/match-summary and /api/rfp-requirements-summary.
+export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const PROMPT = `You are an expert government contracting consultant. Given an RFP and a company profile, produce a concise capabilities analysis that compares the user's qualifications against the RFP's requirements.
@@ -97,22 +99,39 @@ ${JSON.stringify(breakdown ?? [])}
 
 Produce the capabilities analysis:`;
 
-    const result = await chatCompletion(
-      [
-        { role: "system", content: PROMPT },
-        { role: "user", content: input },
-      ],
-      {
-        provider: "anthropic",
-        model: "claude-haiku-4-5-20251001",
-        temperature: 0.3,
-        maxTokens: 500,
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for await (const chunk of chatCompletionStream(
+            [
+              { role: "system", content: PROMPT },
+              { role: "user", content: input },
+            ],
+            {
+              provider: "anthropic",
+              model: "claude-haiku-4-5-20251001",
+              temperature: 0.3,
+              maxTokens: 500,
+            },
+          )) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        } catch (err) {
+          console.error("[capabilities-analysis] streaming error:", err);
+          controller.error(err);
+        }
       },
-    );
+    });
 
-    const analysis = result.content?.trim() ?? null;
-
-    return NextResponse.json({ analysis });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Accel-Buffering": "no",
+      },
+    });
   } catch (err) {
     console.error("[capabilities-analysis] Error:", err);
     return NextResponse.json(

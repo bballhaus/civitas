@@ -80,6 +80,12 @@ export interface CommitHandler {
   removeWorkArea(id: string): Promise<void>;
   addAgencyRelationship(input: AddAgencyInput): Promise<void>;
   removeAgencyRelationship(id: string): Promise<void>;
+  /** Wait for every fire-and-forget background POST issued by the optimistic
+   *  handler to complete. The wizard's Continue button calls this before
+   *  refreshing so we don't pull a stale server snapshot that's missing
+   *  rows from POSTs still in flight. Auto/deferred handlers don't issue
+   *  background work, so they resolve immediately. */
+  drainPending(): Promise<void>;
 }
 
 // Default handler throws — every consumer must be wrapped in a provider.
@@ -114,6 +120,9 @@ export function makeAutoCommitHandler(refresh: () => Promise<void> | void): Comm
     await refresh();
   };
   return {
+    drainPending: async () => {
+      /* auto handler awaits inline; no background work to drain. */
+    },
     async patch(p) {
       await fetch("/api/profile/", {
         method: "PATCH",
@@ -268,6 +277,18 @@ export function makeOptimisticCommitHandler(
     }, 400);
   };
 
+  // Track every fire-and-forget background POST so `drainPending` can wait
+  // for them all to settle. Without this, clicking Continue immediately
+  // after a NAICS pick races a stale GET against the in-flight POST — the
+  // refresh wins, server hasn't seen the row yet, and the optimistic chip
+  // gets wiped out when setSnapshot replaces it with server state.
+  const pending = new Set<Promise<unknown>>();
+  const track = <T,>(p: Promise<T>): Promise<T> => {
+    pending.add(p);
+    p.finally(() => pending.delete(p));
+    return p;
+  };
+
   const parseAddedNaicsCodes = async (res: Response): Promise<string[]> => {
     try {
       const body = (await res.json()) as { addedNaicsCodes?: unknown };
@@ -281,17 +302,23 @@ export function makeOptimisticCommitHandler(
   };
 
   return {
+    drainPending: async () => {
+      // Snapshot the set so promises added mid-drain (rare, but possible if
+      // an addX triggers a follow-up POST) don't keep us looping forever.
+      // Settled (not all) so one failure doesn't abandon the others.
+      const inFlight = [...pending];
+      if (inFlight.length === 0) return;
+      await Promise.allSettled(inFlight);
+    },
     async patch(p) {
       setSnapshot((s) => ({ ...s, ...p }));
-      try {
-        await fetch("/api/profile/", {
-          method: "PATCH",
-          headers: JSON_HEADERS,
-          body: JSON.stringify(p),
-        });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch("/api/profile/", {
+        method: "PATCH",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(p),
+      });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
     async addSpecialty({ value, weight }) {
       const draftId = makeDraftId();
@@ -301,26 +328,27 @@ export function makeOptimisticCommitHandler(
         if (s.specialties.some((x) => x.value.toLowerCase() === value.toLowerCase())) return s;
         return { ...s, specialties: [...s.specialties, { id: draftId, value, weight }] };
       });
-      let addedNaicsCodes: string[] = [];
-      try {
+      const work = (async () => {
         const res = await fetch("/api/profile/specialties/", {
           method: "POST",
           headers: JSON_HEADERS,
           body: JSON.stringify({ value, weight }),
         });
-        addedNaicsCodes = await parseAddedNaicsCodes(res);
+        return parseAddedNaicsCodes(res);
+      })();
+      track(work);
+      try {
+        const addedNaicsCodes = await work;
+        return { addedNaicsCodes };
       } finally {
         scheduleRefresh();
       }
-      return { addedNaicsCodes };
     },
     async removeSpecialty(id) {
       setSnapshot((s) => ({ ...s, specialties: s.specialties.filter((x) => x.id !== id) }));
-      try {
-        await fetch(`/api/profile/specialties/${id}/`, { method: "DELETE" });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch(`/api/profile/specialties/${id}/`, { method: "DELETE" });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
     async addCapability({ value }) {
       const draftId = makeDraftId();
@@ -328,26 +356,27 @@ export function makeOptimisticCommitHandler(
         if (s.capabilities.some((x) => x.value.toLowerCase() === value.toLowerCase())) return s;
         return { ...s, capabilities: [...s.capabilities, { id: draftId, value }] };
       });
-      let addedNaicsCodes: string[] = [];
-      try {
+      const work = (async () => {
         const res = await fetch("/api/profile/capabilities/", {
           method: "POST",
           headers: JSON_HEADERS,
           body: JSON.stringify({ value }),
         });
-        addedNaicsCodes = await parseAddedNaicsCodes(res);
+        return parseAddedNaicsCodes(res);
+      })();
+      track(work);
+      try {
+        const addedNaicsCodes = await work;
+        return { addedNaicsCodes };
       } finally {
         scheduleRefresh();
       }
-      return { addedNaicsCodes };
     },
     async removeCapability(id) {
       setSnapshot((s) => ({ ...s, capabilities: s.capabilities.filter((x) => x.id !== id) }));
-      try {
-        await fetch(`/api/profile/capabilities/${id}/`, { method: "DELETE" });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch(`/api/profile/capabilities/${id}/`, { method: "DELETE" });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
     async addLicense(input) {
       const draftId = makeDraftId();
@@ -363,23 +392,19 @@ export function makeOptimisticCommitHandler(
           },
         ],
       }));
-      try {
-        await fetch("/api/profile/licenses/", {
-          method: "POST",
-          headers: JSON_HEADERS,
-          body: JSON.stringify(input),
-        });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch("/api/profile/licenses/", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(input),
+      });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
     async removeLicense(id) {
       setSnapshot((s) => ({ ...s, licenses: s.licenses.filter((x) => x.id !== id) }));
-      try {
-        await fetch(`/api/profile/licenses/${id}/`, { method: "DELETE" });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch(`/api/profile/licenses/${id}/`, { method: "DELETE" });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
     async addCertification(input) {
       const draftId = makeDraftId();
@@ -387,26 +412,22 @@ export function makeOptimisticCommitHandler(
         ...s,
         certifications: [...s.certifications, { id: draftId, ...input }],
       }));
-      try {
-        await fetch("/api/profile/certifications/", {
-          method: "POST",
-          headers: JSON_HEADERS,
-          body: JSON.stringify(input),
-        });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch("/api/profile/certifications/", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(input),
+      });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
     async removeCertification(id) {
       setSnapshot((s) => ({
         ...s,
         certifications: s.certifications.filter((x) => x.id !== id),
       }));
-      try {
-        await fetch(`/api/profile/certifications/${id}/`, { method: "DELETE" });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch(`/api/profile/certifications/${id}/`, { method: "DELETE" });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
     async addWorkArea(input) {
       const draftId = makeDraftId();
@@ -417,23 +438,19 @@ export function makeOptimisticCommitHandler(
         }
         return { ...s, workAreas: [...s.workAreas, { id: draftId, ...input }] };
       });
-      try {
-        await fetch("/api/profile/work-areas/", {
-          method: "POST",
-          headers: JSON_HEADERS,
-          body: JSON.stringify(input),
-        });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch("/api/profile/work-areas/", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(input),
+      });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
     async removeWorkArea(id) {
       setSnapshot((s) => ({ ...s, workAreas: s.workAreas.filter((x) => x.id !== id) }));
-      try {
-        await fetch(`/api/profile/work-areas/${id}/`, { method: "DELETE" });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch(`/api/profile/work-areas/${id}/`, { method: "DELETE" });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
     async addAgencyRelationship(input) {
       const draftId = makeDraftId();
@@ -444,26 +461,22 @@ export function makeOptimisticCommitHandler(
           { id: draftId, strength: 3, ...input },
         ],
       }));
-      try {
-        await fetch("/api/profile/agency-relationships/", {
-          method: "POST",
-          headers: JSON_HEADERS,
-          body: JSON.stringify({ ...input, strength: 3, source: "user" }),
-        });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch("/api/profile/agency-relationships/", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ ...input, strength: 3, source: "user" }),
+      });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
     async removeAgencyRelationship(id) {
       setSnapshot((s) => ({
         ...s,
         agencyRelationships: s.agencyRelationships.filter((x) => x.id !== id),
       }));
-      try {
-        await fetch(`/api/profile/agency-relationships/${id}/`, { method: "DELETE" });
-      } finally {
-        scheduleRefresh();
-      }
+      const work = fetch(`/api/profile/agency-relationships/${id}/`, { method: "DELETE" });
+      track(work);
+      try { await work; } finally { scheduleRefresh(); }
     },
   };
 }
@@ -483,6 +496,9 @@ export function makeDeferredCommitHandler(setDraft: DraftSetter): CommitHandler 
     return Promise.resolve();
   };
   return {
+    drainPending: async () => {
+      /* deferred handler never issues network calls; nothing to drain. */
+    },
     patch(p) {
       return mutate((s) => ({ ...s, ...p }));
     },

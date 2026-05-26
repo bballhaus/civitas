@@ -6,17 +6,22 @@
 
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "../client";
-import { rfpTasks, type RfpTask } from "../schema";
+import { rfpCache, rfpTasks, type RfpTask } from "../schema";
 
-/** Default 7-item checklist seeded once when an RFP first enters the tracker. */
-export const DEFAULT_TASK_TEMPLATE: ReadonlyArray<{ label: string }> = [
+/** Default 7-item checklist seeded once when an RFP first enters the tracker.
+ *  The `useRfpDeadline` flag tells `seedDefaultTasks` to pin the due date of
+ *  that row to `rfp_cache.deadline` so the user doesn't have to retype it. */
+export const DEFAULT_TASK_TEMPLATE: ReadonlyArray<{
+  label: string;
+  useRfpDeadline?: boolean;
+}> = [
   { label: "Review RFP and attachments" },
   { label: "Confirm bid / no-bid decision" },
   { label: "Submit questions by Q&A deadline" },
   { label: "Attend pre-bid meeting" },
   { label: "Draft proposal" },
   { label: "Internal review" },
-  { label: "Submit bid by deadline" },
+  { label: "Submit bid by deadline", useRfpDeadline: true },
 ] as const;
 
 export async function getTasksForRfp(userId: string, rfpId: string): Promise<RfpTask[]> {
@@ -38,6 +43,12 @@ export async function getAllTasksForUser(userId: string): Promise<RfpTask[]> {
 /**
  * Idempotent: only seeds if no rows exist for this (user, RFP).
  * Returns the seeded rows, or [] if a template already existed.
+ *
+ * Any template entry with `useRfpDeadline: true` (today: "Submit bid by
+ * deadline") gets its due date pinned to `rfp_cache.deadline` so the user
+ * doesn't have to retype it. The deadline lookup is a single-row indexed
+ * read and is best-effort — if it fails or the RFP isn't in the cache,
+ * we just leave the due date null instead of blocking the seed.
  */
 export async function seedDefaultTasks(userId: string, rfpId: string): Promise<RfpTask[]> {
   const existing = await db
@@ -46,6 +57,23 @@ export async function seedDefaultTasks(userId: string, rfpId: string): Promise<R
     .where(and(eq(rfpTasks.userId, userId), eq(rfpTasks.rfpId, rfpId)))
     .limit(1);
   if (existing.length > 0) return [];
+
+  let rfpDeadlineIso: string | null = null;
+  try {
+    const [rfpRow] = await db
+      .select({ deadline: rfpCache.deadline })
+      .from(rfpCache)
+      .where(eq(rfpCache.id, rfpId))
+      .limit(1);
+    if (rfpRow?.deadline) {
+      // due_date is a Postgres DATE (no time component) — convert from the
+      // timestamp the cache stores.
+      rfpDeadlineIso = rfpRow.deadline.toISOString().slice(0, 10);
+    }
+  } catch (err) {
+    console.warn("[seedDefaultTasks] deadline lookup failed for", rfpId, err);
+  }
+
   const rows = await db
     .insert(rfpTasks)
     .values(
@@ -55,6 +83,7 @@ export async function seedDefaultTasks(userId: string, rfpId: string): Promise<R
         label: t.label,
         sortOrder: i,
         isCustom: false,
+        dueDate: t.useRfpDeadline ? rfpDeadlineIso : null,
       })),
     )
     .returning();

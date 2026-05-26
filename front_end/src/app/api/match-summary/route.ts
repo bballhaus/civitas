@@ -98,7 +98,12 @@ Negative reasons: ${
             provider: "anthropic",
             model: "claude-haiku-4-5-20251001",
             temperature: 0.3,
-            maxTokens: 280,
+            // Prompt asks for 1-2 + 2-4 sentences with concrete citations.
+            // 280 was tight enough to truncate mid-paragraph when Haiku
+            // included multiple capability/NAICS references; 500 is enough
+            // headroom for both paragraphs while still keeping the response
+            // tight. First-byte latency is unaffected (streaming).
+            maxTokens: 500,
           },
         )) {
           controller.enqueue(encoder.encode(chunk));
