@@ -20,6 +20,15 @@ interface TrackerRfp {
   sourceId: string | null;
   status: PipelineStatus;
   statusChangedAt: string | null;
+  // LLM-extracted dates from attachment PDFs. Any field may be null when
+  // the source document doesn't state that date.
+  qaDeadline: string | null;
+  qaResponseDate: string | null;
+  prebidMeetingAt: string | null;
+  siteVisitAt: string | null;
+  awardDate: string | null;
+  contractStart: string | null;
+  contractEnd: string | null;
 }
 
 interface TrackerTask {
@@ -50,6 +59,13 @@ export async function GET(request: Request) {
           deadline: Date | null;
           estimatedValueUsd: number | null;
           sourceId: string;
+          qaDeadline: Date | null;
+          qaResponseDate: string | null;
+          prebidMeetingAt: Date | null;
+          siteVisitAt: Date | null;
+          awardDate: string | null;
+          contractStart: string | null;
+          contractEnd: string | null;
         }>)
       : db
           .select({
@@ -59,6 +75,13 @@ export async function GET(request: Request) {
             deadline: rfpCache.deadline,
             estimatedValueUsd: rfpCache.estimatedValueUsd,
             sourceId: rfpCache.sourceId,
+            qaDeadline: rfpCache.qaDeadline,
+            qaResponseDate: rfpCache.qaResponseDate,
+            prebidMeetingAt: rfpCache.prebidMeetingAt,
+            siteVisitAt: rfpCache.siteVisitAt,
+            awardDate: rfpCache.awardDate,
+            contractStart: rfpCache.contractStart,
+            contractEnd: rfpCache.contractEnd,
           })
           .from(rfpCache)
           .where(and(inArray(rfpCache.id, rfpIds), visibleRfpSourceClause())),
@@ -99,6 +122,13 @@ export async function GET(request: Request) {
       sourceId: row?.sourceId ?? null,
       status: e.status,
       statusChangedAt: e.statusChangedAt ? e.statusChangedAt.toISOString() : null,
+      qaDeadline: row?.qaDeadline ? row.qaDeadline.toISOString() : null,
+      qaResponseDate: row?.qaResponseDate ?? null,
+      prebidMeetingAt: row?.prebidMeetingAt ? row.prebidMeetingAt.toISOString() : null,
+      siteVisitAt: row?.siteVisitAt ? row.siteVisitAt.toISOString() : null,
+      awardDate: row?.awardDate ?? null,
+      contractStart: row?.contractStart ?? null,
+      contractEnd: row?.contractEnd ?? null,
     };
   });
 

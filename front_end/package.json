@@ -14,6 +14,7 @@
     "rfp-cache:populate": "tsx src/lib/rfp-cache-populator.ts",
     "rfp-cache:embed": "tsx scripts/embed-rfp-cache.ts",
     "rfp-cache:embed-rebuild": "tsx scripts/embed-rfp-cache-rebuild.ts",
+    "rfp-cache:backfill-key-dates": "tsx scripts/backfill-key-dates.ts",
     "profile:backfill-naics": "tsx scripts/backfill-profile-naics.ts",
     "naics:generate-candidates": "tsx scripts/naics-substitutes/generate-candidates.ts",
     "naics:judge-candidates": "tsx scripts/naics-substitutes/judge-candidates.ts",

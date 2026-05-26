@@ -85,6 +85,28 @@ class RawScrapedEvent(BaseModel):
 # Attachment extraction — LLM-derived metadata from PDFs
 # ---------------------------------------------------------------------------
 
+class KeyDateEntry(BaseModel):
+    """A single date extracted from an RFP attachment, with provenance snippet."""
+    value: str = Field(..., description="ISO date (YYYY-MM-DD) or datetime (YYYY-MM-DDTHH:MM)")
+    snippet: Optional[str] = Field(
+        default=None,
+        description="Verbatim sentence from the document that contains this date. Used for UI explainability."
+    )
+
+
+class KeyDates(BaseModel):
+    """Structured RFP dates extracted from attachments. Distinct from the
+    listing-level `due_date` on RawScrapedEvent. Any field may be None if
+    the document doesn't mention that date."""
+    qa_deadline: Optional[KeyDateEntry] = None
+    qa_response_date: Optional[KeyDateEntry] = None
+    prebid_meeting_at: Optional[KeyDateEntry] = None
+    site_visit_at: Optional[KeyDateEntry] = None
+    award_date: Optional[KeyDateEntry] = None
+    contract_start: Optional[KeyDateEntry] = None
+    contract_end: Optional[KeyDateEntry] = None
+
+
 class AttachmentExtraction(BaseModel):
     """Structured metadata extracted from RFP attachment PDFs via LLM."""
     naics_codes: list[str] = Field(default_factory=list)
@@ -114,6 +136,8 @@ class AttachmentExtraction(BaseModel):
     key_requirements_summary: str = "Unknown"
     deliverables: list[str] = Field(default_factory=list)
     evaluation_criteria: list[str] = Field(default_factory=list)
+    # Pre-validated KeyDates accepts {} or a dict with any subset of fields.
+    key_dates: KeyDates = Field(default_factory=KeyDates)
     attachment_text_rollup: str = ""
     pdfs_processed: list[str] = Field(default_factory=list)
     total_pdfs_available: int = 0
@@ -269,6 +293,11 @@ class EnrichedEvent(BaseModel):
         description="Current contractor named in the RFP description/PDFs (LLM-extracted, future)"
     )
     incumbent_contract_end: Optional[str] = None
+
+    # Structured dates extracted from attachment PDFs (Q&A, pre-bid, award,
+    # contract performance period). Each entry includes a verbatim snippet
+    # for explainability. Empty KeyDates() when no attachment was processed.
+    key_dates: KeyDates = Field(default_factory=KeyDates)
 
 
 # ---------------------------------------------------------------------------

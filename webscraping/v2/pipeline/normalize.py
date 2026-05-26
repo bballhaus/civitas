@@ -14,6 +14,7 @@ from webscraping.v2.models import (
     AttachmentExtraction,
     EnrichedEvent,
     EventStatus,
+    KeyDates,
     MirroredAttachment,
     RawScrapedEvent,
 )
@@ -297,4 +298,5 @@ def normalize_event(
         prospective_bidders=raw.prospective_bidders,
         bid_results=raw.bid_results,
         award=raw.award,
+        key_dates=extraction.key_dates if extraction else KeyDates(),
     )
