@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { chatCompletion } from "@/lib/llm";
+import { chatCompletionStream } from "@/lib/llm";
+
+// Streaming response: the client reads `res.body` and re-renders on each
+// chunk so the section paints in progressively instead of blocking for the
+// full Haiku turnaround (~10-15s). Mirrors /api/match-summary.
+export const runtime = "nodejs";
 
 const PROMPT = `You are an expert government contracting consultant. Given the full text of an RFP (Request for Proposal) description and any pre-extracted key requirements from attachments, produce a clear, structured summary of the contract's requirements.
 
@@ -89,22 +94,40 @@ ${hasAttachments ? JSON.stringify(attachmentRollup).slice(0, attachmentSlice) : 
 
 Summarize the contract requirements:`;
 
-    const result = await chatCompletion(
-      [
-        { role: "system", content: PROMPT },
-        { role: "user", content: input },
-      ],
-      {
-        provider: "anthropic",
-        model: "claude-haiku-4-5-20251001",
-        temperature: 0.3,
-        maxTokens: 700,
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for await (const chunk of chatCompletionStream(
+            [
+              { role: "system", content: PROMPT },
+              { role: "user", content: input },
+            ],
+            {
+              provider: "anthropic",
+              model: "claude-haiku-4-5-20251001",
+              temperature: 0.3,
+              maxTokens: 700,
+            },
+          )) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        } catch (err) {
+          console.error("[rfp-requirements-summary] streaming error:", err);
+          controller.error(err);
+        }
       },
-    );
+    });
 
-    const summary = result.content?.trim() ?? description.slice(0, 500);
-
-    return NextResponse.json({ summary });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        // Defeat upstream buffering — same rationale as /api/match-summary.
+        "X-Accel-Buffering": "no",
+      },
+    });
   } catch (err) {
     console.error("[rfp-requirements-summary] Error:", err);
     return NextResponse.json(

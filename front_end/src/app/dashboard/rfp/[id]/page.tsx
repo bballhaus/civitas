@@ -343,10 +343,28 @@ export default function RFPDetailPage() {
           }),
         });
         if (cancelled) return;
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        if (cancelled) return;
-        startTransition(() => setRequirementsSummary(data.summary ?? rfp.description));
+        if (!res.ok || !res.body) throw new Error(await res.text());
+        // Endpoint streams plain text; accumulate as the bytes arrive so the
+        // section paints in progressively. setRequirementsSummaryLoading is
+        // dropped on the first chunk so the spinner gives way to text.
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        let firstChunk = true;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (cancelled) { reader.cancel(); return; }
+          accumulated += decoder.decode(value, { stream: true });
+          if (firstChunk) {
+            setRequirementsSummaryLoading(false);
+            firstChunk = false;
+          }
+          startTransition(() => setRequirementsSummary(accumulated));
+        }
+        accumulated += decoder.decode();
+        startTransition(() => setRequirementsSummary(accumulated || rfp.description));
       } catch (err) {
         console.error("[rfp-requirements-summary] Fetch failed:", err);
         if (!cancelled) {
@@ -415,10 +433,25 @@ export default function RFPDetailPage() {
           }),
         });
         if (cancelled) return;
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        if (cancelled) return;
-        startTransition(() => setCapabilitiesAnalysis(data.analysis ?? null));
+        if (!res.ok || !res.body) throw new Error(await res.text());
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        let firstChunk = true;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (cancelled) { reader.cancel(); return; }
+          accumulated += decoder.decode(value, { stream: true });
+          if (firstChunk) {
+            setCapabilitiesAnalysisLoading(false);
+            firstChunk = false;
+          }
+          startTransition(() => setCapabilitiesAnalysis(accumulated));
+        }
+        accumulated += decoder.decode();
+        startTransition(() => setCapabilitiesAnalysis(accumulated || null));
       } catch (err) {
         console.error("[capabilities-analysis] Fetch failed:", err);
         if (!cancelled) {

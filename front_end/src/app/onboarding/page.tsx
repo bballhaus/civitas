@@ -118,6 +118,11 @@ export default function OnboardingPage() {
 
   const goNext = async () => {
     trackEvent("onboarding_step_advanced", { step, stepName: stepLabel(step) });
+    // Drain any in-flight optimistic POSTs *before* refreshing — otherwise
+    // a rapid Continue after a NAICS pick races the GET ahead of the POST,
+    // refresh returns server state without the row, and setSnapshot wipes
+    // the optimistic chip the user just placed.
+    await commitHandler.drainPending();
     await refreshSnapshot();
     if (step < TOTAL_STEPS) setStep(step + 1);
   };
@@ -138,6 +143,10 @@ export default function OnboardingPage() {
   const finish = async () => {
     setFinishing(true);
     try {
+      // Same race protection as goNext — wait for any background writes
+      // to land before we POST /api/onboarding/state/ (which reads the
+      // profile to compute completeness / set onboarded_at).
+      await commitHandler.drainPending();
       const res = await fetch("/api/onboarding/state/", { method: "POST" });
       if (!res.ok) {
         setError("Failed to finalize onboarding");
@@ -225,8 +234,11 @@ export default function OnboardingPage() {
           />
         </div>
 
-        {/* Step pips */}
-        <div className="mb-6 flex gap-1.5 overflow-x-auto pb-1">
+        {/* Step pips — sized so all 10 fit on one row at typical widths.
+            grid-cols-10 (not flex) so each chip claims an equal slice of
+            the row and labels can truncate inside their slot instead of
+            pushing the row past the container width. */}
+        <div className="mb-6 grid grid-cols-10 gap-1">
           {STEP_META.map((m, i) => {
             const n = i + 1;
             const done = n < step;
@@ -240,7 +252,8 @@ export default function OnboardingPage() {
                 type="button"
                 onClick={() => clickable && setStep(n)}
                 disabled={!clickable && !current}
-                className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
+                title={`${n}. ${m.short}`}
+                className={`min-w-0 px-1.5 py-1 rounded-full text-[11px] font-semibold transition-colors truncate text-center ${
                   current
                     ? "bg-[#3C89C6] text-white"
                     : clickable
@@ -248,7 +261,8 @@ export default function OnboardingPage() {
                     : "bg-slate-100 text-slate-400 cursor-not-allowed"
                 }`}
               >
-                {n}. {m.short}
+                <span className="hidden sm:inline">{n}. </span>
+                {m.short}
               </button>
             );
           })}

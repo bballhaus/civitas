@@ -382,67 +382,103 @@ export default function RfpDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.rfp.id, profileLoaded]);
 
-  // Fetch RFP requirements summary (About this RFP).
+  // Fetch RFP requirements summary (About this RFP). Streams plain-text
+  // chunks so the section paints in progressively — same pattern as
+  // match-summary above.
   useEffect(() => {
     if (!data || !data.rfp.description?.trim() || !llmRfpPayload) return;
     const controller = new AbortController();
     setRequirementsSummaryLoading(true);
     setRequirementsSummaryError(false);
-    fetch("/api/rfp-requirements-summary", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({ rfp: llmRfpPayload }),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text());
-        return res.json();
-      })
-      .then((json) => setRequirementsSummary(json.summary ?? null))
-      .catch((err) => {
+
+    (async () => {
+      try {
+        const res = await fetch("/api/rfp-requirements-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ rfp: llmRfpPayload }),
+        });
+        if (!res.ok || !res.body) throw new Error(await res.text());
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        let firstChunk = true;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          accumulated += decoder.decode(value, { stream: true });
+          if (firstChunk) {
+            setRequirementsSummaryLoading(false);
+            firstChunk = false;
+          }
+          setRequirementsSummary(accumulated);
+        }
+        accumulated += decoder.decode();
+        setRequirementsSummary(accumulated || null);
+      } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setRequirementsSummaryError(true);
         setRequirementsSummary(null);
-      })
-      .finally(() => {
+      } finally {
         if (!controller.signal.aborted) setRequirementsSummaryLoading(false);
-      });
+      }
+    })();
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.rfp.id]);
 
   // Fetch capabilities analysis (compares profile against RFP requirements).
+  // Also streams — Haiku with full RFP + profile + breakdown is the heaviest
+  // of the three LLM calls so progressive rendering matters most here.
   useEffect(() => {
     if (!data || !profileLoaded || !llmRfpPayload) return;
     const detail = data;
     const controller = new AbortController();
     setCapabilitiesAnalysisLoading(true);
     setCapabilitiesAnalysisError(false);
-    fetch("/api/capabilities-analysis", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        rfp: llmRfpPayload,
-        profile: llmProfilePayload
-          ? { ...llmProfilePayload, technologyStack: (profile as { technologyStack?: string[] } | null)?.technologyStack }
-          : null,
-        breakdown: detail.breakdown,
-      }),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text());
-        return res.json();
-      })
-      .then((json) => setCapabilitiesAnalysis(json.analysis ?? null))
-      .catch((err) => {
+
+    (async () => {
+      try {
+        const res = await fetch("/api/capabilities-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            rfp: llmRfpPayload,
+            profile: llmProfilePayload
+              ? { ...llmProfilePayload, technologyStack: (profile as { technologyStack?: string[] } | null)?.technologyStack }
+              : null,
+            breakdown: detail.breakdown,
+          }),
+        });
+        if (!res.ok || !res.body) throw new Error(await res.text());
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        let firstChunk = true;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          accumulated += decoder.decode(value, { stream: true });
+          if (firstChunk) {
+            setCapabilitiesAnalysisLoading(false);
+            firstChunk = false;
+          }
+          setCapabilitiesAnalysis(accumulated);
+        }
+        accumulated += decoder.decode();
+        setCapabilitiesAnalysis(accumulated || null);
+      } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setCapabilitiesAnalysisError(true);
         setCapabilitiesAnalysis(null);
-      })
-      .finally(() => {
+      } finally {
         if (!controller.signal.aborted) setCapabilitiesAnalysisLoading(false);
-      });
+      }
+    })();
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.rfp.id, profileLoaded]);

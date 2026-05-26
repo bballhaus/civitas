@@ -1911,9 +1911,27 @@ function RFPDetailPanel({
             },
           }),
         });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        setRequirementsSummary(data.summary ?? rfp.description);
+        if (!res.ok || !res.body) throw new Error(await res.text());
+        // Plain-text stream: append as bytes arrive so the section paints
+        // in progressively. Same pattern as match-summary.
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        let firstChunk = true;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (controller.signal.aborted) { reader.cancel(); return; }
+          accumulated += decoder.decode(value, { stream: true });
+          if (firstChunk) {
+            setRequirementsSummaryLoading(false);
+            firstChunk = false;
+          }
+          setRequirementsSummary(accumulated);
+        }
+        accumulated += decoder.decode();
+        setRequirementsSummary(accumulated || rfp.description);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("[rfp-requirements-summary] Fetch failed:", err);
@@ -1975,9 +1993,25 @@ function RFPDetailPanel({
             breakdown: match.breakdown,
           }),
         });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        setCapabilitiesAnalysis(data.analysis ?? null);
+        if (!res.ok || !res.body) throw new Error(await res.text());
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        let firstChunk = true;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (controller.signal.aborted) { reader.cancel(); return; }
+          accumulated += decoder.decode(value, { stream: true });
+          if (firstChunk) {
+            setCapabilitiesAnalysisLoading(false);
+            firstChunk = false;
+          }
+          setCapabilitiesAnalysis(accumulated);
+        }
+        accumulated += decoder.decode();
+        setCapabilitiesAnalysis(accumulated || null);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("[capabilities-analysis] Fetch failed:", err);
