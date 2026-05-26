@@ -309,10 +309,10 @@ export default function RfpDetailPage() {
     ? {
         companyName: profile.companyName,
         industry: profile.industry,
+        specialties: profile.specialties,
         capabilities: profile.capabilities,
         certifications: profile.certifications,
-        workCities: profile.workCities,
-        workCounties: profile.workCounties,
+        workAreas: profile.workAreas,
         agencyExperience: profile.agencyExperience,
         contractTypes: profile.contractTypes,
       }

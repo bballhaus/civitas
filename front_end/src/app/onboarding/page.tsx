@@ -12,7 +12,7 @@ import { MeshBackground } from "@/components/MeshBackground";
 import { TOTAL_STEPS, STEP_META } from "@/lib/onboarding-data";
 import { trackEvent } from "@/lib/event-tracker";
 import { OnboardingStep } from "./Steps";
-import { CommitProvider, makeAutoCommitHandler } from "./commit";
+import { CommitProvider, makeOptimisticCommitHandler } from "./commit";
 import type { OnboardingSnapshot } from "./types";
 
 // Helper: stable, lowercase step label suitable for grouping in KPI queries.
@@ -88,13 +88,22 @@ export default function OnboardingPage() {
     setCompleteness(data.completenessScore);
   };
 
-  // Auto-commit handler for the wizard — every mutation hits the API
-  // immediately and refreshes the snapshot. Memoized so React doesn't
-  // re-wrap the Steps tree on every keystroke.
+  // Optimistic commit handler — applies each mutation to the local snapshot
+  // synchronously (so the chip paints in the same frame as the click), fires
+  // the API call in the background, and debounces the snapshot refetch.
+  // Without this, a NAICS pick blocks for the POST (~addCapability ⇒ embed
+  // refresh ⇒ rescore trigger) *plus* a full snapshot refetch *plus* a
+  // re-render of the ~1k-row NAICS dropdown on every click.
+  //
+  // Pass setSnapshot directly — React queues functional updaters so rapid
+  // clicks each see the latest queued state, not the stale closure value.
   const commitHandler = useMemo(
-    () => makeAutoCommitHandler(refreshSnapshot),
-    // refreshSnapshot is a stable closure since this component re-renders
-    // on every state change; the inner fetch is referentially fine.
+    () => makeOptimisticCommitHandler(
+      (updater) => setSnapshot((s) => (s ? updater(s) : s)),
+      refreshSnapshot,
+    ),
+    // setSnapshot and refreshSnapshot are stable; the wrapper closure is the
+    // only thing that could go stale and it just defers to React's setState.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );

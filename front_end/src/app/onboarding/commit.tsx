@@ -240,6 +240,234 @@ export function isDraftId(id: string): boolean {
   return id.startsWith(DRAFT_ID_PREFIX);
 }
 
+// ---------------------------------------------------------------------------
+// Optimistic handler — used by the onboarding wizard.
+//
+// Same end-state as the auto handler (every mutation hits the API), but the
+// local snapshot updates synchronously *before* the fetch fires, so the
+// freshly-picked chip paints in the same frame as the click. The snapshot
+// refetch that reconciles draft ids with real DB ids is debounced (400ms),
+// so a burst of clicks no longer triggers one full GET /api/onboarding/state/
+// + ~1k-row re-render *per click*.
+// ---------------------------------------------------------------------------
+
+type SnapshotSetter = (
+  updater: (prev: OnboardingSnapshot) => OnboardingSnapshot,
+) => void;
+
+export function makeOptimisticCommitHandler(
+  setSnapshot: SnapshotSetter,
+  refresh: () => Promise<void> | void,
+): CommitHandler {
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleRefresh = () => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      void refresh();
+    }, 400);
+  };
+
+  const parseAddedNaicsCodes = async (res: Response): Promise<string[]> => {
+    try {
+      const body = (await res.json()) as { addedNaicsCodes?: unknown };
+      if (Array.isArray(body.addedNaicsCodes)) {
+        return body.addedNaicsCodes.filter((c): c is string => typeof c === "string");
+      }
+    } catch {
+      // Response wasn't JSON — the inferred-chip surface degrades gracefully.
+    }
+    return [];
+  };
+
+  return {
+    async patch(p) {
+      setSnapshot((s) => ({ ...s, ...p }));
+      try {
+        await fetch("/api/profile/", {
+          method: "PATCH",
+          headers: JSON_HEADERS,
+          body: JSON.stringify(p),
+        });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+    async addSpecialty({ value, weight }) {
+      const draftId = makeDraftId();
+      setSnapshot((s) => {
+        // Idempotent: a double-click on the same NAICS row shouldn't show
+        // two chips for one server row.
+        if (s.specialties.some((x) => x.value.toLowerCase() === value.toLowerCase())) return s;
+        return { ...s, specialties: [...s.specialties, { id: draftId, value, weight }] };
+      });
+      let addedNaicsCodes: string[] = [];
+      try {
+        const res = await fetch("/api/profile/specialties/", {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ value, weight }),
+        });
+        addedNaicsCodes = await parseAddedNaicsCodes(res);
+      } finally {
+        scheduleRefresh();
+      }
+      return { addedNaicsCodes };
+    },
+    async removeSpecialty(id) {
+      setSnapshot((s) => ({ ...s, specialties: s.specialties.filter((x) => x.id !== id) }));
+      try {
+        await fetch(`/api/profile/specialties/${id}/`, { method: "DELETE" });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+    async addCapability({ value }) {
+      const draftId = makeDraftId();
+      setSnapshot((s) => {
+        if (s.capabilities.some((x) => x.value.toLowerCase() === value.toLowerCase())) return s;
+        return { ...s, capabilities: [...s.capabilities, { id: draftId, value }] };
+      });
+      let addedNaicsCodes: string[] = [];
+      try {
+        const res = await fetch("/api/profile/capabilities/", {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ value }),
+        });
+        addedNaicsCodes = await parseAddedNaicsCodes(res);
+      } finally {
+        scheduleRefresh();
+      }
+      return { addedNaicsCodes };
+    },
+    async removeCapability(id) {
+      setSnapshot((s) => ({ ...s, capabilities: s.capabilities.filter((x) => x.id !== id) }));
+      try {
+        await fetch(`/api/profile/capabilities/${id}/`, { method: "DELETE" });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+    async addLicense(input) {
+      const draftId = makeDraftId();
+      setSnapshot((s) => ({
+        ...s,
+        licenses: [
+          ...s.licenses,
+          {
+            id: draftId,
+            licenseClass: input.licenseClass,
+            licenseNumber: input.licenseNumber ?? null,
+            expiresOn: input.expiresOn ?? null,
+          },
+        ],
+      }));
+      try {
+        await fetch("/api/profile/licenses/", {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify(input),
+        });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+    async removeLicense(id) {
+      setSnapshot((s) => ({ ...s, licenses: s.licenses.filter((x) => x.id !== id) }));
+      try {
+        await fetch(`/api/profile/licenses/${id}/`, { method: "DELETE" });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+    async addCertification(input) {
+      const draftId = makeDraftId();
+      setSnapshot((s) => ({
+        ...s,
+        certifications: [...s.certifications, { id: draftId, ...input }],
+      }));
+      try {
+        await fetch("/api/profile/certifications/", {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify(input),
+        });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+    async removeCertification(id) {
+      setSnapshot((s) => ({
+        ...s,
+        certifications: s.certifications.filter((x) => x.id !== id),
+      }));
+      try {
+        await fetch(`/api/profile/certifications/${id}/`, { method: "DELETE" });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+    async addWorkArea(input) {
+      const draftId = makeDraftId();
+      setSnapshot((s) => {
+        const lname = input.name.toLowerCase();
+        if (s.workAreas.some((x) => x.kind === input.kind && x.name.toLowerCase() === lname)) {
+          return s;
+        }
+        return { ...s, workAreas: [...s.workAreas, { id: draftId, ...input }] };
+      });
+      try {
+        await fetch("/api/profile/work-areas/", {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify(input),
+        });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+    async removeWorkArea(id) {
+      setSnapshot((s) => ({ ...s, workAreas: s.workAreas.filter((x) => x.id !== id) }));
+      try {
+        await fetch(`/api/profile/work-areas/${id}/`, { method: "DELETE" });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+    async addAgencyRelationship(input) {
+      const draftId = makeDraftId();
+      setSnapshot((s) => ({
+        ...s,
+        agencyRelationships: [
+          ...s.agencyRelationships,
+          { id: draftId, strength: 3, ...input },
+        ],
+      }));
+      try {
+        await fetch("/api/profile/agency-relationships/", {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ ...input, strength: 3, source: "user" }),
+        });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+    async removeAgencyRelationship(id) {
+      setSnapshot((s) => ({
+        ...s,
+        agencyRelationships: s.agencyRelationships.filter((x) => x.id !== id),
+      }));
+      try {
+        await fetch(`/api/profile/agency-relationships/${id}/`, { method: "DELETE" });
+      } finally {
+        scheduleRefresh();
+      }
+    },
+  };
+}
+
 type DraftSetter = (
   updater: (prev: OnboardingSnapshot) => OnboardingSnapshot,
 ) => void;

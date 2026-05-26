@@ -52,25 +52,16 @@ export interface RfpTask {
   createdAt: string;
 }
 
-/** Profile shape returned by GET /api/auth/me/ and GET /api/profile/. */
-export interface AuthMeProfile {
-  name: string;
-  contract_count: number;
-  total_contract_value?: number | string;
-  total_past_contract_value?: number | string;
-  certifications: string[];
-  clearances: string[];
-  naics_codes: string[];
-  industry_tags: string[];
-  work_cities: string[];
-  work_counties: string[];
-  capabilities: string[];
-  agency_experience: string[];
-  size_status?: string[];
-  created_at?: string;
-  updated_at?: string;
-  uploaded_documents?: Array<{ id: string; title: string; document: string; created_at: string }>;
-}
+/** Profile shape returned by GET /api/auth/me/ and GET /api/profile/.
+ *
+ * The v2 backend returns a `FullProfile` (camelCase fields + child arrays
+ * of typed rows like `Capability[]`, `Certification[]`, `WorkArea[]`).
+ * Older callers (and locally-cached payloads) may still hand us the v1
+ * shape (snake_case + plain string[]), so the mapper accepts either —
+ * see `mapBackendProfileToCompanyProfile`. Anything we read off here is
+ * therefore typed as `unknown` and validated at extraction time.
+ */
+export type AuthMeProfile = Record<string, unknown>;
 
 /** Frontend profile shape (dashboard + profile page). */
 export interface CompanyProfileFromApi {
@@ -80,8 +71,14 @@ export interface CompanyProfileFromApi {
   certifications: string[];
   clearances: string[];
   naicsCodes: string[];
+  /** Split out of v2's unified `workAreas` table by `kind` for the v1
+   *  dashboard filter UI that still keys by city/county. */
   workCities: string[];
   workCounties: string[];
+  /** Flat list of every work area name (city + county + metro + state)
+   *  — what the LLM match-summary prompt wants. */
+  workAreas: string[];
+  specialties: string[];
   capabilities: string[];
   agencyExperience: string[];
   contractTypes: string[];
@@ -101,20 +98,48 @@ export interface CompanyProfileFromApi {
 }
 
 /**
+ * Pull a string out of a backend array entry. The v2 backend returns child
+ * collections (capabilities, certifications, workAreas, …) as arrays of
+ * typed row objects, not plain strings — so the old `String(entry)` path
+ * silently produced `"[object Object]"` chips in the LLM prompt. We try
+ * each candidate key in order, then fall back to `String(entry)` only when
+ * the entry is already a primitive.
+ */
+function extractStringFromEntry(entry: unknown, keys: readonly string[]): string | null {
+  if (entry == null) return null;
+  if (typeof entry === "string") return entry;
+  if (typeof entry === "number" || typeof entry === "boolean") return String(entry);
+  if (typeof entry === "object") {
+    const o = entry as Record<string, unknown>;
+    for (const key of keys) {
+      const v = o[key];
+      if (typeof v === "string" && v.trim()) return v;
+    }
+  }
+  return null;
+}
+
+/**
  * Clean a string array from backend data:
+ * - Accept both flat string arrays (v1) AND arrays of typed row objects (v2):
+ *   pass `keys` listing which fields to pull from each row.
  * - Split comma-separated entries into individual items
  * - Remove "null", "undefined", empty strings
  * - Trim whitespace
  * - Title-case each item (e.g. "sacramento" → "Sacramento", "san jose" → "San Jose")
  * - Deduplicate (case-insensitive)
  */
-function cleanStringArray(arr: unknown, opts?: { titleCase?: boolean }): string[] {
+function cleanStringArray(
+  arr: unknown,
+  opts?: { titleCase?: boolean; keys?: readonly string[] },
+): string[] {
   if (!Array.isArray(arr)) return [];
   const doTitleCase = opts?.titleCase ?? false;
+  const keys = opts?.keys ?? [];
   const items: string[] = [];
   for (const entry of arr) {
-    if (entry == null) continue;
-    const str = String(entry);
+    const str = extractStringFromEntry(entry, keys);
+    if (str == null) continue;
     for (const part of str.split(",")) {
       const trimmed = part.trim();
       if (!trimmed || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined") continue;
@@ -148,33 +173,92 @@ export function mapBackendProfileToCompanyProfile(
   p: AuthMeProfile | null | undefined
 ): CompanyProfileFromApi | null {
   if (!p) return null;
-  const totalRaw = p.total_past_contract_value ?? p.total_contract_value ?? "0";
-  const total = typeof totalRaw === "number" ? String(totalRaw) : String(totalRaw);
+  const pAny = p as Record<string, unknown>;
+
+  // The v2 backend returns FullProfile with camelCase fields + child arrays
+  // of typed row objects. Older payloads (cached, v1 endpoints) use
+  // snake_case + plain string arrays. Read both shapes through ?? chains.
+  const companyName =
+    (typeof pAny.companyName === "string" && pAny.companyName) ||
+    (typeof pAny.name === "string" && pAny.name) ||
+    "";
+
+  const totalRaw =
+    pAny.total_past_contract_value ?? pAny.totalPastContractValue ?? pAny.total_contract_value ?? "0";
+  const total = String(totalRaw);
+
+  // v2: workAreas is one table with a `kind` discriminator. Split it into
+  // cities/counties for the v1 dashboard filter UI that keys by kind, and
+  // also surface the flat list under `workAreas` for the LLM payload.
+  const workAreasRaw = Array.isArray(pAny.workAreas) ? pAny.workAreas : [];
+  const byKind = (kind: string) =>
+    workAreasRaw.filter(
+      (w): w is Record<string, unknown> =>
+        typeof w === "object" && w !== null && (w as Record<string, unknown>).kind === kind,
+    );
+
+  const workCitiesSrc = byKind("city");
+  const workCountiesSrc = byKind("county");
+
   return {
-    companyName: titleCase((p.name ?? "").trim()),
-    industry: cleanStringArray(p.industry_tags, { titleCase: true }),
-    sizeStatus: cleanStringArray(p.size_status),
-    certifications: cleanStringArray(p.certifications),
-    clearances: cleanStringArray(p.clearances),
-    naicsCodes: cleanStringArray(p.naics_codes),
-    workCities: cleanStringArray(p.work_cities, { titleCase: true }),
-    workCounties: cleanStringArray(p.work_counties, { titleCase: true }),
-    capabilities: cleanStringArray(p.capabilities, { titleCase: true }),
-    agencyExperience: cleanStringArray(p.agency_experience, { titleCase: true }),
+    companyName: titleCase(companyName.trim()),
+    industry: cleanStringArray(pAny.industry_tags ?? pAny.industry, {
+      titleCase: true,
+      keys: ["value", "name"],
+    }),
+    sizeStatus: cleanStringArray(pAny.size_status ?? pAny.sizeStatus, {
+      keys: ["value"],
+    }),
+    certifications: cleanStringArray(pAny.certifications, {
+      keys: ["displayName", "value"],
+    }),
+    clearances: cleanStringArray(pAny.clearances, { keys: ["value"] }),
+    naicsCodes: cleanStringArray(pAny.naicsCodes ?? pAny.naics_codes, {
+      keys: ["code", "value"],
+    }),
+    workCities: cleanStringArray(workCitiesSrc.length > 0 ? workCitiesSrc : pAny.work_cities, {
+      titleCase: true,
+      keys: ["name"],
+    }),
+    workCounties: cleanStringArray(
+      workCountiesSrc.length > 0 ? workCountiesSrc : pAny.work_counties,
+      { titleCase: true, keys: ["name"] },
+    ),
+    workAreas: cleanStringArray(
+      workAreasRaw.length > 0 ? workAreasRaw : pAny.work_areas,
+      { titleCase: true, keys: ["name"] },
+    ),
+    specialties: cleanStringArray(pAny.specialties, {
+      keys: ["value"],
+      titleCase: true,
+    }),
+    capabilities: cleanStringArray(pAny.capabilities, {
+      keys: ["value"],
+      titleCase: true,
+    }),
+    agencyExperience: cleanStringArray(
+      pAny.agencyRelationships ?? pAny.agency_experience,
+      { keys: ["agencyDisplay", "value"], titleCase: true },
+    ),
     contractTypes: [],
-    contractCount: typeof p.contract_count === "number" ? p.contract_count : 0,
+    contractCount:
+      typeof pAny.contract_count === "number"
+        ? pAny.contract_count
+        : typeof pAny.contractCount === "number"
+          ? pAny.contractCount
+          : 0,
     totalPastContractValue: total,
     pastPerformance: "",
     strategicGoals: "",
-    uploadedFiles: Array.isArray(p.uploaded_documents)
-      ? p.uploaded_documents.map((d) => ({
-          name: d.title || "document",
+    uploadedFiles: Array.isArray(pAny.uploaded_documents)
+      ? (pAny.uploaded_documents as Array<Record<string, unknown>>).map((d) => ({
+          name: (typeof d.title === "string" && d.title) || "document",
           type: "application/octet-stream",
           size: 0,
-          uploadedAt: d.created_at || "",
+          uploadedAt: typeof d.created_at === "string" ? d.created_at : "",
           parsed: true,
           uploadedToBackend: true,
-          contractId: d.id ?? undefined,
+          contractId: typeof d.id === "string" ? d.id : undefined,
         }))
       : [],
   };
@@ -190,6 +274,8 @@ export function getEmptyCompanyProfile(): CompanyProfileFromApi {
     naicsCodes: [],
     workCities: [],
     workCounties: [],
+    workAreas: [],
+    specialties: [],
     capabilities: [],
     agencyExperience: [],
     contractTypes: [],
