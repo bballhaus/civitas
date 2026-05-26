@@ -206,30 +206,29 @@ export default function TrackerPage() {
 
   const calendarEvents = useMemo<EventInput[]>(() => {
     const events: EventInput[] = [];
-    // When an RFP is selected (via card click or event click), every event
-    // belonging to OTHER RFPs gets pushed to ~40% opacity so the selected
-    // RFP's events visually pop out of the calendar. Null selectedRfpId
-    // means "no selection" → full color for all events.
-    const FADE_ALPHA = "66"; // hex8 ≈ 40% opacity
-    const fade = (hex: string) => hex + FADE_ALPHA;
-    const isFaded = (rfpId: string) =>
-      selectedRfpId !== null && selectedRfpId !== rfpId;
-    const textFor = (rfpId: string) => (isFaded(rfpId) ? "#ffffff99" : "#ffffff");
+    // RFPs in 'lost' or 'no_bid' status are still in the tracker's pipeline
+    // board (so the user can resurrect them later) but their calendar events
+    // are suppressed — we don't want closed-out RFPs cluttering the calendar.
+    // Moving an RFP back to any other status restores its events automatically
+    // because this memo recomputes whenever payload.rfps changes.
+    const HIDDEN_STATUSES = new Set<PipelineStatus>(["lost", "no_bid"]);
+    const visibleRfpIds = new Set<string>();
 
     for (const rfp of payload.rfps) {
+      if (HIDDEN_STATUSES.has(rfp.status)) continue;
+      visibleRfpIds.add(rfp.id);
       const iso = isoForFullCalendar(rfp.deadline);
       if (iso) {
         const meta = STATUS_META[rfp.status];
-        const faded = isFaded(rfp.id);
         events.push({
           id: `rfp:${rfp.id}`,
-          title: `📋 ${rfp.title}`,
+          title: "📋 Proposal due",
           start: iso,
           allDay: false,
-          backgroundColor: faded ? fade(meta.color) : meta.color,
-          borderColor: faded ? fade(meta.color) : meta.color,
-          textColor: textFor(rfp.id),
-          extendedProps: { kind: "deadline", rfpId: rfp.id },
+          backgroundColor: meta.color,
+          borderColor: meta.color,
+          textColor: "#ffffff",
+          extendedProps: { kind: "deadline", rfpId: rfp.id, rfpTitle: rfp.title },
         });
       }
       // Extracted key dates (Q&A, pre-bid, award, contract). Each is rendered
@@ -250,40 +249,39 @@ export default function TrackerPage() {
         const kdIso = isoForFullCalendar(raw);
         if (!kdIso) continue;
         const m = KEY_DATE_META[field];
-        const faded = isFaded(rfp.id);
         events.push({
           id: `${field}:${rfp.id}`,
-          title: `${m.icon} ${m.label}: ${rfp.title}`,
+          title: `${m.icon} ${m.label}`,
           start: kdIso,
           // qa_response_date / award / contract_* are stored as `date` (no
           // time component), so they should render as all-day on the cal.
           allDay: field === "qaResponseDate" || field === "awardDate" || field === "contractStart" || field === "contractEnd",
-          backgroundColor: faded ? fade(m.color) : m.color,
-          borderColor: faded ? fade(m.color) : m.color,
-          textColor: textFor(rfp.id),
-          extendedProps: { kind: field, rfpId: rfp.id },
+          backgroundColor: m.color,
+          borderColor: m.color,
+          textColor: "#ffffff",
+          extendedProps: { kind: field, rfpId: rfp.id, rfpTitle: rfp.title },
         });
       }
     }
     for (const t of payload.tasks) {
       if (!t.dueDate) continue;
+      // Skip tasks for hidden (lost/no_bid) RFPs — same rationale as deadlines.
+      if (!visibleRfpIds.has(t.rfpId)) continue;
       const rfp = rfpById.get(t.rfpId);
       const completed = !!t.completedAt;
-      const baseColor = completed ? "#94A3B8" : "#F59E0B";
-      const faded = isFaded(t.rfpId);
       events.push({
         id: `task:${t.id}`,
         title: completed ? `✓ ${t.label}` : `☐ ${t.label}`,
         start: t.dueDate,
         allDay: true,
-        backgroundColor: faded ? fade(baseColor) : baseColor,
-        borderColor: faded ? fade(baseColor) : baseColor,
-        textColor: textFor(t.rfpId),
+        backgroundColor: completed ? "#94A3B8" : "#F59E0B",
+        borderColor: completed ? "#94A3B8" : "#F59E0B",
+        textColor: "#ffffff",
         extendedProps: { kind: "task", taskId: t.id, rfpId: t.rfpId, rfpTitle: rfp?.title ?? "" },
       });
     }
     return events;
-  }, [payload.rfps, payload.tasks, rfpById, selectedRfpId]);
+  }, [payload.rfps, payload.tasks, rfpById]);
 
   const handleEventClick = useCallback((arg: EventClickArg) => {
     const kind = arg.event.extendedProps?.kind;
@@ -292,6 +290,24 @@ export default function TrackerPage() {
     // Suppress default navigation behavior on link-style events.
     arg.jsEvent.preventDefault();
     void kind; // silence unused
+  }, []);
+
+  // Custom calendar event renderer: line 1 = event type (icon + label),
+  // line 2 = the RFP title in small dim text so the user can tell at a
+  // glance which opportunity a calendar entry belongs to. Used for every
+  // event kind (deadline, key dates, tasks).
+  const renderEventContent = useCallback((arg: { event: { title: string; extendedProps: Record<string, unknown> } }) => {
+    const rfpTitle = (arg.event.extendedProps?.rfpTitle as string | undefined) ?? "";
+    return (
+      <div className="leading-tight overflow-hidden">
+        <div className="text-[11px] font-semibold truncate">{arg.event.title}</div>
+        {rfpTitle && (
+          <div className="text-[9px] opacity-75 truncate font-normal mt-px">
+            {rfpTitle}
+          </div>
+        )}
+      </div>
+    );
   }, []);
 
   const handleStatusChange = useCallback(
@@ -397,7 +413,7 @@ export default function TrackerPage() {
           <div>
             <h1 className="text-3xl font-bold text-slate-900 mb-1">Bidding Process Tracker</h1>
             <p className="text-slate-600 text-sm">
-              Calendar, pipeline, and per-RFP tasks for every opportunity you&apos;re tracking.
+              Calendar, pipeline, and per-RFP dates for every opportunity you&apos;re tracking.
               {" "}
               <Link href="/matches" className="text-[#3C89C6] font-semibold hover:underline">
                 Find more in your matches &rarr;
@@ -443,6 +459,7 @@ export default function TrackerPage() {
               height="auto"
               events={calendarEvents}
               eventClick={handleEventClick}
+              eventContent={renderEventContent}
               dayMaxEvents={3}
               eventDisplay="block"
             />
@@ -450,10 +467,10 @@ export default function TrackerPage() {
           {/* Calendar legend */}
           <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600">
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-[#F59E0B]" /> Open task
+              <span className="w-3 h-3 rounded-sm bg-[#F59E0B]" /> Open date
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-[#94A3B8]" /> Completed task
+              <span className="w-3 h-3 rounded-sm bg-[#94A3B8]" /> Completed date
             </span>
             <span className="text-slate-400">|</span>
             {PIPELINE_ORDER.map((s) => (
@@ -707,7 +724,7 @@ function RfpDrawer({
         <div className="flex-1 overflow-y-auto px-6 py-4">
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Tasks ({tasks.filter((t) => t.completedAt).length} / {tasks.length})
+              Dates ({tasks.filter((t) => t.completedAt).length} / {tasks.length})
             </p>
             <Link
               href={`/matches/${encodeURIComponent(rfp.id)}`}
@@ -728,7 +745,7 @@ function RfpDrawer({
               />
             ))}
             {tasks.length === 0 && (
-              <li className="text-xs text-slate-400 italic px-2 py-3">No tasks yet — add one below.</li>
+              <li className="text-xs text-slate-400 italic px-2 py-3">No dates yet — add one below.</li>
             )}
           </ul>
 
@@ -751,7 +768,7 @@ function RfpDrawer({
               type="text"
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
-              placeholder="Add a task…"
+              placeholder="Add a date…"
               className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3C89C6]/30"
               maxLength={200}
             />
