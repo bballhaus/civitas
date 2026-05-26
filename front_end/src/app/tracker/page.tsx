@@ -206,18 +206,29 @@ export default function TrackerPage() {
 
   const calendarEvents = useMemo<EventInput[]>(() => {
     const events: EventInput[] = [];
+    // When an RFP is selected (via card click or event click), every event
+    // belonging to OTHER RFPs gets pushed to ~40% opacity so the selected
+    // RFP's events visually pop out of the calendar. Null selectedRfpId
+    // means "no selection" → full color for all events.
+    const FADE_ALPHA = "66"; // hex8 ≈ 40% opacity
+    const fade = (hex: string) => hex + FADE_ALPHA;
+    const isFaded = (rfpId: string) =>
+      selectedRfpId !== null && selectedRfpId !== rfpId;
+    const textFor = (rfpId: string) => (isFaded(rfpId) ? "#ffffff99" : "#ffffff");
+
     for (const rfp of payload.rfps) {
       const iso = isoForFullCalendar(rfp.deadline);
       if (iso) {
         const meta = STATUS_META[rfp.status];
+        const faded = isFaded(rfp.id);
         events.push({
           id: `rfp:${rfp.id}`,
           title: `📋 ${rfp.title}`,
           start: iso,
           allDay: false,
-          backgroundColor: meta.color,
-          borderColor: meta.color,
-          textColor: "#ffffff",
+          backgroundColor: faded ? fade(meta.color) : meta.color,
+          borderColor: faded ? fade(meta.color) : meta.color,
+          textColor: textFor(rfp.id),
           extendedProps: { kind: "deadline", rfpId: rfp.id },
         });
       }
@@ -239,6 +250,7 @@ export default function TrackerPage() {
         const kdIso = isoForFullCalendar(raw);
         if (!kdIso) continue;
         const m = KEY_DATE_META[field];
+        const faded = isFaded(rfp.id);
         events.push({
           id: `${field}:${rfp.id}`,
           title: `${m.icon} ${m.label}: ${rfp.title}`,
@@ -246,9 +258,9 @@ export default function TrackerPage() {
           // qa_response_date / award / contract_* are stored as `date` (no
           // time component), so they should render as all-day on the cal.
           allDay: field === "qaResponseDate" || field === "awardDate" || field === "contractStart" || field === "contractEnd",
-          backgroundColor: m.color,
-          borderColor: m.color,
-          textColor: "#ffffff",
+          backgroundColor: faded ? fade(m.color) : m.color,
+          borderColor: faded ? fade(m.color) : m.color,
+          textColor: textFor(rfp.id),
           extendedProps: { kind: field, rfpId: rfp.id },
         });
       }
@@ -257,19 +269,21 @@ export default function TrackerPage() {
       if (!t.dueDate) continue;
       const rfp = rfpById.get(t.rfpId);
       const completed = !!t.completedAt;
+      const baseColor = completed ? "#94A3B8" : "#F59E0B";
+      const faded = isFaded(t.rfpId);
       events.push({
         id: `task:${t.id}`,
         title: completed ? `✓ ${t.label}` : `☐ ${t.label}`,
         start: t.dueDate,
         allDay: true,
-        backgroundColor: completed ? "#94A3B8" : "#F59E0B",
-        borderColor: completed ? "#94A3B8" : "#F59E0B",
-        textColor: "#ffffff",
+        backgroundColor: faded ? fade(baseColor) : baseColor,
+        borderColor: faded ? fade(baseColor) : baseColor,
+        textColor: textFor(t.rfpId),
         extendedProps: { kind: "task", taskId: t.id, rfpId: t.rfpId, rfpTitle: rfp?.title ?? "" },
       });
     }
     return events;
-  }, [payload.rfps, payload.tasks, rfpById]);
+  }, [payload.rfps, payload.tasks, rfpById, selectedRfpId]);
 
   const handleEventClick = useCallback((arg: EventClickArg) => {
     const kind = arg.event.extendedProps?.kind;
