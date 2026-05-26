@@ -9,18 +9,25 @@ import { db } from "../client";
 import { rfpCache, rfpTasks, type RfpTask } from "../schema";
 
 /**
- * Default 7-item checklist seeded once when an RFP first enters the tracker.
+ * Default checklist seeded once when an RFP first enters the tracker.
  *
- * `dateSource` controls auto-population of `dueDate` from the rfp_cache row:
- *   - "deadline": main proposal due date (rfp_cache.deadline)
- *   - "qa_deadline": Q&A deadline extracted from attachments
- *   - "prebid_or_site": pre-bid meeting, falling back to site visit
+ * `dateSource` controls auto-population of `dueDate` from the rfp_cache row.
+ * One row per extracted date column on rfp_cache, plus three undated steps
+ * (review, draft, internal review) for human workflow.
  *
  * Tasks without a `dateSource` are seeded with `due_date = NULL` so the user
  * can fill it in manually. We keep labels stable so existing tracker UIs
- * (which match by label) continue to render correctly.
+ * (and the backfill script) match by label.
  */
-type TaskDateSource = "deadline" | "qa_deadline" | "prebid_or_site";
+type TaskDateSource =
+  | "deadline"
+  | "qa_deadline"
+  | "qa_response"
+  | "prebid"
+  | "site_visit"
+  | "award"
+  | "contract_start"
+  | "contract_end";
 
 export const DEFAULT_TASK_TEMPLATE: ReadonlyArray<{
   label: string;
@@ -29,10 +36,15 @@ export const DEFAULT_TASK_TEMPLATE: ReadonlyArray<{
   { label: "Review RFP and attachments" },
   { label: "Confirm bid / no-bid decision" },
   { label: "Submit questions by Q&A deadline", dateSource: "qa_deadline" },
-  { label: "Attend pre-bid meeting", dateSource: "prebid_or_site" },
+  { label: "Q&A answers posted", dateSource: "qa_response" },
+  { label: "Attend pre-bid meeting", dateSource: "prebid" },
+  { label: "Site visit", dateSource: "site_visit" },
   { label: "Draft proposal" },
   { label: "Internal review" },
   { label: "Submit bid by deadline", dateSource: "deadline" },
+  { label: "Award decision", dateSource: "award" },
+  { label: "Contract starts", dateSource: "contract_start" },
+  { label: "Contract ends", dateSource: "contract_end" },
 ] as const;
 
 // Convert a Date or date-string to the YYYY-MM-DD shape the `due_date`
@@ -82,8 +94,12 @@ export async function seedDefaultTasks(userId: string, rfpId: string): Promise<R
     .select({
       deadline: rfpCache.deadline,
       qaDeadline: rfpCache.qaDeadline,
+      qaResponseDate: rfpCache.qaResponseDate,
       prebidMeetingAt: rfpCache.prebidMeetingAt,
       siteVisitAt: rfpCache.siteVisitAt,
+      awardDate: rfpCache.awardDate,
+      contractStart: rfpCache.contractStart,
+      contractEnd: rfpCache.contractEnd,
     })
     .from(rfpCache)
     .where(eq(rfpCache.id, rfpId))
@@ -91,12 +107,17 @@ export async function seedDefaultTasks(userId: string, rfpId: string): Promise<R
 
   const dueDateFor = (src: TaskDateSource | undefined): string | null => {
     if (!src || !cacheRow) return null;
-    if (src === "deadline") return toDateOnly(cacheRow.deadline);
-    if (src === "qa_deadline") return toDateOnly(cacheRow.qaDeadline);
-    if (src === "prebid_or_site") {
-      return toDateOnly(cacheRow.prebidMeetingAt ?? cacheRow.siteVisitAt);
+    switch (src) {
+      case "deadline": return toDateOnly(cacheRow.deadline);
+      case "qa_deadline": return toDateOnly(cacheRow.qaDeadline);
+      case "qa_response": return toDateOnly(cacheRow.qaResponseDate);
+      case "prebid": return toDateOnly(cacheRow.prebidMeetingAt);
+      case "site_visit": return toDateOnly(cacheRow.siteVisitAt);
+      case "award": return toDateOnly(cacheRow.awardDate);
+      case "contract_start": return toDateOnly(cacheRow.contractStart);
+      case "contract_end": return toDateOnly(cacheRow.contractEnd);
+      default: return null;
     }
-    return null;
   };
 
   const rows = await db
