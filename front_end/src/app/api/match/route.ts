@@ -1,25 +1,24 @@
-// GET /api/match/ — score every RFP in rfp_cache against the current user's
-// profile and return a sorted list (Architecture-v2 § 11).
+// GET /api/match/ — return the user's pre-scored matches (Architecture-v2 § 11).
 //
-// Implementation notes:
-//   - Pulls the FullProfile in one round trip (six parallel reads, see
-//     db/queries/profile.ts).
-//   - Pulls rfp_cache rows with a configurable LIMIT + ORDER BY deadline so
-//     the first page of the dashboard always shows the most urgent open
-//     events. Filtering/paging beyond this is the caller's job for now.
-//   - The matcher itself is pure-CPU and stateless; we run all RFPs in a
-//     map() with no batching. With a typical catalog size (~1000 events,
-//     30 specialty/capability rows per profile) this comfortably fits a
-//     serverless request budget. If volumes grow we can promote this to a
-//     job that persists scored results into match_state.
+// As of the background-rescore PR this route is a cache reader, not a live
+// scorer. Match results are computed out-of-band by lib/match-rescore.ts
+// when (a) a profile mutation fires, (b) the scrape sync upserts new RFPs,
+// or (c) the manual rebuild cron runs. We just hydrate cached rows here.
+//
+// Fallback: if a user has zero cached rows yet (brand-new account, fresh
+// signup before the first rescore landed), we score inline for this one
+// request AND schedule a background populate so subsequent loads are fast.
+// Same matchV2() is used in both paths — cached results are byte-identical
+// to live results for the same (profile, RFP) pair (matchV2 is pure).
 
-import { NextResponse } from "next/server";
-import { and, asc, gte } from "drizzle-orm";
+import { NextResponse, after } from "next/server";
+import { and, asc, desc, eq, gte, isNotNull } from "drizzle-orm";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/db/client";
-import { rfpCache } from "@/db/schema";
+import { matchState, profiles, rfpCache } from "@/db/schema";
 import { getFullProfile } from "@/db/queries/profile";
-import { matchV2 } from "@/lib/matching-v2";
+import { matchV2, type MatchResult } from "@/lib/matching-v2";
+import { rescoreUserMatches } from "@/lib/match-rescore";
 import { visibleRfpSourceClause } from "@/lib/rfp-source-visibility";
 
 const DEFAULT_LIMIT = 1000;
@@ -37,65 +36,158 @@ export async function GET(request: Request) {
     Math.max(1, Number.parseInt(url.searchParams.get("limit") ?? "", 10) || DEFAULT_LIMIT),
   );
 
-  const profile = await getFullProfile(auth.userId);
-  if (!profile) {
+  const [profileRow] = await db
+    .select({
+      completenessScore: profiles.completenessScore,
+      matchScoresPendingSince: profiles.matchScoresPendingSince,
+    })
+    .from(profiles)
+    .where(eq(profiles.userId, auth.userId))
+    .limit(1);
+  if (!profileRow) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  // Only score RFPs whose deadline is still in the future. The matcher
-  // doesn't know about staleness; we filter at the SQL boundary.
   const now = new Date();
-  const rows = await db
-    .select()
-    .from(rfpCache)
-    .where(and(gte(rfpCache.deadline, now), visibleRfpSourceClause()))
-    .orderBy(asc(rfpCache.deadline))
+
+  // Cached read path: join match_state to rfp_cache, only rows that have
+  // been scored (matchData NOT NULL), and whose deadline is still future.
+  const cachedRows = await db
+    .select({
+      rfpId: rfpCache.id,
+      title: rfpCache.title,
+      agency: rfpCache.agency,
+      location: rfpCache.location,
+      deadline: rfpCache.deadline,
+      sourceId: rfpCache.sourceId,
+      estimatedValueUsd: rfpCache.estimatedValueUsd,
+      capabilities: rfpCache.capabilities,
+      naicsCodes: rfpCache.naicsCodes,
+      cachedScore: matchState.cachedScore,
+      matchData: matchState.matchData,
+    })
+    .from(matchState)
+    .innerJoin(rfpCache, eq(matchState.rfpId, rfpCache.id))
+    .where(
+      and(
+        eq(matchState.userId, auth.userId),
+        isNotNull(matchState.matchData),
+        gte(rfpCache.deadline, now),
+        visibleRfpSourceClause(),
+      ),
+    )
+    .orderBy(desc(matchState.cachedScore), asc(rfpCache.deadline))
     .limit(limit);
 
-  // matchV2 is synchronous and fast; map() in-place is fine.
-  const matches = rows.map((rfp) => {
-    const m = matchV2(profile, rfp);
-    return {
-      rfpId: rfp.id,
-      title: rfp.title,
-      agency: rfp.agency,
-      location: rfp.location,
-      deadline: rfp.deadline,
-      sourceId: rfp.sourceId,
-      estimatedValueUsd: rfp.estimatedValueUsd,
-      // Exposed for dashboard filters (capabilities, NAICS multi-select, keyword search).
-      capabilities: rfp.capabilities ?? [],
-      naicsCodes: rfp.naicsCodes ?? [],
-      score: m.score,
-      winProbability: m.winProbability,
-      tier: m.tier,
-      primeEligible: m.primeEligible,
-      subEligible: m.subEligible,
-      incumbentState: m.incumbent.state,
-      incumbentVendor: m.incumbent.namedVendor ?? null,
-      dataQuality: m.dataQuality,
-      // Trim the breakdown for the list view — the detail endpoint returns
-      // the full one. Keeps the dashboard payload light.
-      topReasons: m.breakdown
-        .filter((b) => b.status === "strong" || b.status === "partial")
-        .slice(0, 3)
-        .map((b) => ({ category: b.category, status: b.status, detail: b.detail })),
-    };
-  });
+  let matches: ReturnType<typeof shapeRow>[] = cachedRows.map((r) =>
+    shapeRow(r, r.matchData as MatchResult),
+  );
 
-  // Sort by score desc, then by deadline asc so ties land sensibly.
-  matches.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    if (!a.deadline || !b.deadline) return 0;
-    return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
-  });
+  // Fallback for first-time users: nothing cached yet. Score this request
+  // live and kick off the background populate so the next load is fast.
+  // This preserves the old behavior exactly (same matchV2, same shape).
+  if (matches.length === 0) {
+    const profile = await getFullProfile(auth.userId);
+    if (!profile) {
+      return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+    }
+    const rfps = await db
+      .select()
+      .from(rfpCache)
+      .where(and(gte(rfpCache.deadline, now), visibleRfpSourceClause()))
+      .orderBy(asc(rfpCache.deadline))
+      .limit(limit);
+    matches = rfps.map((rfp) => {
+      const m = matchV2(profile, rfp);
+      return shapeRow(
+        {
+          rfpId: rfp.id,
+          title: rfp.title,
+          agency: rfp.agency,
+          location: rfp.location,
+          deadline: rfp.deadline,
+          sourceId: rfp.sourceId,
+          estimatedValueUsd: rfp.estimatedValueUsd,
+          capabilities: rfp.capabilities,
+          naicsCodes: rfp.naicsCodes,
+          cachedScore: m.score,
+        },
+        m,
+      );
+    });
+    matches.sort(byScoreThenDeadline);
+
+    // Schedule a background populate so subsequent loads hit the cache.
+    // We also mark the flag so the banner appears until it finishes.
+    await db
+      .update(profiles)
+      .set({ matchScoresPendingSince: new Date() })
+      .where(eq(profiles.userId, auth.userId));
+    after(async () => {
+      await rescoreUserMatches(auth.userId);
+    });
+  }
 
   return NextResponse.json(
     {
       count: matches.length,
-      profileCompleteness: profile.completenessScore,
+      profileCompleteness: profileRow.completenessScore,
+      // Surfaced for the /matches "Updating your matches…" banner. The page
+      // polls /api/match until this becomes null (rescore complete).
+      matchScoresPendingSince:
+        profileRow.matchScoresPendingSince?.toISOString() ?? null,
       matches,
     },
     { headers: { "Cache-Control": "private, max-age=30" } },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+interface CachedShapeInput {
+  rfpId: string;
+  title: string;
+  agency: string | null;
+  location: string | null;
+  deadline: Date | null;
+  sourceId: string;
+  estimatedValueUsd: number | null;
+  capabilities: string[] | null;
+  naicsCodes: string[] | null;
+  cachedScore: number | null;
+}
+
+function shapeRow(r: CachedShapeInput, m: MatchResult) {
+  return {
+    rfpId: r.rfpId,
+    title: r.title,
+    agency: r.agency,
+    location: r.location,
+    deadline: r.deadline,
+    sourceId: r.sourceId,
+    estimatedValueUsd: r.estimatedValueUsd,
+    capabilities: r.capabilities ?? [],
+    naicsCodes: r.naicsCodes ?? [],
+    score: m.score,
+    winProbability: m.winProbability,
+    tier: m.tier,
+    primeEligible: m.primeEligible,
+    subEligible: m.subEligible,
+    incumbentState: m.incumbent.state,
+    incumbentVendor: m.incumbent.namedVendor ?? null,
+    dataQuality: m.dataQuality,
+    // Same trim as the pre-cache route: list view gets at most 3 reasons.
+    topReasons: m.breakdown
+      .filter((b) => b.status === "strong" || b.status === "partial")
+      .slice(0, 3)
+      .map((b) => ({ category: b.category, status: b.status, detail: b.detail })),
+  };
+}
+
+function byScoreThenDeadline(a: { score: number; deadline: Date | null }, b: { score: number; deadline: Date | null }) {
+  if (b.score !== a.score) return b.score - a.score;
+  if (!a.deadline || !b.deadline) return 0;
+  return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
 }

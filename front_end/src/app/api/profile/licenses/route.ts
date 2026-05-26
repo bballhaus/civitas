@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { addLicense } from "@/db/queries/profile";
+import { triggerProfileChangedRescore } from "@/lib/match-rescore-trigger";
 
 export async function POST(request: Request) {
   const auth = await getAuthenticatedUser(request);
@@ -34,6 +35,7 @@ export async function POST(request: Request) {
       expiresOn,
       verified,
     });
+    await triggerProfileChangedRescore(auth.userId);
     return NextResponse.json(row, { status: 201 });
   } catch (err) {
     console.error("Add license error:", err);

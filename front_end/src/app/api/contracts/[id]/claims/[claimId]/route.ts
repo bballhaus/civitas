@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { acceptClaim, rejectClaim, editAndAcceptClaim } from "@/lib/claim-acceptance";
+import { triggerProfileChangedRescore } from "@/lib/match-rescore-trigger";
 
 export async function PATCH(
   request: Request,
@@ -23,13 +24,16 @@ export async function PATCH(
   try {
     if (action === "accept") {
       await acceptClaim(claimId, auth.userId);
+      await triggerProfileChangedRescore(auth.userId);
     } else if (action === "reject") {
       await rejectClaim(claimId, auth.userId);
+      // Reject doesn't mutate the profile tables — no rescore needed.
     } else if (action === "edit") {
       if (typeof body.value !== "string" || !body.value.trim()) {
         return NextResponse.json({ error: "value required for edit" }, { status: 400 });
       }
       await editAndAcceptClaim(claimId, auth.userId, body.value.trim());
+      await triggerProfileChangedRescore(auth.userId);
     } else {
       return NextResponse.json(
         { error: "action must be 'accept' | 'reject' | 'edit'" },

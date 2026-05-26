@@ -5,6 +5,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { addWorkArea } from "@/db/queries/profile";
+import { triggerProfileChangedRescore } from "@/lib/match-rescore-trigger";
 
 const ALLOWED_KINDS = new Set(["city", "county", "metro", "state"]);
 
@@ -46,6 +47,7 @@ export async function POST(request: Request) {
       isHard,
       radiusMiles,
     });
+    await triggerProfileChangedRescore(auth.userId);
     return NextResponse.json(row, { status: 201 });
   } catch (err) {
     console.error("Add work area error:", err);

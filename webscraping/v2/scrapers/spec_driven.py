@@ -390,10 +390,12 @@ class SpecDrivenScraper(BaseScraper):
         if spec_detail is None or not spec_detail.attachment_array_path:
             return
 
+        from webscraping.v2.pipeline.attachments_mirror import mirror_pdf
         from webscraping.v2.pipeline.enrich import (
             classify_pdf,
             extract_text_from_pdf,
         )
+        from webscraping.v2.utils import make_event_id
 
         atts = traverse(detail, spec_detail.attachment_array_path)
         if not isinstance(atts, list) or not atts:
@@ -402,10 +404,12 @@ class SpecDrivenScraper(BaseScraper):
         url_field = spec_detail.attachment_url_field or "url"
         name_field = spec_detail.attachment_filename_field or "filename"
 
+        event_id = make_event_id(event.source_id, event.source_event_id)
         attachment_texts: dict[str, str] = {}
+        mirror_sink = event.raw_metadata.setdefault("mirrored_attachments", [])
         headers = dict(_BASELINE_HEADERS)
 
-        for att in atts[:_MAX_PDFS_PER_EVENT]:
+        for idx, att in enumerate(atts[:_MAX_PDFS_PER_EVENT]):
             if not isinstance(att, dict):
                 continue
             url = str(att.get(url_field) or "").strip()
@@ -436,6 +440,13 @@ class SpecDrivenScraper(BaseScraper):
                         f"[{self.source_id}]   PDF: {filename} "
                         f"({len(text)} chars)"
                     )
+                s3_key = mirror_pdf(event_id, filename, resp.content, fallback_index=idx)
+                if s3_key:
+                    mirror_sink.append({
+                        "filename": filename,
+                        "s3_key": s3_key,
+                        "original_url": url,
+                    })
             except Exception as e:
                 logger.debug(
                     f"[{self.source_id}]   PDF fetch failed {filename}: {e}"

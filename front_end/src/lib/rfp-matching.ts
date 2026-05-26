@@ -53,8 +53,13 @@ export interface RFP {
     text: string;
     pdfsProcessed: string[];
   } | null;
-  // URLs of downloaded attachment PDFs, served from S3 via /api/attachments/.
+  // Source-portal attachment URLs (stale risk — most portals issue short-TTL
+  // presigned URLs). Kept for provenance; prefer `mirroredAttachments` for
+  // the actual download link the dashboard renders.
   attachmentUrls?: string[];
+  // PDFs we re-uploaded to civitas-ai S3 during scraping. Linked via
+  // /api/attachments/{s3Key} so the user always gets a fresh presigned URL.
+  mirroredAttachments?: { filename: string; s3Key: string; originalUrl?: string | null }[];
   // LLM-extracted incumbent info (Cal eProcure today; null for other sources).
   // See docs/Architecture-v2.md § 10 for the full incumbent state machine.
   incumbentVendor?: string | null;
