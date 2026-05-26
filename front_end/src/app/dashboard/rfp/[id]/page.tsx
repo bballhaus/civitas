@@ -1549,32 +1549,47 @@ export default function RFPDetailPage() {
             </div>
           </div>
 
-          {/* Attachments — links to RFP PDFs.
-              The scraper currently passes source-portal download URLs through
-              `attachmentUrls` (Cal eProcure URLs are public). Future work: have
-              the v2 enrich pipeline upload the PDFs to s3://civitas-ai/scrapes/v2/attachments/{event_id}/...
-              and serve them via /api/attachments/, so links remain valid even
-              if the source portal rotates/expires its URLs. */}
-          {rfp.attachmentUrls && rfp.attachmentUrls.length > 0 && (
-            <div className="p-6 md:p-8 border-b border-slate-100">
-              <h2 className="text-sm font-bold text-slate-900 mb-3">
-                Attachments ({rfp.attachmentUrls.length})
-              </h2>
-              <ul className="space-y-2">
-                {rfp.attachmentUrls.map((url, i) => {
-                  const filename = (() => {
+          {/* Attachments — prefer S3-mirrored PDFs (stable, served via
+              /api/attachments/) over source-portal URLs (most expire within
+              hours). Fall back to attachmentUrls only when no mirror exists. */}
+          {(() => {
+            const mirrors = rfp.mirroredAttachments ?? [];
+            const fallback = (rfp.attachmentUrls ?? []).filter((url) => {
+              // Drop placeholder URLs (e.g. `planetbids://...`) — they aren't
+              // clickable. If a mirror exists, it already covers this PDF.
+              if (!url || url.startsWith("planetbids://")) return false;
+              return true;
+            });
+            type Link = { href: string; label: string; key: string };
+            const links: Link[] = [
+              ...mirrors.map((m, i) => ({
+                href: `/api/attachments/${m.s3Key}`,
+                label: m.filename || `Attachment ${i + 1}`,
+                key: `mirror-${m.s3Key}`,
+              })),
+              ...(mirrors.length === 0
+                ? fallback.map((url, i) => {
+                    let label = `Attachment ${i + 1}`;
                     try {
                       const u = new URL(url);
                       const last = u.pathname.split("/").filter(Boolean).pop();
-                      return last ? decodeURIComponent(last) : `Attachment ${i + 1}`;
-                    } catch {
-                      return `Attachment ${i + 1}`;
-                    }
-                  })();
-                  return (
-                    <li key={`${url}-${i}`}>
+                      if (last) label = decodeURIComponent(last);
+                    } catch {}
+                    return { href: url, label, key: `src-${url}-${i}` };
+                  })
+                : []),
+            ];
+            if (links.length === 0) return null;
+            return (
+              <div className="p-6 md:p-8 border-b border-slate-100">
+                <h2 className="text-sm font-bold text-slate-900 mb-3">
+                  Attachments ({links.length})
+                </h2>
+                <ul className="space-y-2">
+                  {links.map((link) => (
+                    <li key={link.key}>
                       <a
-                        href={url}
+                        href={link.href}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200 transition-colors"
@@ -1582,17 +1597,17 @@ export default function RFPDetailPage() {
                         <svg className="w-4 h-4 text-red-500 shrink-0" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                           <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm0 7V3.5L19.5 9H14z" />
                         </svg>
-                        <span className="truncate max-w-[40ch]">{filename}</span>
+                        <span className="truncate max-w-[40ch]">{link.label}</span>
                         <svg className="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                         </svg>
                       </a>
                     </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
             </>
           )}
 

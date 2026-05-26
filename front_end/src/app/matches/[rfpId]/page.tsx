@@ -81,6 +81,7 @@ interface DetailRfp {
   evaluationCriteria: string[];
   clearancesRequired: string[];
   attachmentUrls: string[];
+  mirroredAttachments: { filename: string; s3Key: string; originalUrl: string | null }[];
   attachmentRollup: unknown;
   eventUrl: string | null;
   contactName: string | null;
@@ -1063,27 +1064,43 @@ export default function RfpDetailPage() {
           )}
         </section>
 
-        {/* Attachments — links to source-portal PDFs. */}
-        {data.rfp.attachmentUrls.length > 0 && (
-          <section className="mt-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
-            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
-              Attachments ({data.rfp.attachmentUrls.length})
-            </h2>
-            <ul className="space-y-2">
-              {data.rfp.attachmentUrls.map((url, i) => {
-                const filename = (() => {
+        {/* Attachments — prefer S3-mirrored PDFs (served via /api/attachments/);
+            fall back to original source URLs only when no mirror exists. */}
+        {(() => {
+          const mirrors = data.rfp.mirroredAttachments ?? [];
+          const fallback = (data.rfp.attachmentUrls ?? []).filter(
+            (url) => url && !url.startsWith("planetbids://"),
+          );
+          type Link = { href: string; label: string; key: string };
+          const links: Link[] = [
+            ...mirrors.map((m, i) => ({
+              href: `/api/attachments/${m.s3Key}`,
+              label: m.filename || `Attachment ${i + 1}`,
+              key: `mirror-${m.s3Key}`,
+            })),
+            ...(mirrors.length === 0
+              ? fallback.map((url, i) => {
+                  let label = `Attachment ${i + 1}`;
                   try {
                     const u = new URL(url);
                     const last = u.pathname.split("/").filter(Boolean).pop();
-                    return last ? decodeURIComponent(last) : `Attachment ${i + 1}`;
-                  } catch {
-                    return `Attachment ${i + 1}`;
-                  }
-                })();
-                return (
-                  <li key={`${url}-${i}`}>
+                    if (last) label = decodeURIComponent(last);
+                  } catch {}
+                  return { href: url, label, key: `src-${url}-${i}` };
+                })
+              : []),
+          ];
+          if (links.length === 0) return null;
+          return (
+            <section className="mt-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
+                Attachments ({links.length})
+              </h2>
+              <ul className="space-y-2">
+                {links.map((link) => (
+                  <li key={link.key}>
                     <a
-                      href={url}
+                      href={link.href}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200 transition-colors"
@@ -1096,7 +1113,7 @@ export default function RfpDetailPage() {
                       >
                         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm0 7V3.5L19.5 9H14z" />
                       </svg>
-                      <span className="truncate max-w-[40ch]">{filename}</span>
+                      <span className="truncate max-w-[40ch]">{link.label}</span>
                       <svg
                         className="w-3.5 h-3.5 text-slate-400 shrink-0"
                         fill="none"
@@ -1113,11 +1130,11 @@ export default function RfpDetailPage() {
                       </svg>
                     </a>
                   </li>
-                );
-              })}
-            </ul>
-          </section>
-        )}
+                ))}
+              </ul>
+            </section>
+          );
+        })()}
 
         {/* Contact info pulled from the RFP raw payload. */}
         {(data.rfp.contactName || data.rfp.contactEmail || data.rfp.contactPhone) && (

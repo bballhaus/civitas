@@ -10,7 +10,13 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from webscraping.v2.models import RawScrapedEvent, EnrichedEvent, AttachmentExtraction, EventStatus
+from webscraping.v2.models import (
+    AttachmentExtraction,
+    EnrichedEvent,
+    EventStatus,
+    MirroredAttachment,
+    RawScrapedEvent,
+)
 from webscraping.v2.utils import make_event_id
 
 
@@ -282,6 +288,27 @@ def normalize_event(
             "pdfsProcessed": extraction.pdfs_processed,
         }
 
+    # Scrapers stash mirror records in raw_metadata['mirrored_attachments']
+    # whenever they upload a PDF body to our S3 bucket. Convert to typed
+    # model entries for the EnrichedEvent; tolerate missing fields so a
+    # half-populated stash doesn't crash normalization.
+    mirrored_raw = raw.raw_metadata.get("mirrored_attachments") or []
+    mirrored: list[MirroredAttachment] = []
+    for m in mirrored_raw:
+        if not isinstance(m, dict):
+            continue
+        s3_key = m.get("s3_key")
+        filename = m.get("filename")
+        if not s3_key or not filename:
+            continue
+        mirrored.append(
+            MirroredAttachment(
+                filename=filename,
+                s3_key=s3_key,
+                original_url=m.get("original_url"),
+            )
+        )
+
     return EnrichedEvent(
         id=make_event_id(raw.source_id, raw.source_event_id),
         source_id=raw.source_id,
@@ -303,6 +330,7 @@ def normalize_event(
         incumbent_contract_end=extraction.incumbent_contract_end if extraction else None,
         contact=raw.contact,
         attachment_urls=raw.attachment_urls,
+        mirrored_attachments=mirrored,
         clearances_required=extraction.clearances_required if extraction else [],
         set_aside_types=extraction.set_aside_types if extraction else [],
         deliverables=extraction.deliverables if extraction else [],

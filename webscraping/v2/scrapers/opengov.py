@@ -284,19 +284,27 @@ class OpenGovScraper(BaseScraper):
         Mirrors the Cal eProcure path: download bytes, run PyMuPDF on a
         temp file, populate `event.attachment_urls` and
         `event.raw_metadata['attachment_texts']` so downstream enrichment
-        sees them in the shape it already expects.
+        sees them in the shape it already expects. Bytes are also pushed
+        into our S3 mirror so the dashboard can serve a stable URL even
+        after the source CDN rotates its links.
         """
+        from webscraping.v2.pipeline.attachments_mirror import mirror_pdf
         from webscraping.v2.pipeline.enrich import (
             classify_pdf,
             extract_text_from_pdf,
         )
+        from webscraping.v2.utils import make_event_id
 
         attachments = detail.get("attachments") or []
         if not attachments:
             return
 
+        event_id = make_event_id(event.source_id, event.source_event_id)
         attachment_texts: dict[str, str] = {}
-        for att in attachments[:MAX_PDFS_PER_EVENT]:
+        # Eager-stash sink: append to the live raw_metadata list so partial
+        # progress isn't lost if a later attachment fetch raises.
+        mirror_sink = event.raw_metadata.setdefault("mirrored_attachments", [])
+        for idx, att in enumerate(attachments[:MAX_PDFS_PER_EVENT]):
             url = (att.get("url") or "").strip()
             if not url:
                 continue
@@ -337,6 +345,13 @@ class OpenGovScraper(BaseScraper):
                     if url not in event.attachment_urls:
                         event.attachment_urls.append(url)
                     logger.info(f"  PDF: {filename} ({len(text)} chars)")
+                s3_key = mirror_pdf(event_id, filename, body, fallback_index=idx)
+                if s3_key:
+                    mirror_sink.append({
+                        "filename": filename,
+                        "s3_key": s3_key,
+                        "original_url": url,
+                    })
             except Exception as e:
                 logger.debug(f"  PDF fetch failed {filename}: {e}")
             finally:
