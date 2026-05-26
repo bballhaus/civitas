@@ -3,25 +3,17 @@
 // having to opt a user in + wait until 7am local + accrue matches.
 //
 // Will be removed before the Resend migration PR merges to main. Guarded
-// twice: VERCEL_ENV must be `preview` AND the caller must present the
-// cron Bearer secret.
+// by VERCEL_ENV === 'preview' AND Vercel Deployment Protection (preview
+// URLs require Vercel SSO).
 
 import { NextResponse } from "next/server";
 import { sendDailyRoundupEmail, type RoundupRfp } from "@/lib/email";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
+async function handle(request: Request) {
   if (process.env.VERCEL_ENV !== "preview" && process.env.NODE_ENV !== "development") {
     return NextResponse.json({ error: "Not available in this environment" }, { status: 404 });
-  }
-
-  const expected = process.env.CIVITAS_CRON_SECRET;
-  if (!expected) {
-    return NextResponse.json({ error: "CIVITAS_CRON_SECRET not set" }, { status: 500 });
-  }
-  if (request.headers.get("authorization") !== `Bearer ${expected}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const url = new URL(request.url);
@@ -70,3 +62,6 @@ export async function POST(request: Request) {
   const ok = await sendDailyRoundupEmail(to, items, origin);
   return NextResponse.json({ ok, to, count: items.length });
 }
+
+export const GET = handle;
+export const POST = handle;
