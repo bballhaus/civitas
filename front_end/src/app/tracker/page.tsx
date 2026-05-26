@@ -40,21 +40,31 @@ interface TrackerRfp {
   contractEnd: string | null;
 }
 
-// Calendar styling for the key-date event types extracted from attachments.
-// Distinct from STATUS_META (which colors RFP-deadline events by pipeline
-// status) so users can tell at a glance which kind of date they're seeing.
-const KEY_DATE_META: Record<
-  "qaDeadline" | "qaResponseDate" | "prebidMeetingAt" | "siteVisitAt" | "awardDate" | "contractStart" | "contractEnd",
-  { label: string; color: string; icon: string }
-> = {
-  qaDeadline: { label: "Q&A deadline", color: "#EAB308", icon: "❓" },
-  qaResponseDate: { label: "Q&A answers posted", color: "#CA8A04", icon: "💬" },
-  prebidMeetingAt: { label: "Pre-bid meeting", color: "#A855F7", icon: "🗣️" },
-  siteVisitAt: { label: "Site visit", color: "#A855F7", icon: "📍" },
-  awardDate: { label: "Award decision", color: "#16A34A", icon: "🏆" },
-  contractStart: { label: "Contract starts", color: "#0EA5E9", icon: "▶" },
-  contractEnd: { label: "Contract ends", color: "#64748B", icon: "■" },
+// Per-label metadata for the seeded entries. Drives:
+//   - kind: "task" (actionable, has a checkbox) vs "date" (informational, no
+//     checkbox, just shows the value)
+//   - color: the calendar event color (one source of truth across event types)
+// Labels not in this map (custom user-created rows) default to a plain task
+// in amber. Completion always trumps color → grey.
+const ENTRY_META: Record<string, { kind: "task" | "date"; color: string }> = {
+  "Review RFP and attachments":        { kind: "task", color: "#F59E0B" },
+  "Confirm bid / no-bid decision":     { kind: "task", color: "#F59E0B" },
+  "Submit questions by Q&A deadline":  { kind: "task", color: "#EAB308" },
+  "Q&A answers posted":                { kind: "date", color: "#CA8A04" },
+  "Attend pre-bid meeting":            { kind: "task", color: "#A855F7" },
+  "Site visit":                        { kind: "task", color: "#8B5CF6" },
+  "Draft proposal":                    { kind: "task", color: "#F59E0B" },
+  "Internal review":                   { kind: "task", color: "#F59E0B" },
+  "Submit bid by deadline":            { kind: "task", color: "#F97316" },
+  "Award decision":                    { kind: "date", color: "#16A34A" },
+  "Contract starts":                   { kind: "date", color: "#0EA5E9" },
+  "Contract ends":                     { kind: "date", color: "#64748B" },
 };
+const DEFAULT_TASK_COLOR = "#F59E0B";
+const COMPLETED_COLOR = "#94A3B8";
+function metaFor(label: string): { kind: "task" | "date"; color: string } {
+  return ENTRY_META[label] ?? { kind: "task", color: DEFAULT_TASK_COLOR };
+}
 
 interface TrackerPayload {
   rfps: TrackerRfp[];
@@ -213,71 +223,39 @@ export default function TrackerPage() {
     // because this memo recomputes whenever payload.rfps changes.
     const HIDDEN_STATUSES = new Set<PipelineStatus>(["lost", "no_bid"]);
     const visibleRfpIds = new Set<string>();
-
     for (const rfp of payload.rfps) {
-      if (HIDDEN_STATUSES.has(rfp.status)) continue;
-      visibleRfpIds.add(rfp.id);
-      const iso = isoForFullCalendar(rfp.deadline);
-      if (iso) {
-        const meta = STATUS_META[rfp.status];
-        events.push({
-          id: `rfp:${rfp.id}`,
-          title: "📋 Proposal due",
-          start: iso,
-          allDay: false,
-          backgroundColor: meta.color,
-          borderColor: meta.color,
-          textColor: "#ffffff",
-          extendedProps: { kind: "deadline", rfpId: rfp.id, rfpTitle: rfp.title },
-        });
-      }
-      // Extracted key dates (Q&A, pre-bid, award, contract). Each is rendered
-      // with its own color so the user can distinguish them from the main
-      // proposal deadline above.
-      const keyDateFields = [
-        "qaDeadline",
-        "qaResponseDate",
-        "prebidMeetingAt",
-        "siteVisitAt",
-        "awardDate",
-        "contractStart",
-        "contractEnd",
-      ] as const;
-      for (const field of keyDateFields) {
-        const raw = rfp[field];
-        if (!raw) continue;
-        const kdIso = isoForFullCalendar(raw);
-        if (!kdIso) continue;
-        const m = KEY_DATE_META[field];
-        events.push({
-          id: `${field}:${rfp.id}`,
-          title: `${m.icon} ${m.label}`,
-          start: kdIso,
-          // qa_response_date / award / contract_* are stored as `date` (no
-          // time component), so they should render as all-day on the cal.
-          allDay: field === "qaResponseDate" || field === "awardDate" || field === "contractStart" || field === "contractEnd",
-          backgroundColor: m.color,
-          borderColor: m.color,
-          textColor: "#ffffff",
-          extendedProps: { kind: field, rfpId: rfp.id, rfpTitle: rfp.title },
-        });
-      }
+      if (!HIDDEN_STATUSES.has(rfp.status)) visibleRfpIds.add(rfp.id);
     }
+    // Calendar = single source of truth (rfp_tasks). Each row with a due_date
+    // becomes one event. Key-date events (Q&A, pre-bid, etc.) used to be
+    // rendered separately from rfp_cache, but they always duplicated the
+    // matching task entry — and on different days if the cache value was a
+    // midnight-UTC timestamp interpreted in a non-UTC browser timezone.
+    // Routing everything through the date-only `due_date` removes that drift
+    // and removes the visual duplication. The drawer's "Dates" list remains
+    // the place to see/edit them.
     for (const t of payload.tasks) {
       if (!t.dueDate) continue;
-      // Skip tasks for hidden (lost/no_bid) RFPs — same rationale as deadlines.
       if (!visibleRfpIds.has(t.rfpId)) continue;
       const rfp = rfpById.get(t.rfpId);
       const completed = !!t.completedAt;
+      const meta = metaFor(t.label);
+      const prefix = meta.kind === "date" ? "•" : completed ? "✓" : "☐";
+      const color = completed ? COMPLETED_COLOR : meta.color;
       events.push({
         id: `task:${t.id}`,
-        title: completed ? `✓ ${t.label}` : `☐ ${t.label}`,
+        title: `${prefix} ${t.label}`,
         start: t.dueDate,
         allDay: true,
-        backgroundColor: completed ? "#94A3B8" : "#F59E0B",
-        borderColor: completed ? "#94A3B8" : "#F59E0B",
+        backgroundColor: color,
+        borderColor: color,
         textColor: "#ffffff",
-        extendedProps: { kind: "task", taskId: t.id, rfpId: t.rfpId, rfpTitle: rfp?.title ?? "" },
+        extendedProps: {
+          kind: meta.kind,
+          taskId: t.id,
+          rfpId: t.rfpId,
+          rfpTitle: rfp?.title ?? "",
+        },
       });
     }
     return events;
@@ -466,35 +444,35 @@ export default function TrackerPage() {
           )}
           {/* Calendar legend */}
           <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600">
+            <span className="font-semibold text-slate-500">Tasks:</span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-[#F59E0B]" /> Open date
+              <span className="w-3 h-3 rounded-sm bg-[#F97316]" /> Submit bid
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-[#94A3B8]" /> Completed date
+              <span className="w-3 h-3 rounded-sm bg-[#EAB308]" /> Submit questions
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-[#A855F7]" /> Pre-bid / site visit
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-[#F59E0B]" /> Other
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-[#94A3B8]" /> Completed
             </span>
             <span className="text-slate-400">|</span>
-            {PIPELINE_ORDER.map((s) => (
-              <span key={s} className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: STATUS_META[s].color }} />
-                {STATUS_META[s].label}
-              </span>
-            ))}
-            <span className="text-slate-400">|</span>
+            <span className="font-semibold text-slate-500">Dates:</span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: KEY_DATE_META.qaDeadline.color }} />
-              Q&amp;A
+              <span className="w-3 h-3 rounded-sm bg-[#CA8A04]" /> Q&amp;A answers
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: KEY_DATE_META.prebidMeetingAt.color }} />
-              Pre-bid / site visit
+              <span className="w-3 h-3 rounded-sm bg-[#16A34A]" /> Award
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: KEY_DATE_META.awardDate.color }} />
-              Award
+              <span className="w-3 h-3 rounded-sm bg-[#0EA5E9]" /> Contract starts
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: KEY_DATE_META.contractStart.color }} />
-              Contract
+              <span className="w-3 h-3 rounded-sm bg-[#64748B]" /> Contract ends
             </span>
           </div>
         </div>
@@ -724,7 +702,8 @@ function RfpDrawer({
         <div className="flex-1 overflow-y-auto px-6 py-4">
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Dates ({tasks.filter((t) => t.completedAt).length} / {tasks.length})
+              Dates ({tasks.filter((t) => metaFor(t.label).kind === "task" && t.completedAt).length}
+              /{tasks.filter((t) => metaFor(t.label).kind === "task").length} tasks done)
             </p>
             <Link
               href={`/matches/${encodeURIComponent(rfp.id)}`}
@@ -867,20 +846,36 @@ function TaskRow({
     );
   }
 
+  const meta = metaFor(task.label);
+  const isDate = meta.kind === "date";
+
   return (
     <li className="group flex items-start gap-2 p-2 rounded-md hover:bg-slate-50">
-      <input
-        type="checkbox"
-        checked={completed}
-        onChange={(e) => onToggle(e.target.checked)}
-        className="mt-0.5 w-4 h-4 rounded cursor-pointer accent-[#3C89C6]"
-      />
+      {isDate ? (
+        // Informational date — no checkbox, just a colored dot in the type's
+        // calendar color so the row visually echoes its calendar event.
+        <span
+          aria-hidden
+          className="mt-1.5 w-3 h-3 rounded-full shrink-0"
+          style={{ backgroundColor: meta.color }}
+          title="Reference date (not actionable)"
+        />
+      ) : (
+        <input
+          type="checkbox"
+          checked={completed}
+          onChange={(e) => onToggle(e.target.checked)}
+          className="mt-0.5 w-4 h-4 rounded cursor-pointer accent-[#3C89C6]"
+        />
+      )}
       <div className="flex-1 min-w-0">
-        <p className={`text-sm ${completed ? "line-through text-slate-400" : "text-slate-800"}`}>
+        <p className={`text-sm ${!isDate && completed ? "line-through text-slate-400" : "text-slate-800"}`}>
           {task.label}
         </p>
         {task.dueDate && (
-          <p className="text-[11px] text-slate-500 mt-0.5">Due {formatDate(task.dueDate)}</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            {isDate ? formatDate(task.dueDate) : `Due ${formatDate(task.dueDate)}`}
+          </p>
         )}
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
