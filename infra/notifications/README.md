@@ -101,3 +101,47 @@ If you outgrow the shim and want the cron to live entirely inside AWS
 (e.g., to decouple from the Next.js host's uptime), the route logic in
 `front_end/src/app/api/cron/daily-roundup/route.ts` is the unit you'd
 port — everything outside that file is already AWS-side.
+
+## Other crons that reuse this Lambda shim
+
+`lambda.mjs` only knows two env vars (`CIVITAS_CRON_URL`,
+`CIVITAS_CRON_SECRET`), so any Next.js cron route guarded by the same
+shared bearer can be wired up by deploying a second copy of the same
+function with a different URL.
+
+### `civitas-critique-rfp-tags` (daily Sonnet audit of NAICS tags)
+
+Audits the Haiku tags the sync-rfp-cache cron writes. Sonnet caught ~41%
+disagreements in the bulk backfill; running daily keeps fresh scrapes
+gradually corrected without slowing the live populate→tag→embed loop.
+
+```sh
+zip lambda.zip lambda.mjs
+aws lambda create-function \
+  --function-name civitas-critique-rfp-tags \
+  --runtime nodejs20.x \
+  --role arn:aws:iam::<acct>:role/civitas-lambda-basic \
+  --handler lambda.handler \
+  --zip-file fileb://lambda.zip \
+  --timeout 300 \
+  --environment "Variables={CIVITAS_CRON_URL=https://civitas-ai.net/api/cron/critique-rfp-tags,CIVITAS_CRON_SECRET=<same secret>}"
+
+aws events put-rule \
+  --name civitas-critique-rfp-tags-daily \
+  --schedule-expression "cron(0 10 * * ? *)"   # 10am UTC = 3am PT
+
+aws events put-targets \
+  --rule civitas-critique-rfp-tags-daily \
+  --targets "Id=1,Arn=arn:aws:lambda:us-east-1:<acct>:function:civitas-critique-rfp-tags"
+
+aws lambda add-permission \
+  --function-name civitas-critique-rfp-tags \
+  --statement-id allow-eventbridge \
+  --action lambda:InvokeFunction \
+  --principal events.amazonaws.com \
+  --source-arn arn:aws:events:us-east-1:<acct>:rule/civitas-critique-rfp-tags-daily
+```
+
+Lambda timeout is bumped to 300s to match the Vercel `maxDuration` on the
+route (Sonnet is slower per call than Haiku). The Lambda itself does no
+work besides waiting on the HTTP response, so the higher timeout is free.

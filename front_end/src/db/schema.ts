@@ -489,6 +489,10 @@ export const rfpCache = pgTable(
     winningVendorFingerprint: text("winning_vendor_fingerprint"),
     // Semantic
     embedding: vector("embedding", { dimensions: 1024 }),
+    // When Sonnet last audited the Haiku tagging on this row. NULL = not
+    // yet critiqued. Set after each cron pass regardless of agreement so
+    // the row drops out of the next pass's candidate set.
+    naicsCritiquedAt: timestamp("naics_critiqued_at", { withTimezone: true }),
     // Raw payload from manifest
     raw: jsonb("raw"),
     refreshedAt: timestamp("refreshed_at", { withTimezone: true })
