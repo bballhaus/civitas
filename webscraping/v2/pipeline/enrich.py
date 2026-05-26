@@ -381,11 +381,17 @@ def enrich_event(
 
     Returns AttachmentExtraction or None if no text could be extracted.
     """
+    from webscraping.v2.pipeline.attachments_mirror import mirror_pdf_from_path
+    from webscraping.v2.utils import make_event_id
+
     pre_extracted = event.raw_metadata.get("attachment_texts", {})
     has_pre_extracted = any(text for text in pre_extracted.values() if text)
 
     if not has_pre_extracted and not event.attachment_urls:
         return None
+
+    event_id = make_event_id(event.source_id, event.source_event_id)
+    mirrored: list[dict] = []
 
     # Classify and sort by priority
     attachments = []
@@ -439,6 +445,16 @@ def enrich_event(
             tmp_path = None
             try:
                 tmp_path = download_pdf(url, cookies=cookies)
+                # Mirror the bytes to our S3 bucket before consuming the
+                # temp file. download_pdf may have followed redirects, so
+                # we capture whatever the canonical filename is here.
+                s3_key = mirror_pdf_from_path(event_id, filename, tmp_path)
+                if s3_key:
+                    mirrored.append({
+                        "filename": filename,
+                        "s3_key": s3_key,
+                        "original_url": url,
+                    })
                 text = extract_text_from_pdf(tmp_path)
                 if not text:
                     logger.debug(f"No text from {filename}")
@@ -460,6 +476,13 @@ def enrich_event(
             finally:
                 if tmp_path and os.path.exists(tmp_path):
                     os.unlink(tmp_path)
+
+    # Stash any S3 mirrors collected on the fallback path back onto the
+    # event so normalize.py picks them up alongside scraper-side mirrors.
+    if mirrored:
+        existing_m = event.raw_metadata.get("mirrored_attachments") or []
+        existing_m.extend(mirrored)
+        event.raw_metadata["mirrored_attachments"] = existing_m
 
     if not extractions:
         return None

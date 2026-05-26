@@ -37,6 +37,7 @@ interface V2EnrichedEvent {
   certifications: string[];
   contact: { name?: string; email?: string; phone?: string };
   attachment_urls: string[];
+  mirrored_attachments?: { filename: string; s3_key: string; original_url?: string | null }[];
   clearances_required: string[];
   set_aside_types: string[];
   deliverables: string[];
@@ -117,6 +118,11 @@ function v2EventToRfp(e: V2EnrichedEvent) {
     contactEmail: e.contact?.email,
     contactPhone: e.contact?.phone,
     attachmentUrls: e.attachment_urls || [],
+    mirroredAttachments: (e.mirrored_attachments || []).map((m) => ({
+      filename: m.filename,
+      s3Key: m.s3_key,
+      originalUrl: m.original_url ?? null,
+    })),
     clearancesRequired: e.clearances_required,
     setAsideTypes: e.set_aside_types,
     deliverables: e.deliverables,

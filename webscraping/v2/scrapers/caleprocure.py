@@ -19,6 +19,7 @@ from playwright.async_api import async_playwright, Page, BrowserContext
 
 from webscraping.v2.models import RawScrapedEvent, ContactInfo, SiteConfig
 from webscraping.v2.scrapers.base import BaseScraper
+from webscraping.v2.utils import make_event_id
 
 logger = logging.getLogger(__name__)
 
@@ -309,13 +310,26 @@ class CalEprocureScraper(BaseScraper):
             if event_data.title:
                 logger.info(f"[{index + 1}/{total}] {event_data.title[:60]}")
 
-            # Download attachments inline (session-bound URLs expire after browser closes)
-            attachments = await self._download_attachments(page)
+            # Download attachments inline (session-bound URLs expire after browser closes).
+            # event_id is needed to key the S3 mirror, so compute it now.
+            event_id = make_event_id(event_data.source_id, event_data.source_event_id)
+            attachments = await self._download_attachments(page, event_id)
             event_data.attachment_urls = [a["url"] for a in attachments if a.get("url")]
             if attachments:
                 event_data.raw_metadata["attachment_texts"] = {
                     a["filename"]: a["text"] for a in attachments if a.get("text")
                 }
+                mirrored = [
+                    {
+                        "filename": a["filename"],
+                        "s3_key": a["s3_key"],
+                        "original_url": a.get("url"),
+                    }
+                    for a in attachments
+                    if a.get("s3_key")
+                ]
+                if mirrored:
+                    event_data.raw_metadata["mirrored_attachments"] = mirrored
 
             return event_data
 
@@ -382,7 +396,7 @@ class CalEprocureScraper(BaseScraper):
             },
         )
 
-    async def _download_attachments(self, page: Page) -> list[dict]:
+    async def _download_attachments(self, page: Page, event_id: str) -> list[dict]:
         """Click 'View Event Package', fetch PDFs via session cookies, extract text.
 
         Cal eProcure download URLs are session-bound tokens that expire when the
@@ -391,7 +405,7 @@ class CalEprocureScraper(BaseScraper):
         intercepted the click). Now we read the href off `#downloadButton` and
         fetch it directly through the browser context (same cookies → same
         session) — no click required.
-        Returns a list of dicts: [{"filename": str, "url": str, "text": str}, ...]
+        Returns a list of dicts: [{"filename": str, "url": str, "text": str, "s3_key": str|None}, ...]
 
         Logs the specific failure step at INFO level (was previously a single
         debug-level catch that obscured why ~90% of events end up with empty
@@ -514,13 +528,18 @@ class CalEprocureScraper(BaseScraper):
                         await self._close_attachment_modal(page)
                         continue
 
-                    text = await self._fetch_pdf_text(page, pdf_url, filename)
+                    text, body = await self._fetch_pdf_text(page, pdf_url, filename)
                     if text:
                         logger.info(f"  PDF: {filename} ({len(text)} chars)")
+                    s3_key = None
+                    if body:
+                        from webscraping.v2.pipeline.attachments_mirror import mirror_pdf
+                        s3_key = mirror_pdf(event_id, filename, body, fallback_index=i)
                     results.append({
                         "filename": filename,
                         "url": pdf_url,
                         "text": text,
+                        "s3_key": s3_key,
                     })
 
                     await self._close_attachment_modal(page)
@@ -528,7 +547,7 @@ class CalEprocureScraper(BaseScraper):
                 except Exception as e:
                     logger.warning(f"Error on attachment #{i + 1} ({filename}): {e}")
                     if pdf_url:
-                        results.append({"filename": filename, "url": pdf_url, "text": ""})
+                        results.append({"filename": filename, "url": pdf_url, "text": "", "s3_key": None})
                     await self._close_attachment_modal(page)
 
         except Exception as e:
@@ -637,12 +656,16 @@ class CalEprocureScraper(BaseScraper):
         except Exception:
             pass
 
-    async def _fetch_pdf_text(self, page: Page, pdf_url: str, filename: str) -> str:
-        """Fetch a session-bound PDF via the browser context and extract text.
+    async def _fetch_pdf_text(
+        self, page: Page, pdf_url: str, filename: str
+    ) -> tuple[str, bytes | None]:
+        """Fetch a session-bound PDF via the browser context, extract text, return both.
 
         Uses Playwright's APIRequestContext to share cookies with the
         navigated page — sidestepping the click-based download flow that
-        was hitting actionability timeouts.
+        was hitting actionability timeouts. Returns (text, body) so the
+        caller can mirror the bytes to our S3 bucket; either field is the
+        empty value on failure.
         """
         import os
         import tempfile
@@ -656,11 +679,11 @@ class CalEprocureScraper(BaseScraper):
                 logger.warning(
                     f"  Fetch failed for {filename}: HTTP {response.status}"
                 )
-                return ""
+                return "", None
             body = await response.body()
             if not body or len(body) < 100:
                 logger.warning(f"  Empty PDF body for {filename}")
-                return ""
+                return "", None
 
             with tempfile.NamedTemporaryFile(
                 suffix=".pdf", delete=False
@@ -669,10 +692,10 @@ class CalEprocureScraper(BaseScraper):
                 tmp_path = tmp.name
 
             text = extract_text_from_pdf(tmp_path)
-            return text or ""
+            return text or "", body
         except Exception as e:
             logger.warning(f"  Fetch/extract failed for {filename}: {e}")
-            return ""
+            return "", None
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:

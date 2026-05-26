@@ -738,10 +738,15 @@ class PlanetBidsScraper(BaseScraper):
         """
         import os
         import tempfile
+        from webscraping.v2.pipeline.attachments_mirror import mirror_pdf_from_path
         from webscraping.v2.pipeline.enrich import (
             classify_pdf,
             extract_text_from_pdf,
         )
+        from webscraping.v2.utils import make_event_id
+
+        event_id = make_event_id(event.source_id, event.source_event_id)
+        mirrored: list[dict] = []
 
         # Find every Download anchor inside any documents-section table
         # row. Each row is one PDF; the anchor has visible text "Download".
@@ -815,14 +820,21 @@ class PlanetBidsScraper(BaseScraper):
                     continue
 
                 text = extract_text_from_pdf(tmp_path)
+                placeholder_url = (
+                    f"planetbids://{self._portal_id}/"
+                    f"{event.source_event_id}/{filename}"
+                )
                 if text:
                     attachment_texts[filename] = text
-                    placeholder_url = (
-                        f"planetbids://{self._portal_id}/"
-                        f"{event.source_event_id}/{filename}"
-                    )
                     urls_kept.append(placeholder_url)
                     logger.info(f"  Doc: {filename} ({len(text)} chars)")
+                s3_key = mirror_pdf_from_path(event_id, filename, tmp_path, fallback_index=i)
+                if s3_key:
+                    mirrored.append({
+                        "filename": filename,
+                        "s3_key": s3_key,
+                        "original_url": placeholder_url,
+                    })
             except PlaywrightTimeoutError:
                 # No download fired within 20s. The likely reason is that
                 # PlanetBids opened a "Become a Prospective Bidder" modal
@@ -880,6 +892,10 @@ class PlanetBidsScraper(BaseScraper):
             for u in urls_kept:
                 if u not in event.attachment_urls:
                     event.attachment_urls.append(u)
+        if mirrored:
+            existing_m = event.raw_metadata.get("mirrored_attachments") or []
+            existing_m.extend(mirrored)
+            event.raw_metadata["mirrored_attachments"] = existing_m
 
     async def _download_documents_tab_legacy_fetch(self, page: Page, event):
         """Old anchor-href fetch path. Retained as a no-op stub for any
@@ -887,10 +903,15 @@ class PlanetBidsScraper(BaseScraper):
         today). The new flow above handles PlanetBids' click-handler UI."""
         import os
         import tempfile
+        from webscraping.v2.pipeline.attachments_mirror import mirror_pdf
         from webscraping.v2.pipeline.enrich import (
             classify_pdf,
             extract_text_from_pdf,
         )
+        from webscraping.v2.utils import make_event_id
+
+        event_id = make_event_id(event.source_id, event.source_event_id)
+        mirrored: list[dict] = []
 
         doc_links = await page.evaluate(
             """() => {
@@ -913,7 +934,7 @@ class PlanetBidsScraper(BaseScraper):
         attachment_texts: dict[str, str] = {}
         urls_kept: list[str] = []
 
-        for entry in doc_links:
+        for idx, entry in enumerate(doc_links):
             url = entry.get("url", "")
             filename = (entry.get("filename") or "").strip() or "document.pdf"
             if not filename.lower().endswith(".pdf"):
@@ -942,6 +963,13 @@ class PlanetBidsScraper(BaseScraper):
                     attachment_texts[filename] = text
                     urls_kept.append(url)
                     logger.info(f"  Doc: {filename} ({len(text)} chars)")
+                s3_key = mirror_pdf(event_id, filename, body, fallback_index=idx)
+                if s3_key:
+                    mirrored.append({
+                        "filename": filename,
+                        "s3_key": s3_key,
+                        "original_url": url,
+                    })
             except Exception as e:
                 logger.debug(f"  Doc fetch failed {filename}: {e}")
             finally:
@@ -958,6 +986,10 @@ class PlanetBidsScraper(BaseScraper):
             for u in urls_kept:
                 if u not in event.attachment_urls:
                     event.attachment_urls.append(u)
+        if mirrored:
+            existing_m = event.raw_metadata.get("mirrored_attachments") or []
+            existing_m.extend(mirrored)
+            event.raw_metadata["mirrored_attachments"] = existing_m
 
     async def _scrape_market_intel(self, page: Page, event: RawScrapedEvent):
         """Click Prospective Bidders / Bid Results / Awards tabs and parse rows.

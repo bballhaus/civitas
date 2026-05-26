@@ -84,6 +84,15 @@ export async function GET(
         attachmentUrls: Array.isArray(raw.attachment_urls)
           ? (raw.attachment_urls as string[])
           : [],
+        mirroredAttachments: Array.isArray(raw.mirrored_attachments)
+          ? (raw.mirrored_attachments as Array<{ filename?: string; s3_key?: string; original_url?: string | null }>)
+              .filter((m) => m && typeof m.s3_key === "string" && typeof m.filename === "string")
+              .map((m) => ({
+                filename: m.filename!,
+                s3Key: m.s3_key!,
+                originalUrl: m.original_url ?? null,
+              }))
+          : [],
         attachmentRollup: raw.attachment_rollup ?? null,
         eventUrl: raw.source_url ?? null,
         contactName: contact.name ?? null,
