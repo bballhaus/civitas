@@ -1854,5 +1854,147 @@ class TestDispatchQueue:
             assert "delay_before_start" not in entry
 
 
+class TestReenrichSkip:
+    """The runner short-circuits Haiku calls for events whose attachment
+    URL set is unchanged AND whose prior extraction looks healthy.
+    These tests pin the guards so a future refactor can't quietly re-introduce
+    the per-scrape Haiku spend."""
+
+    def _raw(self, **kwargs) -> RawScrapedEvent:
+        defaults = {
+            "source_id": "caleprocure",
+            "source_event_id": "abc-123",
+            "source_url": "https://example.gov/rfp/abc-123",
+            "title": "Title",
+            "description": "Desc",
+            "issuing_agency": "Agency",
+            "procurement_type": "RFP",
+            "scraped_at": "2026-05-26T00:00:00",
+            "attachment_urls": ["https://example.gov/p.pdf"],
+        }
+        defaults.update(kwargs)
+        return RawScrapedEvent(**defaults)
+
+    def _prior(self, healthy: bool, urls: list[str]) -> EnrichedEvent:
+        rollup = (
+            {"summary": "Janitorial services contract for state buildings.", "text": "...", "pdfsProcessed": ["p.pdf"]}
+            if healthy
+            else {"summary": "Unknown", "text": "", "pdfsProcessed": []}
+        )
+        return EnrichedEvent(
+            id=make_event_id("caleprocure", "abc-123"),
+            source_id="caleprocure",
+            source_event_id="abc-123",
+            source_url="https://example.gov/rfp/abc-123",
+            title="Title",
+            description="Desc",
+            naics_codes=(["561720"] if healthy else []),
+            deliverables=(["weekly janitorial"] if healthy else []),
+            attachment_urls=urls,
+            attachment_rollup=rollup,
+        )
+
+    def test_carry_forward_when_healthy_and_urls_match(self):
+        import unittest.mock as mock
+        from webscraping.v2.orchestrator import runner
+
+        raw = self._raw()
+        prior = self._prior(healthy=True, urls=["https://example.gov/p.pdf"])
+
+        class FakeS3:
+            pass
+
+        called = {"enrich": 0}
+        with mock.patch.object(
+            runner, "load_existing_manifest", return_value={prior.id: prior}
+        ), mock.patch.object(
+            runner, "enrich_event", side_effect=lambda e: (called.__setitem__("enrich", called["enrich"] + 1), None)[1]
+        ):
+            out = runner._enrich_or_carry_forward([raw], "caleprocure", FakeS3())
+
+        assert called["enrich"] == 0, "Should NOT have called Haiku when prior is healthy and URLs match"
+        assert raw.source_event_id in out
+        assert out[raw.source_event_id]["naics_codes"] == ["561720"]
+        assert out[raw.source_event_id]["key_requirements_summary"].startswith("Janitorial")
+
+    def test_reenrich_when_urls_change(self):
+        import unittest.mock as mock
+        from webscraping.v2.orchestrator import runner
+
+        raw = self._raw(attachment_urls=["https://example.gov/p.pdf", "https://example.gov/addendum.pdf"])
+        prior = self._prior(healthy=True, urls=["https://example.gov/p.pdf"])
+
+        fake_extraction = AttachmentExtraction(
+            naics_codes=["561720"],
+            key_requirements_summary="Updated summary after addendum.",
+        )
+
+        with mock.patch.object(
+            runner, "load_existing_manifest", return_value={prior.id: prior}
+        ), mock.patch.object(
+            runner, "enrich_event", return_value=fake_extraction
+        ) as enrich_mock:
+            out = runner._enrich_or_carry_forward([raw], "caleprocure", object())
+
+        assert enrich_mock.call_count == 1, "Adding/replacing PDFs must force re-enrichment"
+        assert out[raw.source_event_id]["key_requirements_summary"].startswith("Updated")
+
+    def test_reenrich_when_prior_is_unhealthy(self):
+        import unittest.mock as mock
+        from webscraping.v2.orchestrator import runner
+
+        raw = self._raw()
+        prior = self._prior(healthy=False, urls=["https://example.gov/p.pdf"])
+        fake_extraction = AttachmentExtraction(
+            naics_codes=["561720"],
+            key_requirements_summary="Real summary on retry.",
+        )
+
+        with mock.patch.object(
+            runner, "load_existing_manifest", return_value={prior.id: prior}
+        ), mock.patch.object(
+            runner, "enrich_event", return_value=fake_extraction
+        ) as enrich_mock:
+            out = runner._enrich_or_carry_forward([raw], "caleprocure", object())
+
+        assert enrich_mock.call_count == 1, "Stale 'Unknown' extractions must be retried"
+        assert out[raw.source_event_id]["key_requirements_summary"] == "Real summary on retry."
+
+    def test_brand_new_event_calls_enrich(self):
+        import unittest.mock as mock
+        from webscraping.v2.orchestrator import runner
+
+        raw = self._raw()
+        fake_extraction = AttachmentExtraction(
+            naics_codes=["236220"],
+            key_requirements_summary="Construction contract.",
+        )
+
+        with mock.patch.object(
+            runner, "load_existing_manifest", return_value={}  # empty manifest
+        ), mock.patch.object(
+            runner, "enrich_event", return_value=fake_extraction
+        ) as enrich_mock:
+            out = runner._enrich_or_carry_forward([raw], "caleprocure", object())
+
+        assert enrich_mock.call_count == 1
+        assert out[raw.source_event_id]["naics_codes"] == ["236220"]
+
+    def test_event_without_attachments_is_ignored(self):
+        import unittest.mock as mock
+        from webscraping.v2.orchestrator import runner
+
+        raw = self._raw(attachment_urls=[])
+        with mock.patch.object(
+            runner, "load_existing_manifest", return_value={}
+        ), mock.patch.object(
+            runner, "enrich_event"
+        ) as enrich_mock:
+            out = runner._enrich_or_carry_forward([raw], "caleprocure", object())
+
+        assert enrich_mock.call_count == 0
+        assert out == {}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

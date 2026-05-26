@@ -29,9 +29,11 @@ from webscraping.v2.config import (
     get_s3_client,
 )
 from webscraping.v2.models import (
+    AttachmentExtraction,
     RawScrapedEvent,
     EnrichedEvent,
     EventStatus,
+    KeyDates,
     SiteConfig,
     SourceManifest,
     ScraperType,
@@ -451,6 +453,115 @@ def upload_legacy_format(s3, events: list[EnrichedEvent], enrichments: dict):
 
 
 # ---------------------------------------------------------------------------
+# Re-enrichment short-circuit
+# ---------------------------------------------------------------------------
+#
+# Without these helpers every scrape blindly re-sent every event's PDFs to
+# Haiku, even though most events sit on portals unchanged for weeks. The
+# guard below carries the prior AttachmentExtraction forward whenever the
+# attachment URL set is identical AND the prior extraction looks healthy
+# (real summary + at least one structured field). Failed/"Unknown" prior
+# extractions still get retried, and any change to attachment_urls
+# (addenda, replaced PDFs) forces a fresh enrichment.
+
+_KEY_DATE_FIELDS = (
+    "qa_deadline", "qa_response_date", "prebid_meeting_at",
+    "site_visit_at", "award_date", "contract_start", "contract_end",
+)
+
+
+def _is_enrichment_healthy(prior: EnrichedEvent) -> bool:
+    rollup = prior.attachment_rollup if isinstance(prior.attachment_rollup, dict) else {}
+    summary = (rollup.get("summary") or "").strip() if rollup else ""
+    if not summary or summary == "Unknown":
+        return False
+    if prior.naics_codes or prior.deliverables or prior.licenses_required:
+        return True
+    kd = prior.key_dates
+    if kd is not None:
+        for field in _KEY_DATE_FIELDS:
+            if getattr(kd, field, None):
+                return True
+    return False
+
+
+def _attachment_urls_unchanged(prior: EnrichedEvent, raw: RawScrapedEvent) -> bool:
+    return set(prior.attachment_urls) == set(raw.attachment_urls)
+
+
+def _extraction_from_prior(prior: EnrichedEvent) -> AttachmentExtraction:
+    rollup = prior.attachment_rollup if isinstance(prior.attachment_rollup, dict) else {}
+    return AttachmentExtraction(
+        naics_codes=list(prior.naics_codes),
+        certifications_required=list(prior.certifications),
+        licenses_required=list(prior.licenses_required),
+        incumbent_vendor=prior.incumbent_vendor,
+        incumbent_contract_end=prior.incumbent_contract_end,
+        clearances_required=list(prior.clearances_required),
+        set_aside_types=list(prior.set_aside_types),
+        capabilities_required=[],
+        contract_value_estimate=(
+            prior.estimated_value if prior.estimated_value and prior.estimated_value != "TBD" else None
+        ),
+        contract_duration=prior.contract_duration,
+        location_details=(
+            [prior.location] if prior.location and prior.location != "California" else []
+        ),
+        onsite_required=None,
+        key_requirements_summary=(rollup.get("summary") if rollup else None) or "Unknown",
+        deliverables=list(prior.deliverables),
+        evaluation_criteria=list(prior.evaluation_criteria),
+        key_dates=prior.key_dates if prior.key_dates is not None else KeyDates(),
+        attachment_text_rollup=(rollup.get("text") if rollup else "") or "",
+        pdfs_processed=(rollup.get("pdfsProcessed") if rollup else None) or [],
+        total_pdfs_available=len(prior.attachment_urls),
+    )
+
+
+def _enrich_or_carry_forward(
+    raw_events: list[RawScrapedEvent],
+    source_id: str,
+    s3,
+) -> dict[str, dict]:
+    """Run enrichment for events that need it; carry prior extractions forward
+    when the attachment set is unchanged and prior data looks real.
+
+    Returns: dict keyed by source_event_id mapping to AttachmentExtraction.model_dump().
+    """
+    existing = load_existing_manifest(s3, source_id)
+    enrichments: dict[str, dict] = {}
+    skipped = 0
+    enriched = 0
+    failed = 0
+    for event in raw_events:
+        if not event.attachment_urls:
+            continue
+        eid = make_event_id(event.source_id, event.source_event_id)
+        prior = existing.get(eid)
+        if (
+            prior is not None
+            and _is_enrichment_healthy(prior)
+            and _attachment_urls_unchanged(prior, event)
+        ):
+            enrichments[event.source_event_id] = _extraction_from_prior(prior).model_dump()
+            skipped += 1
+            continue
+        try:
+            extraction = enrich_event(event)
+            if extraction:
+                enrichments[event.source_event_id] = extraction.model_dump()
+                enriched += 1
+                logger.info(f"  Enriched: {event.title[:50]}")
+        except Exception as e:
+            failed += 1
+            logger.warning(f"  Enrichment failed for {event.source_event_id}: {e}")
+    logger.info(
+        f"Enrichment: {enriched} new/changed, {skipped} carried forward, {failed} failed"
+    )
+    return enrichments
+
+
+# ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
 
@@ -491,19 +602,12 @@ async def run_site(
         )
         return []
 
-    # 2. Enrich (optional)
+    # 2. Enrich (optional) — skips events whose prior extraction is healthy
+    #    and whose attachment_urls haven't changed since the last scrape.
     enrichments: dict = {}
     if not skip_enrich:
         logger.info("=== Enriching events (PDF extraction) ===")
-        for event in raw_events:
-            if event.attachment_urls:
-                try:
-                    extraction = enrich_event(event)
-                    if extraction:
-                        enrichments[event.source_event_id] = extraction.model_dump()
-                        logger.info(f"  Enriched: {event.title[:50]}")
-                except Exception as e:
-                    logger.warning(f"  Enrichment failed for {event.source_event_id}: {e}")
+        enrichments = _enrich_or_carry_forward(raw_events, config.site_id, get_s3())
 
     # 3. Normalize
     logger.info("=== Normalizing events ===")
@@ -628,17 +732,11 @@ async def run_site_batch(
         pdfs_observed=sum(len(e.attachment_urls) for e in raw_events),
     )
 
-    # Enrich
+    # Enrich — skips events whose prior extraction is healthy and whose
+    # attachment_urls haven't changed since the last scrape.
     enrichments: dict = {}
     if not skip_enrich:
-        for event in raw_events:
-            if event.attachment_urls:
-                try:
-                    extraction = enrich_event(event)
-                    if extraction:
-                        enrichments[event.source_event_id] = extraction.model_dump()
-                except Exception as e:
-                    logger.warning(f"Enrichment failed: {e}")
+        enrichments = _enrich_or_carry_forward(raw_events, config.site_id, get_s3())
 
     # Normalize
     from webscraping.v2.models import AttachmentExtraction as AE
