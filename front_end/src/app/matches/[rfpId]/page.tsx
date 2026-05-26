@@ -319,6 +319,9 @@ export default function RfpDetailPage() {
     : null;
 
   // Fetch match summary once we have the data + profile (profile may be null).
+  // /api/match-summary streams plain-text tokens — we drop the spinner on
+  // the first byte and re-render the accumulating text on each chunk, so
+  // the paragraph "types itself in" instead of materializing all at once.
   useEffect(() => {
     if (!data || !profileLoaded || !llmRfpPayload) return;
     const detail = data;
@@ -326,35 +329,55 @@ export default function RfpDetailPage() {
     setMatchSummaryLoading(true);
     setMatchSummaryError(false);
     const ruleSummary = buildRuleBasedSummary(detail);
-    fetch("/api/match-summary", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        rfp: llmRfpPayload,
-        profile: llmProfilePayload,
-        currentSummary: ruleSummary,
-        positiveReasons: detail.breakdown
-          .filter((b) => b.status === "strong" || b.status === "partial")
-          .map((b) => `${b.category}: ${b.detail}`),
-        negativeReasons: detail.breakdown
-          .filter((b) => b.status === "weak" || b.status === "missing")
-          .map((b) => `${b.category}: ${b.detail}`),
-      }),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text());
-        return res.json();
-      })
-      .then((json) => setMatchSummary(json.summary ?? ruleSummary))
-      .catch((err) => {
+
+    (async () => {
+      try {
+        const res = await fetch("/api/match-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            rfp: llmRfpPayload,
+            profile: llmProfilePayload,
+            currentSummary: ruleSummary,
+            positiveReasons: detail.breakdown
+              .filter((b) => b.status === "strong" || b.status === "partial")
+              .map((b) => `${b.category}: ${b.detail}`),
+            negativeReasons: detail.breakdown
+              .filter((b) => b.status === "weak" || b.status === "missing")
+              .map((b) => `${b.category}: ${b.detail}`),
+          }),
+        });
+        if (!res.ok || !res.body) throw new Error(await res.text());
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        let firstChunk = true;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          accumulated += decoder.decode(value, { stream: true });
+          if (firstChunk) {
+            // First byte: replace the loading spinner with the partial text.
+            setMatchSummaryLoading(false);
+            firstChunk = false;
+          }
+          setMatchSummary(accumulated);
+        }
+        // Flush any tail bytes the decoder was holding.
+        accumulated += decoder.decode();
+        setMatchSummary(accumulated || ruleSummary);
+      } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setMatchSummaryError(true);
         setMatchSummary(ruleSummary);
-      })
-      .finally(() => {
+      } finally {
         if (!controller.signal.aborted) setMatchSummaryLoading(false);
-      });
+      }
+    })();
+
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.rfp.id, profileLoaded]);

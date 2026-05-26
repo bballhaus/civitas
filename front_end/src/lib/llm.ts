@@ -134,3 +134,58 @@ export async function chatCompletion(
 
   return { content };
 }
+
+/**
+ * Token-by-token streaming variant. Yields plain text chunks as the model
+ * produces them — same content as chatCompletion() once fully drained, but
+ * the first token typically lands in 200-500ms instead of waiting for the
+ * full 1-3s completion. Use for any user-facing LLM output where progressive
+ * rendering improves perceived latency (match summaries, requirements
+ * summaries, anything paragraph-shaped).
+ *
+ * Provider support: Anthropic streams natively. Groq/OpenAI fall back to
+ * non-streaming for now and emit the full response as one chunk — callers
+ * see the same contract, just no progressive rendering.
+ */
+export async function* chatCompletionStream(
+  messages: ChatMessage[],
+  options?: ChatCompletionOptions
+): AsyncGenerator<string, void, void> {
+  const opts = options ?? {};
+  const provider = opts.provider ?? config.llm.provider;
+
+  if (provider !== "anthropic") {
+    const result = await chatCompletion(messages, opts);
+    if (result.content) yield result.content;
+    return;
+  }
+
+  const client = getAnthropicClient();
+  const systemMsg = messages.find((m) => m.role === "system");
+  const nonSystemMsgs = messages.filter((m) => m.role !== "system");
+
+  const stream = client.messages.stream({
+    model: opts.model ?? config.llm.model,
+    system: systemMsg?.content,
+    messages: nonSystemMsgs.map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    })),
+    temperature: opts.temperature,
+    max_tokens: opts.maxTokens ?? 1024,
+  });
+
+  // Iterate raw events for broad SDK-version compatibility (older SDKs
+  // don't have stream.textStream). We only care about content_block_delta
+  // events carrying text deltas; the rest (message_start, message_stop,
+  // tool_use blocks, etc.) are dropped.
+  for await (const event of stream) {
+    if (
+      event.type === "content_block_delta" &&
+      event.delta.type === "text_delta" &&
+      event.delta.text
+    ) {
+      yield event.delta.text;
+    }
+  }
+}
