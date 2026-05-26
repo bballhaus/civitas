@@ -79,6 +79,11 @@ export const profiles = pgTable(
     // (e.g. local + state) without implying the whole hierarchy. Values:
     // 'none' | 'local' | 'state' | 'federal'. Empty array == not answered.
     govExperience: text("gov_experience").array(),
+    // 6-digit NAICS codes the contractor works under. Union of explicitly
+    // picked codes (dedicated NAICS step) and codes derived server-side
+    // from any NAICS-titled specialty/capability the user holds — see
+    // lib/profile-naics.ts. Source of truth for NAICS-based matching.
+    naicsCodes: text("naics_codes").array(),
     // vendor identity (links to webscraping vendor index)
     vendorFingerprint: text("vendor_fingerprint"),
     vendorResolvedAt: timestamp("vendor_resolved_at", { withTimezone: true }),
@@ -417,6 +422,10 @@ export const rfpCache = pgTable(
     sourceId: text("source_id").notNull(),
     title: text("title").notNull(),
     description: text("description"),
+    // One-sentence LLM-generated scope (see scripts/tag-rfp-naics.ts).
+    // Lives alongside `description` rather than replacing it so the raw
+    // agency text stays available for explainability/audit.
+    scopeSummary: text("scope_summary"),
     agency: text("agency"),
     location: text("location"),
     deadline: timestamp("deadline", { withTimezone: true }),

@@ -13,6 +13,14 @@
     "db:push": "drizzle-kit push",
     "rfp-cache:populate": "tsx src/lib/rfp-cache-populator.ts",
     "rfp-cache:embed": "tsx scripts/embed-rfp-cache.ts",
+    "profile:backfill-naics": "tsx scripts/backfill-profile-naics.ts",
+    "naics:generate-candidates": "tsx scripts/naics-substitutes/generate-candidates.ts",
+    "naics:judge-candidates": "tsx scripts/naics-substitutes/judge-candidates.ts",
+    "naics:critique": "tsx scripts/naics-substitutes/critique.ts",
+    "naics:apply-critique": "tsx scripts/naics-substitutes/apply-critique.ts",
+    "rfp:tag-naics": "tsx scripts/tag-rfp-naics.ts",
+    "rfp:critique-tags": "tsx scripts/critique-rfp-tags.ts",
+    "rfp:apply-tag-critique": "tsx scripts/apply-rfp-tag-critique.ts",
     "kpi:funnel": "tsx scripts/funnel-report.ts"
   },
   "dependencies": {

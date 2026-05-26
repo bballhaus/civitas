@@ -29,6 +29,11 @@ const PATCHABLE_FIELDS = [
   "complexityPref",
   "primeVsSub",
   "govExperience",
+  // Naics codes from the dedicated NAICS step or any explicit user picks.
+  // The server-side derive in lib/profile-naics.ts may add more codes on
+  // top of whatever the client sends (union semantics), so a PATCH never
+  // shrinks the set unintentionally.
+  "naicsCodes",
   "dailyRoundupEnabled",
   "dailyRoundupTimezone",
 ] as const;

@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { addCapability } from "@/db/queries/profile";
 import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
+import { recomputeProfileNaics } from "@/lib/profile-naics";
 
 export async function POST(request: Request) {
   const auth = await getAuthenticatedUser(request);
@@ -22,6 +23,15 @@ export async function POST(request: Request) {
     }
 
     const row = await addCapability({ userId: auth.userId, value, canonicalId });
+
+    // Derive profile.naics_codes from NAICS-titled capabilities. Server-side
+    // mirror of the specialties path — covers every write path, not just
+    // the onboarding picker.
+    try {
+      await recomputeProfileNaics(auth.userId);
+    } catch (err) {
+      console.error("[capabilities] naics recompute failed:", err);
+    }
 
     // Embed the new capability so the v2 matcher can score it. Same
     // fail-soft pattern as onboarding.

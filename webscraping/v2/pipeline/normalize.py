@@ -159,80 +159,31 @@ def infer_industry(agency: str, title: str = "", description: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Capability inference (mirrors frontend inferCapabilities)
+# Capability inference REMOVED 2026-05-26.
+#
+# This file previously contained _CAP_RULES (29 regex patterns) and
+# _INDUSTRY_FALLBACK_CAPS that assigned coarse-bucket capabilities to every
+# RFP at scrape time. The system is now replaced by an LLM-based NAICS
+# tagger in front_end/scripts/tag-rfp-naics.ts.
+#
+# Why the regex was retired:
+#   - ~32% of tagged RFPs got wrong capabilities (audited 2026-05-25; see
+#     conversation log). Failure modes were systematic, not random:
+#       * "website" → Web Development (fired on boilerplate "see DGS website")
+#       * "delivery" → Courier (fired on "service delivery")
+#       * "instruction" → Training (fired on "instructions to bidders")
+#       * "highway" → Road & Highway (fired on "California Highway Patrol")
+#   - The closed 78-bucket capabilities taxonomy was too coarse for the
+#     downstream matcher (matching-v2.ts now uses NAICS substitutability
+#     via the hand-curated matrix in data/naics-substitutes.json).
+#   - Wrong capability tags polluted the RFP embedding text used for
+#     cosine matching.
+#
+# The capability tagging now happens server-side:
+#   front_end/scripts/tag-rfp-naics.ts  →  rfp_cache.naics_codes + scope_summary
+# That script runs on backfill and (TODO) should be wired into the
+# post-scrape cron sync so new RFPs get tagged automatically.
 # ---------------------------------------------------------------------------
-
-_CAP_RULES: list[tuple[str, str]] = [
-    (r"\b(cybersecurity|infosec|security\s+assess|penetration|firewall)\b", "Cybersecurity"),
-    (r"\b(cloud|aws|azure|gcp|saas|iaas|migration)\b", "Cloud Services"),
-    (r"\b(data\s+analytics|analytics|reporting|visualization|dashboard)\b", "Data Analytics"),
-    (r"\b(software\s+dev|application\s+dev|custom\s+software|programming)\b", "Software Development"),
-    (r"\b(web\s+dev|website|frontend|backend|fullstack)\b", "Web Development"),
-    (r"\b(database|sql|data\s*base\s+manage)\b", "Database Management"),
-    (r"\b(network|lan|wan|fiber|wireless|telecom)\b", "Network Infrastructure"),
-    (r"\b(construction|general\s+contractor|demolition|grading|excavat)\b", "Building Construction"),
-    (r"\b(road|highway|paving|asphalt|bridge|pavement|striping|culvert)\b", "Road & Highway Construction"),
-    (r"\b(renovation|remodel|rehabilitat|restoration|retrofit|siding|roofing)\b", "Renovation & Remodeling"),
-    (r"\b(civil\s+engineer|structural\s+engineer|geotechnical|survey)\b", "Civil Engineering"),
-    (r"\b(electrical|wiring|power\s+distribut|lighting|generator|solar)\b", "Electrical Systems"),
-    (r"\b(plumbing|piping|water\s+system|sewer|drain|storm\s*water)\b", "Plumbing & Piping"),
-    (r"\b(janitorial|cleaning|custodial|sanitation|housekeeping)\b", "Janitorial & Cleaning"),
-    (r"\b(hvac|heating|ventilation|cooling|air\s+balanc|chiller)\b", "HVAC Services"),
-    (r"\b(landscap|grounds|irrigation|vegetation|horticultur|tree\s+trim)\b", "Landscaping & Grounds"),
-    (r"\b(pest\s+control|extermination|fumigat)\b", "Pest Control"),
-    (r"\b(waste|refuse|recycl|disposal|trash|garbage|hazardous\s+waste)\b", "Waste Management & Disposal"),
-    (r"\b(remediat|environmental\s+clean|contamination|hazmat|abatement)\b", "Environmental Remediation"),
-    (r"\b(consult|advisory|strateg|assessment)\b", "Consulting & Advisory"),
-    (r"\b(project\s+manage|program\s+manage|oversight|pmo)\b", "Project Management"),
-    (r"\b(training|workshop|curriculum|instruction|education|course)\b", "Training & Support"),
-    (r"\b(staffing|temporary|recruiting|personnel|labor\s+service)\b", "Staffing & Recruiting"),
-    (r"\b(security\s+guard|armed\s+guard|unarmed\s+guard|patrol|surveillance)\b", "Security Guard Services"),
-    (r"\b(medical|clinical|health\s+service|nursing|pharmacy)\b", "Medical & Health Services"),
-    (r"\b(vehicle|fleet|automotive|towing|truck|tractor)\b", "Vehicle & Fleet Services"),
-    (r"\b(courier|delivery|shipping|freight|pick\s*up.*deliver)\b", "Courier & Delivery"),
-    (r"\b(printing|print\s+service|envelope|publishing)\b", "Printing & Publishing"),
-    (r"\b(food\s+service|catering|kitchen|bakery|vending)\b", "Food Services & Catering"),
-]
-
-_INDUSTRY_FALLBACK_CAPS: dict[str, list[str]] = {
-    "Construction": ["Building Construction"],
-    "Engineering": ["Civil Engineering"],
-    "IT Services": ["Software Development", "Cloud Services"],
-    "Facilities Maintenance": ["Facilities Maintenance & Repair"],
-    "Environmental Services": ["Environmental Testing & Monitoring"],
-    "Transportation": ["Transportation & Transit"],
-    "Equipment & Supplies": ["Equipment Procurement"],
-    "Healthcare": ["Medical & Health Services"],
-    "Social & Rehabilitation Services": ["Social Services & Outreach"],
-    "Security": ["Security Guard Services"],
-    "Public Safety & Emergency": ["Emergency Management"],
-    "Legal Services": ["Legal Services"],
-    "Food & Agriculture": ["Food Services & Catering"],
-    "Education": ["Training & Support"],
-    "Consulting": ["Consulting & Advisory"],
-    "Research & Development": ["Research & Development"],
-    "Manufacturing": ["Printing & Publishing"],
-    "Real Estate & Leasing": ["Facilities Maintenance & Repair"],
-    "Government Services": ["Consulting & Advisory"],
-}
-
-
-def infer_capabilities(title: str, description: str, industry: str) -> list[str]:
-    """Infer capabilities from text, with industry fallback."""
-    text = f"{title} {description}".lower()
-    caps = []
-    seen = set()
-
-    for pattern, cap in _CAP_RULES:
-        if cap not in seen and re.search(pattern, text):
-            caps.append(cap)
-            seen.add(cap)
-
-    if caps:
-        return caps
-
-    fallback = _INDUSTRY_FALLBACK_CAPS.get(industry, ["Consulting & Advisory"])
-    return list(fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +208,11 @@ def normalize_event(
     an EnrichedEvent ready for the frontend.
     """
     industry = infer_industry(raw.issuing_agency, raw.title, raw.description)
-    capabilities = infer_capabilities(raw.title, raw.description, industry)
+    # Capabilities are no longer tagged at scrape time — see comment above
+    # the removed infer_capabilities. The LLM tagger in front_end/scripts/
+    # tag-rfp-naics.ts populates rfp_cache.naics_codes + scope_summary
+    # after this pipeline lands in the DB.
+    capabilities: list[str] = []
 
     # Location: prefer extraction data, fall back to text inference
     location = "California"

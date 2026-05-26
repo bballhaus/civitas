@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { addSpecialty } from "@/db/queries/profile";
 import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
+import { recomputeProfileNaics } from "@/lib/profile-naics";
 
 export async function POST(request: Request) {
   const auth = await getAuthenticatedUser(request);
@@ -34,6 +35,16 @@ export async function POST(request: Request) {
       weight: weight ?? "primary",
       canonicalId,
     });
+
+    // Derive profile.naics_codes from NAICS-titled specialties. Server-side
+    // so it covers API-direct adds and /profile-setup edits, not just the
+    // onboarding picker. Fail-soft — a stale naics_codes column shouldn't
+    // block adding a specialty.
+    try {
+      await recomputeProfileNaics(auth.userId);
+    } catch (err) {
+      console.error("[specialties] naics recompute failed:", err);
+    }
 
     // Embed the new specialty so the v2 matcher can score it. Same
     // fail-soft pattern as onboarding — a Voyage outage or missing key

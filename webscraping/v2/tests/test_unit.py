@@ -23,7 +23,6 @@ from webscraping.v2.models import (
 from webscraping.v2.pipeline.normalize import (
     normalize_event,
     infer_industry,
-    infer_capabilities,
     extract_location,
     extract_estimated_value,
 )
@@ -276,25 +275,10 @@ class TestInferIndustry:
         assert result == "IT Services"
 
 
-class TestInferCapabilities:
-    def test_single_match(self):
-        caps = infer_capabilities("HVAC Maintenance Contract", "", "Facilities Maintenance")
-        assert "HVAC Services" in caps
-
-    def test_multiple_matches(self):
-        caps = infer_capabilities("Cloud Migration and Database Management", "", "IT Services")
-        assert "Cloud Services" in caps
-        assert "Database Management" in caps
-
-    def test_fallback_to_industry(self):
-        caps = infer_capabilities("General Services", "", "Construction")
-        assert "Building Construction" in caps
-
-    def test_no_duplicates(self):
-        caps = infer_capabilities(
-            "Cloud Cloud Cloud AWS AWS", "", "IT Services"
-        )
-        assert len(caps) == len(set(caps))
+# TestInferCapabilities removed 2026-05-26 alongside the infer_capabilities
+# regex tagger it covered. Capability tagging now happens in
+# front_end/scripts/tag-rfp-naics.ts (LLM-based, NAICS-codes output) and is
+# covered by the matching-v2 test suite via the substitutes matrix lookup.
 
 
 class TestExtractLocation:
