@@ -1,17 +1,21 @@
 # Backend Architecture
 
-Civitas's backend is a set of **Next.js API routes** that handle authentication, contract management, profile storage, and LLM-powered document extraction. All user data is stored in **AWS S3** as JSON files. The backend runs as part of the same Next.js application as the frontend, deployed on **Vercel**.
+Civitas's backend is a set of **Next.js API routes** that handle authentication, contract management, profile storage, RFP matching, and LLM-powered document extraction. User and matching data is stored in **Postgres** (via Drizzle ORM); raw uploaded files, scraped RFP manifests, and KPI aggregates live in **AWS S3**. KPI events live in **DynamoDB**. The backend runs as part of the same Next.js application as the frontend, deployed on **Vercel**; Postgres runs on **AWS RDS**.
 
 ## Tech Stack
 
 | Technology | Purpose |
 |---|---|
-| Next.js 16.1 | API routes (serverless functions on Vercel) |
+| Next.js 16.2 | API routes (serverless functions on Vercel) |
 | jose 6.2 | JWT signing & verification (HS256) |
 | bcryptjs 3.0 | Password hashing (12 rounds) |
+| drizzle-orm + postgres | Postgres ORM and driver |
 | @aws-sdk/client-s3 3.x | AWS S3 client |
-| Groq SDK 0.37 | LLM inference for metadata extraction |
-| pdf-parse 2.4 | PDF text extraction (PDFParse v2 API) |
+| @aws-sdk/client-dynamodb 3.x | KPI event log + per-user summary tables |
+| @aws-sdk/client-ses 3.x | (Bounce/complaint webhook only — outbound mail uses Resend) |
+| resend 6.x | Transactional email (verification, password reset, daily roundup) |
+| Provider-agnostic LLM (`lib/llm.ts`) | Groq, OpenAI, Anthropic — switch via `civitas.config.json` |
+| mupdf | PDF text extraction (replaces pdf-parse) |
 | mammoth 1.12 | DOCX text extraction |
 
 ## Directory Structure
@@ -59,17 +63,19 @@ front_end/src/
 
 ### Authentication
 - **Stateless JWT** (HS256) via the `jose` library
-- JWT_SECRET must be set as an environment variable (server throws on missing/default)
-- Token expiry: **7 days**
+- `JWT_SECRET` must be set as an environment variable (server throws on missing/default)
+- Token expiry: **7 days** (configurable via `auth.jwtExpiryDays` in `civitas.config.json`)
 - Passwords hashed with **bcrypt (12 rounds)**
 - Password requirements: 8+ chars, uppercase, lowercase, special character
 - Legacy Django PBKDF2 hashes are transparently migrated to bcrypt on login
 
 ### Rate Limiting
-Rate limiting is enforced at the edge via `proxy.ts` (Next.js proxy):
+Rate limiting is enforced at the edge via `proxy.ts` (Next.js proxy), with limits sourced from `civitas.config.json`:
 - **Auth endpoints** (`/api/auth/*`): 10 requests per minute per IP
 - **Profile extraction** (`/api/profile/extract`): 5 requests per minute per IP
 - Returns `429 Too Many Requests` with `Retry-After` header when exceeded
+
+Individual auth routes apply additional stricter sliding-window limits via `lib/rate-limit.ts` (login, signup, forgot-password) — see [Security & Optimization](Security.md).
 
 ### Security Headers
 All responses include:
@@ -88,19 +94,33 @@ All responses include:
 
 ## Storage Architecture
 
-All data lives in **AWS S3** (`civitas-ai` bucket). No database.
+User and matching data live in **Postgres** (AWS RDS, `db.t4g.micro`); raw files, scraped manifests, and KPI aggregates live in **S3**; KPI events live in **DynamoDB**.
 
 ```
-S3 Bucket: civitas-ai/
-├── users/{username}.json               # User data: auth, profile, contracts, RFP status
-├── uploads/{user_id}/{contract_id}/    # Contract document files
-└── scrapes/caleprocure/                # Scraped RFP data
-    ├── all_events.json                 # All RFP events
-    └── attachment_extractions.json     # Extracted attachment metadata
+Postgres (civitas-postgres)
+├── users, profiles                     # auth + onboarding fields
+├── specialties, capabilities, licenses, certifications, work_areas, agency_relationships
+├── contracts, claims                   # uploaded evidence + extracted provenance
+├── match_state                         # per-(user, rfp) status, score, feedback
+├── generated_documents                 # POE / proposal drafts
+├── rfp_cache, rfp_bidders, vendors     # denormalized read view of scraped manifests
+└── pgvector + pg_trgm extensions       # semantic match + fuzzy vendor search
+
+S3 (civitas-ai)
+├── uploads/{user_id}/{contract_id}/    # raw uploaded files
+├── scrapes/v2/{source}/                # versioned scrape manifests, vendor index, health
+└── metrics/aggregate/                  # rolled-up KPI snapshots
+
+DynamoDB
+├── civitas-kpi-events                  # raw append-only event log (TTL 90d)
+└── civitas-kpi-users                   # per-user aggregate counters + funnel checkpoints
 ```
 
-### User Data Caching
-User JSON files are cached in-memory for **10 seconds** to avoid repeated S3 reads within the same request flow (a single API request may read user data 2-3 times for auth check, profile, and status).
+See [Architecture-v2 § 3-4](Architecture-v2.md) for the Postgres schema and [front_end/src/db/README.md](../front_end/src/db/README.md) for migration commands.
+
+### Caching
+- The `lib/events-cache.ts` layer caches scraped RFP reads from S3 for the configured `cache.s3TtlMs` (default 5 min).
+- Drizzle queries are not cached client-side — Postgres + connection pooling handles repeat-read latency.
 
 ## API Endpoints
 
@@ -148,31 +168,36 @@ Auth responses include `Cache-Control: no-store` to prevent token caching.
 
 ## LLM Document Extraction
 
-Uses **Groq** (`llama-3.1-8b-instant`) to parse uploaded contracts into structured metadata.
+Goes through the provider-agnostic `lib/llm.ts` `chatCompletion` layer. Provider is selected by `civitas.config.json` — Groq / OpenAI / Anthropic. Front-end document extraction defaults to Groq (`llama-3.1-8b-instant`); scraping pipeline enrichment runs Claude Haiku 4.5 with prompt caching (see [webscraping/v2/README.md](../webscraping/v2/README.md)).
 
 ### Supported Formats
-- **PDF**: Text extracted via `pdf-parse` v2 (`PDFParse` class, `Uint8Array` input)
+- **PDF**: Text extracted via `mupdf`
 - **DOCX**: Text extracted via `mammoth`
 - **TXT**: Read directly as UTF-8
 
 ### Pipeline
 1. Validate file size (≤25 MB) and type (.pdf, .docx, .doc, .txt)
 2. Extract raw text (capped at 50,000 characters)
-3. Send to Groq with structured extraction prompt
-4. Parse and normalize LLM JSON response
-5. Return structured metadata or save as contract
+3. Send to the configured LLM with structured extraction prompt
+4. Parse and normalize the JSON response
+5. Return structured metadata or save as contract + claims (see [Architecture-v2 § 6](Architecture-v2.md))
 
 ## Environment Variables
 
 ```
 JWT_SECRET=...                # Required. Strong random value for JWT signing.
+DATABASE_URL=postgres://...   # Required. Postgres connection string.
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 AWS_REGION=us-east-1
 AWS_S3_BUCKET=civitas-ai
-GROQ_API_KEY=...              # Required for document extraction and generation.
+GROQ_API_KEY=...              # Provider keys; set whichever match civitas.config.json.
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+RESEND_API_KEY=...            # Required to actually send transactional email.
+CIVITAS_FROM_EMAIL=...        # e.g. "Civitas <register@civitas-ai.net>"
 ```
 
 ## Deployment
 
-Deployed on **Vercel** at `civitas-mu.vercel.app`. All API routes run as serverless functions. Environment variables configured in Vercel dashboard.
+Deployed on **Vercel** at `civitas-ai.net`. All API routes run as serverless functions. Environment variables configured in Vercel dashboard. Postgres runs on AWS RDS (`civitas-postgres`, us-east-1).

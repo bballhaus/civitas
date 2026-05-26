@@ -4,7 +4,10 @@
 
 ## Product
 - [Key Features](Key-Features)
-- [Matching Algorithm](Matching-Algorithm)
+- [Matching Algorithm (v1)](Matching-Algorithm)
+- [Architecture v2](Architecture-v2)
+- [Matching Values](Matching-Values)
+- [Matching Fine-Tuning](Matching-Finetuning)
 
 ## Security
 - [Security & Optimization](Security)

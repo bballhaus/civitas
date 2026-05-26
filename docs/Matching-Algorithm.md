@@ -1,6 +1,16 @@
-# Matching Algorithm
+# Matching Algorithm (v1)
 
 The matching algorithm is the core intelligence of Civitas. It scores every RFP against a user's company profile, producing a 0-100 relevance score with a detailed breakdown explaining exactly why the score is what it is.
+
+> **Note:** This page documents the **v1** matcher (`rfp-matching.ts`). The
+> production matcher today is **v2** (`matching-v2.ts`) — source-aware
+> scoring, hard gates that fire only on non-empty data, pgvector-backed
+> semantic specialty/capability matching, prime/sub parallel tracks, and
+> an incumbent state machine. The v2 design lives in
+> [Architecture-v2 § 9](Architecture-v2.md) and the weight-learning
+> roadmap in [Matching-Finetuning](Matching-Finetuning.md). v1 is retained
+> as a fallback / regression baseline and still informs the synonym +
+> canonicalization helpers reused by v2.
 
 **Source:** `front_end/src/lib/rfp-matching.ts` (1,300+ lines)
 **Execution:** Runs entirely client-side in the browser

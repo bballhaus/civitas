@@ -19,14 +19,14 @@ A full security audit was performed across the frontend (Next.js), backend (API 
 | HttpOnly | `true` |
 | Secure | `true` in production, `false` in dev |
 | SameSite | `Strict` |
-| Max-Age | 24 hours |
+| Max-Age | 7 days (driven by `auth.jwtExpiryDays` in `civitas.config.json`) |
 | Path | `/` |
 
 **Files:** `front_end/src/lib/auth.ts` (cookie helpers), `front_end/src/app/api/auth/login/route.ts`, `signup/route.ts`, `logout/route.ts`
 
 ### Token Lifetime
 
-JWT expiry was reduced from 7 days to 24 hours. Logout clears the cookie server-side (sets `Max-Age=0`), making the token immediately unusable.
+JWT expiry is 7 days, sourced from `auth.jwtExpiryDays` in `civitas.config.json`. Logout clears the cookie server-side (sets `Max-Age=0`), making the token immediately unusable.
 
 ### Password Security
 
@@ -40,7 +40,7 @@ JWT expiry was reduced from 7 days to 24 hours. Logout clears the cookie server-
 Full forgot-password flow with token-based reset:
 1. User submits email to `/api/auth/forgot-password/`
 2. Server generates a `crypto.randomUUID()` token with 1-hour expiry
-3. Email sent via AWS SES (or logged to console in dev)
+3. Email sent via Resend (or logged to console in dev when `RESEND_API_KEY` is unset)
 4. User clicks link to `/reset-password?token=...&username=...`
 5. Server validates token, hashes new password, clears token
 
@@ -48,9 +48,9 @@ Full forgot-password flow with token-based reset:
 
 ### Email Verification
 
-- **Production:** Token-based verification email sent via SES on signup
-- **Development:** Auto-verified when `NODE_ENV=development` (no SES needed for testing)
-- **Storage:** `email_verified` and `email_verification_token` fields on `UserData`
+- **Production:** Token-based verification email sent via Resend on signup
+- **Development:** Auto-verified when `NODE_ENV=development` and `RESEND_API_KEY` / `CIVITAS_FROM_EMAIL` are unset
+- **Storage:** `email_verified` and `email_verification_token` fields on the `users` table
 
 **File:** `front_end/src/app/api/auth/verify-email/route.ts`
 
@@ -64,7 +64,7 @@ S3-based email index at `system/email-index.json` maps emails to usernames. Chec
 
 ### Proxy-Level (Edge)
 
-The Next.js proxy (`front_end/src/proxy.ts`) applies rate limiting at the edge before requests reach API handlers:
+The Next.js proxy (`front_end/src/proxy.ts`) applies rate limiting at the edge before requests reach API handlers. Limits are sourced from `civitas.config.json`:
 
 | Endpoint | Limit | Window |
 |----------|-------|--------|
@@ -172,25 +172,25 @@ All S3 clients use the AWS SDK default credential provider chain instead of expl
 
 **Files:** `front_end/src/lib/s3.ts`, `front_end/src/app/api/events/route.ts`
 
-## Email (AWS SES)
+## Email (Resend)
 
-Transactional emails for verification and password reset are sent via AWS SES.
+Transactional emails for verification, password reset, and the daily roundup digest are sent via Resend.
 
 **File:** `front_end/src/lib/email.ts`
 
-### Sandbox Mode
+### Setup
 
-SES starts in sandbox mode. Both sender and recipient emails must be verified. To set up:
+1. Add the sending domain (e.g. `civitas-ai.net`) to the Resend dashboard and verify DNS.
+2. Set `RESEND_API_KEY` (starts with `re_`) in environment variables.
+3. Set `CIVITAS_FROM_EMAIL`, e.g. `Civitas <register@civitas-ai.net>`.
 
-```bash
-aws ses verify-email-identity --email-address you@example.com --region us-east-1
-```
+### Bounce / Complaint Handling
 
-Set `CIVITAS_FROM_EMAIL=you@example.com` in environment variables.
+The legacy AWS SES bounce webhook (`/api/email/...` with SNS signature verification in `lib/sns-verify.ts`) is retained for backward compatibility with previously-sent SES messages; new outbound mail flows entirely through Resend.
 
 ### Graceful Fallback
 
-If `CIVITAS_FROM_EMAIL` is not set, the email utility logs messages to console instead of sending. This allows development and testing without SES configuration.
+If `RESEND_API_KEY` or `CIVITAS_FROM_EMAIL` is unset, `lib/email.ts` logs the message to the console and returns success so signup/reset/daily-roundup flows continue to work locally.
 
 ## Security Event Logging
 
@@ -216,7 +216,6 @@ Structured JSON logs are emitted for all auth events. These are captured by Verc
 | Item | Priority | Notes |
 |------|----------|-------|
 | IAM permission scoping | High | CodeBuild/CloudWatch use `Resource: "*"` -- kept for dev, scope before production |
-| AWS Secrets Manager | Medium | Move API keys from Lambda env vars to Secrets Manager |
-| SES production access | Medium | Request via AWS console when ready for real users |
+| AWS Secrets Manager | Medium | Move Lambda LLM keys (Anthropic, Groq) from env vars to Secrets Manager |
 | Style nonce support | Low | Tailwind v4 needs `'unsafe-inline'` for style-src; nonce support pending upstream |
 | CSRF tokens | Low | `SameSite=Strict` cookies mitigate CSRF for same-origin; explicit tokens deferred |

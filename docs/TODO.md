@@ -2,8 +2,8 @@
 
 ## Infrastructure
 
-- [ ] **Custom domain** — Set up a custom domain (e.g. `civitas.ai`) on Vercel instead of `civitas-mu.vercel.app`
-- [ ] **Remove `back_end/` directory** — Legacy Django code is no longer used; remove when confident everything works
+- [x] **Custom domain** — `civitas-ai.net` is live on Vercel
+- [x] **Remove `back_end/` directory** — Legacy Django code removed
 - [x] **S3 bucket encryption** — SSE-S3 (AES256) already enabled on `civitas-ai` bucket
 - [x] **S3 bucket versioning** — Enabled via `aws s3api put-bucket-versioning`
 - [ ] **Error monitoring** — Set up Vercel analytics or Sentry for production error tracking
@@ -12,7 +12,7 @@
 ## Security
 
 - [x] **HTTPS-only cookies** — JWT moved from localStorage to HttpOnly/Secure/SameSite=Strict cookies
-- [x] **Token revocation** — JWT expiry reduced to 24h; logout clears HttpOnly cookie server-side
+- [x] **Token revocation** — Logout clears the HttpOnly cookie server-side; expiry is 7 days (via `auth.jwtExpiryDays` in `civitas.config.json`)
 - [x] **Input sanitization audit** — File upload magic byte validation, RFP ID format validation, LLM prompt injection mitigation (system/user message separation)
 - [x] **Security headers** — CSP (removed `unsafe-eval`), HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-Permitted-Cross-Domain-Policies all configured in `next.config.ts`
 - [x] **Dependency audit** — `npm audit fix` applied; Next.js upgraded to 16.2.4 (6 CVEs fixed); 0 remaining vulnerabilities
@@ -30,7 +30,7 @@
 - [x] **LLM provider abstraction** — Provider-agnostic `chatCompletion` layer in `lib/llm.ts` supports Groq, OpenAI, and Anthropic. Switch via `civitas.config.json`
 - [x] **Centralized configuration** — All infrastructure config (auth, rate limiting, caching, uploads) in `civitas.config.json`. Secrets stay in `.env.local`
 - [x] **S3 client consolidation** — Removed duplicate S3Client from events/route.ts; all routes use shared `lib/s3.ts`
-- [ ] **Extraction quality testing** — Compare pdf-parse (JS) vs pdfplumber (Python) output quality with real contract PDFs
+- [x] **Extraction quality testing** — PyMuPDF chosen for the backend pipeline; mupdf for the frontend. See [tests/pdf_benchmark_report.md](../tests/pdf_benchmark_report.md)
 
 ## Data
 
@@ -40,9 +40,9 @@
 
 ## Scraping
 
-- [ ] **Agentic scrapers (LA City, SF City)** — These two sites use the Claude-powered agentic scraper which requires different browser setup and the Anthropic API key. They currently fail on Lambda due to ENOSPC / browser issues. Need to: (1) test recipe caching on Lambda, (2) ensure Anthropic API key is available, (3) consider running these on GitHub Actions instead of Lambda if browser requirements are too heavy
+- [ ] **Agentic scrapers (LA City, SF City)** — Disabled in the registry. LA's `labavn.org` DNS-fails on Lambda; SF's contracting opportunities URL is a 404. Re-onboard via the agentic onboarding pipeline when target URLs are confirmed working.
 - [ ] **PlanetBids / BidSync document login** — Most RFP documents on PlanetBids require vendor login to download (items marked with `*`). BidSync detail pages also appear to require authentication. Need to: (1) investigate creating vendor accounts for scraping, (2) determine if there's a public API alternative, (3) consider whether free addenda-only access is sufficient for matching, (4) evaluate legal/ToS implications of automated vendor account access
-- [x] **Automated RFP scraping schedule** — EventBridge triggers Lambda every 4 hours with `{"mode": "all"}`
+- [x] **Automated RFP scraping schedule** — EventBridge `civitas-scrape-all` triggers Lambda every 12 hours (`cron(0 6,18 * * ? *)`) with `{"mode": "all"}`; a separate daily exploration/onboarding rule fires at 13:00 UTC
 - [x] **PlanetBids status filtering** — Filter to "Bidding" status only (was scraping closed/awarded bids too)
 - [x] **PlanetBids infinite scroll** — Scroll table container to load all rows (was capped at 30)
 - [x] **Lambda batched chaining** — Sites run in batches of 3 per invocation, chained via async self-invocation
@@ -61,11 +61,11 @@
 - [x] **Password reset flow** — Forgot-password + reset-password with token-based verification
 - [x] **Email verification** — Auto-verified in dev; token-based in production via SES
 - [ ] **Profile completeness indicator** — Help users understand what profile data improves match quality
-- [x] **Email delivery (SES)** — AWS SES integrated for verification + password reset emails; sandbox mode (set `CIVITAS_FROM_EMAIL` to verified sender); request production access when ready
+- [x] **Email delivery (Resend)** — Migrated from AWS SES to Resend for transactional email; verify the sending domain in the Resend dashboard and set `RESEND_API_KEY` + `CIVITAS_FROM_EMAIL`
 
 ## Testing
 
 - [ ] **End-to-end tests** — Full user flow: signup → upload → profile → dashboard → proposal
 - [ ] **API route unit tests** — Test each API route with edge cases
-- [ ] **Profile aggregation tests** — Verify `refreshProfileFromContracts` produces identical results to the old Django version
+- [ ] **Profile aggregation tests** — Cover the v2 claims-acceptance pipeline (`lib/claim-acceptance.ts`) with golden fixtures
 - [ ] **Load testing** — Verify Vercel function limits work for concurrent users

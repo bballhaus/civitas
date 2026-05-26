@@ -1,8 +1,16 @@
-## Attachment Enrichment for RFP Matching
+## Attachment Enrichment for RFP Matching (v1 — legacy)
+
+> **Status:** This document describes the **v1** Cal-eProcure-only pipeline
+> (`webscraping/cal_eprocure_store.py` + `webscraping/extract_attachments.py`).
+> The production system is now **v2** — see [webscraping/v2/README.md](v2/README.md)
+> for the multi-source pipeline (Cal eProcure + PlanetBids + BidSync + OpenGov),
+> AWS Lambda deployment, the PyMuPDF + Claude Haiku 4.5 enrichment path, and
+> Postgres `rfp_cache` integration. The v1 scripts here are retained for one-off
+> historical reprocessing of Cal eProcure data only.
 
 This document explains how to enrich scraped RFP events with structured metadata extracted from PDF attachments stored in S3.
 
-The extraction script reads PDFs from S3, extracts text with pdfplumber, sends it to Groq LLM for structured extraction, and uploads results back to S3. The frontend `/api/events` route automatically merges extraction data with base events.
+The v1 extraction script reads PDFs from S3, extracts text with `pdfplumber`, sends it to Groq LLM for structured extraction, and uploads results back to S3. The frontend `/api/events` route merges extraction data with base events.
 
 ### What gets extracted
 
@@ -24,15 +32,15 @@ For each event's PDF attachments, the script produces:
 
 ### Prerequisites
 
-- AWS credentials with access to the `civitas-uploads` S3 bucket
+- AWS credentials with access to the `civitas-ai` S3 bucket
 - A Groq API key (paid tier recommended to avoid rate limits)
 - Python 3.10+ with dependencies: `boto3`, `pdfplumber`, `groq`, `python-dotenv`, `tqdm`
 
-These should be set in `back_end/.env`:
+Set credentials in your shell or a local `.env` file the script loads explicitly (the legacy `back_end/.env` path is gone — the Django backend has been removed):
 ```
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
-AWS_STORAGE_BUCKET_NAME=civitas-uploads
+AWS_STORAGE_BUCKET_NAME=civitas-ai
 GROQ_API_KEY=...
 ```
 
@@ -62,13 +70,13 @@ python webscraping/extract_attachments.py --force
 6. **Rate limit handling**: Automatically retries on 429 errors with exponential backoff, parsing wait times from Groq error messages
 7. **Incremental save**: Saves to local file after each event and uploads final results to S3
 
-### S3 data layout
+### S3 data layout (v1, Cal eProcure only)
 
 ```
-civitas-uploads/
+civitas-ai/
 ├── scrapes/caleprocure/
-│   ├── all_events.json                  # Base event metadata (509 events)
-│   ├── attachment_extractions.json      # Structured extractions (415 events)
+│   ├── all_events.json                  # Base event metadata
+│   ├── attachment_extractions.json      # Structured extractions
 │   └── attachments/
 │       ├── 0890_0000038160/             # PDFs organized by event ID
 │       │   ├── Bid_Specification.pdf
@@ -76,6 +84,8 @@ civitas-uploads/
 │       └── 3790_0000037817/
 │           └── SOW_Document.pdf
 ```
+
+The v2 pipeline writes per-source manifests under `scrapes/v2/{source}/`; see [v2/README.md](v2/README.md).
 
 ---
 
