@@ -13,6 +13,7 @@
     "db:push": "drizzle-kit push",
     "rfp-cache:populate": "tsx src/lib/rfp-cache-populator.ts",
     "rfp-cache:embed": "tsx scripts/embed-rfp-cache.ts",
+    "rfp-cache:embed-rebuild": "tsx scripts/embed-rfp-cache-rebuild.ts",
     "profile:backfill-naics": "tsx scripts/backfill-profile-naics.ts",
     "naics:generate-candidates": "tsx scripts/naics-substitutes/generate-candidates.ts",
     "naics:judge-candidates": "tsx scripts/naics-substitutes/judge-candidates.ts",
@@ -29,6 +30,7 @@
     "@aws-sdk/client-s3": "^3.1003.0",
     "@aws-sdk/client-ses": "^3.1030.0",
     "@aws-sdk/lib-dynamodb": "^3.1030.0",
+    "@aws-sdk/s3-request-presigner": "^3.1003.0",
     "@fullcalendar/core": "^6.1.20",
     "@fullcalendar/daygrid": "^6.1.20",
     "@fullcalendar/interaction": "^6.1.20",
@@ -50,6 +52,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
+    "resend": "^6.12.4",
     "synonyms": "^1.0.1"
   },
   "devDependencies": {

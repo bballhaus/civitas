@@ -362,7 +362,7 @@ export const COMMON_AGENCIES = [
   { canonical: "san_diego_airport", display: "San Diego International Airport" },
 ] as const;
 
-export const TOTAL_STEPS = 9;
+export const TOTAL_STEPS = 10;
 
 // Per-step UI metadata — title shown in the card header, short label in the
 // breadcrumb pip, blurb under the title, and icon key for the StepIcon
@@ -389,6 +389,13 @@ export const STEP_META = [
     blurb:
       "Broader than specialties. Anything you can take on if the RFP calls for it.",
     icon: "capabilities",
+  },
+  {
+    short: "NAICS",
+    title: "Industry codes you work in",
+    blurb:
+      "Optional — pick the federal NAICS codes that describe your line of work. RFPs reference these directly, so matches are dramatically tighter when they overlap.",
+    icon: "naics",
   },
   {
     short: "Licenses",

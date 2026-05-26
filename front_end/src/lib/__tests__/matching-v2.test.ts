@@ -38,6 +38,7 @@ function makeProfile(overrides: Partial<FullProfile> = {}): FullProfile {
     dailyRoundupEnabled: false,
     dailyRoundupTimezone: null,
     dailyRoundupLastSentAt: null,
+    matchScoresPendingSince: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     specialties: [],

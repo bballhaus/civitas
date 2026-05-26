@@ -20,6 +20,7 @@ import {
   StepIdentity,
   StepSpecialties,
   StepCapabilities,
+  StepNaics,
   StepLicenses,
   StepCertifications,
   StepGeography,
@@ -41,6 +42,7 @@ import {
   GOV_EXPERIENCE,
   EMPLOYEE_BANDS,
 } from "@/lib/onboarding-data";
+import { NAICS_MAP } from "@/data/filter-options";
 
 interface FullProfile {
   userId: string;
@@ -54,6 +56,7 @@ interface FullProfile {
   complexityPref: string | null;
   primeVsSub: string[] | null;
   govExperience: string[] | null;
+  naicsCodes: string[] | null;
   dailyRoundupEnabled: boolean;
   dailyRoundupTimezone: string | null;
   vendorFingerprint: string | null;
@@ -65,30 +68,6 @@ interface FullProfile {
   certifications: { id: string; canonicalId: string; displayName: string; kind: string }[];
   workAreas: { id: string; kind: string; name: string; isHard: boolean; radiusMiles: number | null }[];
   agencyRelationships: { id: string; agencyCanonical: string; agencyDisplay: string; role: string; strength: number }[];
-}
-
-interface VendorCandidate {
-  fingerprint: string;
-  name: string;
-  city: string | null;
-  state: string | null;
-  bidCount: number;
-  winCount: number;
-  similarity: number;
-}
-
-interface VendorState {
-  claimed: string | null;
-  companyName: string | null;
-  vendor?: {
-    fingerprint: string;
-    name: string;
-    city: string | null;
-    state: string | null;
-    bidCount: number;
-    winCount: number;
-  };
-  candidates?: VendorCandidate[];
 }
 
 function profileToSnapshot(profile: FullProfile): OnboardingSnapshot {
@@ -103,6 +82,7 @@ function profileToSnapshot(profile: FullProfile): OnboardingSnapshot {
     complexityPref: profile.complexityPref,
     primeVsSub: profile.primeVsSub,
     govExperience: profile.govExperience,
+    naicsCodes: profile.naicsCodes,
     dailyRoundupEnabled: profile.dailyRoundupEnabled,
     dailyRoundupTimezone: profile.dailyRoundupTimezone,
     specialties: profile.specialties.map((s) => ({
@@ -143,7 +123,6 @@ function profileToSnapshot(profile: FullProfile): OnboardingSnapshot {
 export default function ProfileV2Page() {
   const router = useRouter();
   const [profile, setProfile] = useState<FullProfile | null>(null);
-  const [vendor, setVendor] = useState<VendorState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -155,38 +134,18 @@ export default function ProfileV2Page() {
   async function load() {
     setLoading(true);
     try {
-      const [pRes, vRes] = await Promise.all([
-        fetch("/api/profile/", { cache: "no-store" }),
-        fetch("/api/profile/vendor/resolve/", { cache: "no-store" }),
-      ]);
+      const pRes = await fetch("/api/profile/", { cache: "no-store" });
       if (pRes.status === 401) {
         router.replace("/login");
         return;
       }
       if (!pRes.ok) throw new Error(`Failed to load profile (${pRes.status})`);
       setProfile(await pRes.json());
-      if (vRes.ok) {
-        setVendor(await vRes.json());
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
-  }
-
-  async function claimVendor(fingerprint: string) {
-    await fetch("/api/profile/vendor/resolve/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fingerprint }),
-    });
-    await load();
-  }
-
-  async function unclaimVendor() {
-    await fetch("/api/profile/vendor/resolve/", { method: "DELETE" });
-    await load();
   }
 
   if (loading) {
@@ -260,9 +219,6 @@ export default function ProfileV2Page() {
           </div>
         </div>
 
-        {/* Vendor identity widget */}
-        <VendorWidget state={vendor} onClaim={claimVendor} onUnclaim={unclaimVendor} />
-
         <EditableSection
           title="Identity"
           accent="from-[#3C89C6] to-blue-600"
@@ -288,6 +244,15 @@ export default function ProfileV2Page() {
           refresh={refresh}
           readView={<ChipRead items={profile.capabilities.map((c) => c.value)} variant="emerald" />}
           renderEditor={(s) => <StepCapabilities snapshot={s} />}
+        />
+
+        <EditableSection
+          title="NAICS codes"
+          accent="from-slate-500 to-slate-600"
+          originalSnapshot={snapshot}
+          refresh={refresh}
+          readView={<NaicsRead profile={profile} />}
+          renderEditor={(s) => <StepNaics snapshot={s} />}
         />
 
         <EditableSection
@@ -692,6 +657,28 @@ function ScopeRead({ profile }: { profile: FullProfile }) {
   );
 }
 
+function NaicsRead({ profile }: { profile: FullProfile }) {
+  const codes = profile.naicsCodes ?? [];
+  if (codes.length === 0) {
+    return (
+      <EmptyHint>
+        No NAICS codes yet. Click <strong>Edit</strong> to add the codes you
+        work in — they&apos;re a hard-signal match component when RFPs name them.
+      </EmptyHint>
+    );
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      {codes.map((code) => (
+        <ReadOnlyChip key={code} variant="blue">
+          <span className="font-mono text-xs opacity-70">{code}</span>
+          <span className="ml-1">{NAICS_MAP[code] ?? "Unknown code"}</span>
+        </ReadOnlyChip>
+      ))}
+    </div>
+  );
+}
+
 function CapacityRead({ profile }: { profile: FullProfile }) {
   const primeLabels = (profile.primeVsSub ?? [])
     .map((v) => PRIME_VS_SUB.find((p) => p.value === v)?.label ?? v)
@@ -803,87 +790,3 @@ function NotificationsEditor({ snapshot }: { snapshot: OnboardingSnapshot }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Vendor widget — unique to this page; not part of the wizard
-// ---------------------------------------------------------------------------
-
-function VendorWidget({
-  state,
-  onClaim,
-  onUnclaim,
-}: {
-  state: VendorState | null;
-  onClaim: (fingerprint: string) => void;
-  onUnclaim: () => void;
-}) {
-  if (!state) return null;
-
-  if (state.claimed && state.vendor) {
-    const v = state.vendor;
-    return (
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 border-l-4 border-l-emerald-500 p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <span className="text-emerald-600">✓</span>
-              Vendor identity claimed
-            </h3>
-            <p className="text-sm text-slate-700 mt-1">
-              {v.name}
-              {v.city && v.state && <span className="text-slate-500"> · {v.city}, {v.state}</span>}
-            </p>
-            <p className="text-xs text-slate-500 mt-1">
-              {v.bidCount} prior bids · {v.winCount} wins on file. Past
-              PlanetBids history can now auto-populate your agency relationships.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onUnclaim}
-            className="shrink-0 text-xs font-semibold text-slate-400 hover:text-red-600"
-          >
-            Unclaim
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const candidates = state.candidates ?? [];
-  if (candidates.length === 0) return null;
-
-  return (
-    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 border-l-4 border-l-[#3C89C6] p-5">
-      <h3 className="text-sm font-bold text-slate-900">Is this you?</h3>
-      <p className="text-xs text-slate-500 mt-1">
-        We found {candidates.length} vendor{candidates.length === 1 ? "" : "s"} in past
-        bid history that match{candidates.length === 1 ? "es" : ""} &ldquo;{state.companyName}&rdquo;.
-        Claim one to auto-populate your agency relationships from prior bids.
-      </p>
-      <div className="mt-3 space-y-2">
-        {candidates.slice(0, 5).map((c) => (
-          <div
-            key={c.fingerprint}
-            className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 bg-white"
-          >
-            <div className="min-w-0">
-              <p className="font-semibold text-slate-900 text-sm truncate">{c.name}</p>
-              <p className="text-xs text-slate-500 mt-0.5">
-                {c.city && c.state ? `${c.city}, ${c.state} · ` : ""}
-                {c.bidCount} bids · {c.winCount} wins
-                <span className="opacity-60"> · {(c.similarity * 100).toFixed(0)}% match</span>
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onClaim(c.fingerprint)}
-              className="shrink-0 px-3 py-1.5 rounded-lg bg-[#3C89C6] text-white text-xs font-semibold hover:bg-[#2d6fa0]"
-            >
-              This is us
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}

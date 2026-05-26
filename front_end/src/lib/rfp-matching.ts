@@ -1,6 +1,7 @@
 // Shared RFP matching logic for dashboard and RFP detail page
 // Pipeline: Hard Disqualifiers → Synonym Expansion → Weighted Scoring → Explanations
 import { normalizeCapability, getCapabilityCategory } from "@/lib/capabilities";
+import { parseDeadline as parseDeadlineShared } from "@/lib/parse-deadline";
 
 export interface CompanyProfile {
   companyName: string;
@@ -52,8 +53,13 @@ export interface RFP {
     text: string;
     pdfsProcessed: string[];
   } | null;
-  // URLs of downloaded attachment PDFs, served from S3 via /api/attachments/.
+  // Source-portal attachment URLs (stale risk — most portals issue short-TTL
+  // presigned URLs). Kept for provenance; prefer `mirroredAttachments` for
+  // the actual download link the dashboard renders.
   attachmentUrls?: string[];
+  // PDFs we re-uploaded to civitas-ai S3 during scraping. Linked via
+  // /api/attachments/{s3Key} so the user always gets a fresh presigned URL.
+  mirroredAttachments?: { filename: string; s3Key: string; originalUrl?: string | null }[];
   // LLM-extracted incumbent info (Cal eProcure today; null for other sources).
   // See docs/Architecture-v2.md § 10 for the full incumbent state machine.
   incumbentVendor?: string | null;
@@ -729,34 +735,7 @@ function parseContractValue(value: string): number | null {
 // Deadline parsing
 // ---------------------------------------------------------------------------
 
-export function parseDeadline(deadline: string): Date | null {
-  const normalized = deadline?.trim();
-  if (!normalized || normalized.toUpperCase() === "TBD") return null;
-
-  const direct = Date.parse(normalized);
-  if (!Number.isNaN(direct)) return new Date(direct);
-
-  const cleaned = normalized
-    .replace(/\b(PST|PDT)\b/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const m = cleaned.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(AM|PM)$/i
-  );
-  if (!m) return null;
-
-  const mm = Number(m[1]);
-  const dd = Number(m[2]);
-  const yyyy = Number(m[3]);
-  let hh = Number(m[4]);
-  const ampm = m[6].toUpperCase();
-
-  if (ampm === "PM" && hh !== 12) hh += 12;
-  if (ampm === "AM" && hh === 12) hh = 0;
-
-  return new Date(yyyy, mm - 1, dd, hh, Number(m[5]), 0);
-}
+export const parseDeadline = parseDeadlineShared;
 
 // ---------------------------------------------------------------------------
 // Set-aside / small business detection

@@ -29,6 +29,7 @@ export interface TopLevelPatch {
   complexityPref?: string | null;
   primeVsSub?: string[] | null;
   govExperience?: string[] | null;
+  naicsCodes?: string[] | null;
   dailyRoundupEnabled?: boolean;
   dailyRoundupTimezone?: string | null;
 }
@@ -344,6 +345,7 @@ export async function commitDraft(
   if (original.complexityPref !== draft.complexityPref) patch.complexityPref = draft.complexityPref;
   if (!sameArr(original.primeVsSub, draft.primeVsSub)) patch.primeVsSub = draft.primeVsSub;
   if (!sameArr(original.govExperience, draft.govExperience)) patch.govExperience = draft.govExperience;
+  if (!sameArr(original.naicsCodes, draft.naicsCodes)) patch.naicsCodes = draft.naicsCodes;
   if (original.dailyRoundupEnabled !== draft.dailyRoundupEnabled) {
     patch.dailyRoundupEnabled = draft.dailyRoundupEnabled;
   }

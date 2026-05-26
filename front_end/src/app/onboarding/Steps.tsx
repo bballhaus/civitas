@@ -22,6 +22,8 @@ import {
 import {
   CALIFORNIA_CITIES,
   NAICS_ENTRIES,
+  NAICS_MAP,
+  type NaicsEntry,
 } from "@/data/filter-options";
 
 interface StepProps {
@@ -40,16 +42,18 @@ export function OnboardingStep({
     case 3:
       return <StepCapabilities snapshot={snapshot} />;
     case 4:
-      return <StepLicenses snapshot={snapshot} />;
+      return <StepNaics snapshot={snapshot} />;
     case 5:
-      return <StepCertifications snapshot={snapshot} />;
+      return <StepLicenses snapshot={snapshot} />;
     case 6:
-      return <StepGeography snapshot={snapshot} />;
+      return <StepCertifications snapshot={snapshot} />;
     case 7:
-      return <StepScope snapshot={snapshot} />;
+      return <StepGeography snapshot={snapshot} />;
     case 8:
-      return <StepCapacity snapshot={snapshot} />;
+      return <StepScope snapshot={snapshot} />;
     case 9:
+      return <StepCapacity snapshot={snapshot} />;
+    case 10:
       return <StepReview snapshot={snapshot} />;
     default:
       return null;
@@ -133,6 +137,26 @@ function EmptyHint({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Append a NAICS code to profile.naicsCodes if it isn't already there.
+// Called from Specialties + Capabilities steps when the user picks from
+// the NAICS combobox — saves them from re-selecting the same code on the
+// dedicated NAICS step.
+//
+// Race caveat: rapid back-to-back picks may read a stale `snapshot.naicsCodes`
+// (React props don't update mid-handler), so the second pick could drop the
+// first. Acceptable for v1 — the user can verify on Step 4 and add anything
+// missing. If this becomes painful, switch to a server-side append endpoint
+// using Postgres array_append for race-free merging.
+async function propagateNaicsCode(
+  code: string,
+  snapshot: OnboardingSnapshot,
+  commit: ReturnType<typeof useCommit>,
+): Promise<void> {
+  const current = snapshot.naicsCodes ?? [];
+  if (current.includes(code)) return;
+  await commit.patch({ naicsCodes: [...current, code] });
+}
+
 // NAICS-backed combobox used by Specialties + Capabilities. The 1,012
 // NAICS titles are what RFPs reference verbatim when listing required
 // scopes, so wiring them here also lifts matching accuracy.
@@ -148,15 +172,31 @@ function NaicsPicker({
   label,
   onPick,
   selectedValues,
+  pickBy = "title",
+  placeholder,
+  footnote,
 }: {
   label: string;
-  onPick: (title: string) => void;
-  // Lowercased titles already in the user's specialties/capabilities. The
-  // picker uses this to show an "Added" affordance on rows the user has
-  // already accepted, so they don't have to remember what they picked
-  // earlier in the same step.
+  // Receives whatever field `pickBy` selects (title text in default mode,
+  // 6-digit code string when pickBy="code") as the first arg. The full
+  // entry is passed as the second arg so callers can grab the underlying
+  // NAICS code even when pickBy="title" — used by Specialties/Capabilities
+  // to auto-propagate the code into profile.naicsCodes.
+  onPick: (value: string, entry: NaicsEntry) => void;
+  // Lowercased values already picked. Keyed by title in "title" mode and by
+  // code in "code" mode — must match whatever onPick passes back so the
+  // "Added" affordance stays accurate.
   selectedValues?: ReadonlySet<string>;
+  // "title" → onPick receives entry.title (used by Specialties/Capabilities
+  // which store human-readable strings). "code" → onPick receives entry.code
+  // (used by the dedicated NAICS step which stores 6-digit codes for direct
+  // overlap matching).
+  pickBy?: "title" | "code";
+  placeholder?: string;
+  footnote?: string;
 }) {
+  const pickedKey = (entry: NaicsEntry): string =>
+    pickBy === "code" ? entry.code : entry.title.toLowerCase();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(0);
@@ -218,16 +258,17 @@ function NaicsPicker({
   }, [highlighted, open]);
 
   const pick = (entry: (typeof NAICS_ENTRIES)[number]) => {
-    // Store the title so the matcher's embedding sees semantic content and
-    // substring fallback finds matches against RFP descriptions.
-    onPick(entry.title);
-    setQuery("");
-    // Intentionally keep the dropdown open so the user can rapid-add several
-    // codes without re-clicking the input. The empty query reverts the list
-    // to the default head of NAICS_ENTRIES. Reset the highlight so Enter
-    // doesn't pick whatever row was last hovered. setOpen(true) is
-    // defensive — guards against a focus race after the parent's async
-    // refresh.
+    // pickBy="title" → store the human-readable label so the embedder sees
+    // semantic content (Specialties/Capabilities path).
+    // pickBy="code"  → store the 6-digit code for direct RFP↔profile overlap
+    // scoring (dedicated NAICS step).
+    onPick(pickBy === "code" ? entry.code : entry.title, entry);
+    // Keep the query intact so the user can rapid-add several codes from the
+    // same search (e.g. typing "construction" once and picking three matches
+    // without re-typing). The picked entry will show "Added" in the list.
+    // Reset highlight to the top so Enter doesn't re-fire on the just-added
+    // row, and re-focus the input as a defensive guard against focus races
+    // after the parent's async refresh.
     setHighlighted(0);
     setOpen(true);
     inputRef.current?.focus();
@@ -247,7 +288,11 @@ function NaicsPicker({
     } else if (e.key === "Enter") {
       if (open && filtered[highlighted]) {
         e.preventDefault();
-        pick(filtered[highlighted]);
+        const entry = filtered[highlighted];
+        // Mirror the click path: skip already-picked rows instead of
+        // re-firing onPick (which would duplicate or no-op).
+        if (selectedValues?.has(pickedKey(entry))) return;
+        pick(entry);
       }
     } else if (e.key === "Escape") {
       setOpen(false);
@@ -268,7 +313,7 @@ function NaicsPicker({
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
-          placeholder="Type to search NAICS (e.g. concrete, 541, software)"
+          placeholder={placeholder ?? "Type to search NAICS (e.g. concrete, 541, software)"}
           aria-autocomplete="list"
           aria-expanded={open}
           className={inputClass}
@@ -283,7 +328,7 @@ function NaicsPicker({
           >
             {filtered.map((entry, i) => {
               const isAlreadyPicked =
-                selectedValues?.has(entry.title.toLowerCase()) ?? false;
+                selectedValues?.has(pickedKey(entry)) ?? false;
               return (
                 <li
                   key={entry.code}
@@ -293,9 +338,10 @@ function NaicsPicker({
                     e.preventDefault();
                     if (isAlreadyPicked) {
                       // Already in the user's profile — picking again would
-                      // either duplicate or no-op depending on backend; we
-                      // just close instead of confusing them.
-                      setOpen(false);
+                      // either duplicate or no-op depending on backend. Skip
+                      // the add but keep the dropdown and query intact so the
+                      // user can continue picking from the same search.
+                      inputRef.current?.focus();
                       return;
                     }
                     pick(entry);
@@ -333,8 +379,7 @@ function NaicsPicker({
         )}
       </div>
       <p className="text-xs text-slate-400 italic mt-1">
-        Federal NAICS catalog (1,012 codes). RFPs reference these directly —
-        picking the closest match tightens the score.
+        {footnote ?? "Federal NAICS catalog (1,012 codes). RFPs reference these directly — picking the closest match tightens the score."}
       </p>
     </div>
   );
@@ -536,10 +581,16 @@ export function StepSpecialties({ snapshot }: StepProps) {
   const commit = useCommit();
   const [input, setInput] = useState("");
 
-  const add = async (value: string) => {
+  // Picking a NAICS-backed specialty also implies the user works in that
+  // industry code, so we auto-propagate entry.code into profile.naicsCodes.
+  // That way the dedicated NAICS step (Step 4) doesn't have to ask again
+  // and the direct-overlap scorer gets the signal immediately. Free-text
+  // adds (no entry) and SuggestionPill clicks don't touch naicsCodes.
+  const add = async (value: string, entry?: NaicsEntry) => {
     const v = value.trim();
     if (!v) return;
     await commit.addSpecialty({ value: v, weight: "primary" });
+    if (entry) await propagateNaicsCode(entry.code, snapshot, commit);
     setInput("");
   };
   const remove = async (id: string) => {
@@ -620,10 +671,14 @@ export function StepCapabilities({ snapshot }: StepProps) {
     [snapshot.capabilities],
   );
 
-  const add = async (value: string) => {
+  // Same auto-propagation as Specialties — NAICS picks imply the underlying
+  // code belongs in profile.naicsCodes. Free-text adds skip the propagation
+  // since there's no associated code to import.
+  const add = async (value: string, entry?: NaicsEntry) => {
     const v = value.trim();
     if (!v) return;
     await commit.addCapability({ value: v });
+    if (entry) await propagateNaicsCode(entry.code, snapshot, commit);
     setInput("");
   };
   const remove = async (id: string) => {
@@ -674,7 +729,62 @@ export function StepCapabilities({ snapshot }: StepProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Licenses
+// Step 4: NAICS codes — optional, but high-leverage. Picked codes do two
+// things in the matcher: (1) direct overlap with rfp.naics_codes is a
+// hard-signal score component, and (2) the picked codes' official titles
+// are folded into the RFP embedding text so the contractor's specialty
+// and capability embeddings semantically match RFPs in the same industry
+// even when the wording differs.
+// ---------------------------------------------------------------------------
+
+export function StepNaics({ snapshot }: StepProps) {
+  const commit = useCommit();
+  const codes = useMemo(() => snapshot.naicsCodes ?? [], [snapshot.naicsCodes]);
+  const codeSet = useMemo(() => new Set(codes), [codes]);
+
+  const setCodes = async (next: string[]) => {
+    await commit.patch({ naicsCodes: next });
+  };
+
+  const add = async (code: string) => {
+    if (codeSet.has(code)) return;
+    await setCodes([...codes, code]);
+  };
+
+  const remove = async (code: string) => {
+    await setCodes(codes.filter((c) => c !== code));
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 min-h-[40px]">
+        {codes.length === 0 ? (
+          <EmptyHint>
+            None yet — pick the codes that describe the work you do. Skipping is fine.
+          </EmptyHint>
+        ) : (
+          codes.map((code) => (
+            <Chip key={code} variant="slate" onRemove={() => remove(code)}>
+              <span className="font-mono text-xs opacity-70">{code}</span>
+              <span className="ml-1">{NAICS_MAP[code] ?? "Unknown code"}</span>
+            </Chip>
+          ))
+        )}
+      </div>
+      <NaicsPicker
+        label="Pick from the NAICS catalog"
+        onPick={add}
+        selectedValues={codeSet}
+        pickBy="code"
+        placeholder="Type a NAICS code or industry name (e.g. 561720, janitorial)"
+        footnote="RFPs cite NAICS codes directly. Exact-code matches are the single strongest signal we have outside of specialties."
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 5: Licenses
 // ---------------------------------------------------------------------------
 
 export function StepLicenses({ snapshot }: StepProps) {
@@ -794,7 +904,7 @@ export function StepLicenses({ snapshot }: StepProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Certifications (hard + soft, two columns)
+// Step 6: Certifications (hard + soft, two columns)
 // ---------------------------------------------------------------------------
 
 export function StepCertifications({ snapshot }: StepProps) {
@@ -957,7 +1067,7 @@ export function StepCertifications({ snapshot }: StepProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 6: Geography
+// Step 7: Geography
 // ---------------------------------------------------------------------------
 
 export function StepGeography({ snapshot }: StepProps) {
@@ -1054,9 +1164,10 @@ export function StepGeography({ snapshot }: StepProps) {
 
 // City autocomplete combobox — same UX pattern as NaicsPicker but
 // against the 481-entry CA cities list. Picking a city posts immediately
-// (uses the hard/radius state from the parent), then clears the query
-// and keeps the dropdown open so users can rapid-add several. No cap
-// on results — the dropdown body scrolls so the whole list is reachable.
+// (uses the hard/radius state from the parent) and keeps the dropdown
+// open with the query intact so users can rapid-add several matches from
+// the same search. No cap on results — the dropdown body scrolls so the
+// whole list is reachable.
 
 function CityPicker({
   selectedCities,
@@ -1113,7 +1224,10 @@ function CityPicker({
 
   const pick = (city: string) => {
     void onPick(city);
-    setQuery("");
+    // Keep the query intact so the user can rapid-add several cities from the
+    // same search without re-typing. The picked entry will show "Added" in
+    // the list. Reset highlight to the top so Enter doesn't re-fire on the
+    // just-added row.
     setHighlighted(0);
     setOpen(true);
     inputRef.current?.focus();
@@ -1133,7 +1247,11 @@ function CityPicker({
     } else if (e.key === "Enter") {
       if (open && filtered[highlighted]) {
         e.preventDefault();
-        pick(filtered[highlighted]);
+        const city = filtered[highlighted];
+        // Mirror the click path: skip already-picked cities instead of
+        // re-firing onPick.
+        if (selectedCities.has(city.toLowerCase())) return;
+        pick(city);
       }
     } else if (e.key === "Escape") {
       setOpen(false);
@@ -1172,7 +1290,9 @@ function CityPicker({
                   onMouseDown={(e) => {
                     e.preventDefault();
                     if (isAlreadyPicked) {
-                      setOpen(false);
+                      // Skip the add but keep the dropdown and query intact
+                      // so the user can continue picking from the same search.
+                      inputRef.current?.focus();
                       return;
                     }
                     pick(city);
@@ -1211,7 +1331,7 @@ function CityPicker({
 }
 
 // ---------------------------------------------------------------------------
-// Step 7: Scope & duration
+// Step 8: Scope & duration
 // ---------------------------------------------------------------------------
 
 export function StepScope({ snapshot }: StepProps) {
@@ -1286,7 +1406,7 @@ export function StepScope({ snapshot }: StepProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 8: Capacity & history
+// Step 9: Capacity & history
 // ---------------------------------------------------------------------------
 
 export function StepCapacity({ snapshot }: StepProps) {
@@ -1509,7 +1629,7 @@ function AgencyPicker({
 }
 
 // ---------------------------------------------------------------------------
-// Step 9: Done — review & finish
+// Step 10: Done — review & finish
 // ---------------------------------------------------------------------------
 
 // Mirrors COMPLETENESS_WEIGHTS in db/queries/profile.ts. Drives the per-
@@ -1557,6 +1677,16 @@ function buildReviewCategories(snapshot: OnboardingSnapshot): ReviewCategory[] {
       earned: has(snapshot.capabilities.length > 0, 15),
       detail: snapshot.capabilities.length
         ? `${snapshot.capabilities.length} added`
+        : null,
+      variant: "emerald",
+    },
+    {
+      label: "NAICS codes",
+      weight: 5,
+      earned: has((snapshot.naicsCodes?.length ?? 0) > 0, 5),
+      detail: snapshot.naicsCodes?.length
+        ? snapshot.naicsCodes.slice(0, 5).join(", ") +
+          (snapshot.naicsCodes.length > 5 ? ` +${snapshot.naicsCodes.length - 5} more` : "")
         : null,
       variant: "emerald",
     },

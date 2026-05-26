@@ -44,6 +44,18 @@ class ContactInfo(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Mirrored attachment — points at a PDF we re-uploaded to our own S3 bucket
+# so the dashboard can serve a stable URL even after the source portal's
+# presigned URL expires. Original URL is kept for provenance/fallback.
+# ---------------------------------------------------------------------------
+
+class MirroredAttachment(BaseModel):
+    filename: str
+    s3_key: str = Field(..., description="Key under civitas-ai bucket, e.g. scrapes/v2/attachments/{event_id}/{filename}")
+    original_url: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
 # Raw scraped event — what every scraper produces
 # ---------------------------------------------------------------------------
 
@@ -228,6 +240,13 @@ class EnrichedEvent(BaseModel):
 
     # Attachments
     attachment_urls: list[str] = Field(default_factory=list, description="Direct download URLs for RFP documents")
+    mirrored_attachments: list[MirroredAttachment] = Field(
+        default_factory=list,
+        description=(
+            "PDFs we re-uploaded to s3://civitas-ai/scrapes/v2/attachments/{event_id}/. "
+            "Dashboard prefers these because source-portal URLs expire (Cal eProcure: 20 h)."
+        ),
+    )
 
     # Attachment-derived (from LLM enrichment)
     clearances_required: list[str] = Field(default_factory=list)

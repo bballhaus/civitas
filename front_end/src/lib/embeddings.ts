@@ -9,7 +9,7 @@
 // and the volumes are tiny enough that adding an SDK is overkill (~$0.001 to
 // embed a full profile, ~$0.36 for a full RFP catalog refresh per § 8).
 
-import { eq, isNull, or } from "drizzle-orm";
+import { eq, isNull, lt } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   specialties,
@@ -259,15 +259,37 @@ export function buildRfpEmbeddingText(rfp: RfpCacheRow): string {
 }
 
 /**
- * Compute and store embeddings for any RFP cache rows missing one.
- * Returns the count of embedded rows. Idempotent.
+ * Compute and store embeddings for RFP cache rows.
+ *
+ * Default behaviour embeds only rows where embedding IS NULL — cheap,
+ * idempotent, safe to call on every scrape.
+ *
+ * Pass `staleBefore: Date` to re-embed every row whose refreshed_at is older
+ * than the cutoff. The function writes `refreshed_at = now()` on each
+ * successful pass, so rows it has already processed roll past the cutoff and
+ * naturally drop out of subsequent passes — this is how the rebuild script
+ * paginates safely. Without this filter, a force-style loop would re-fetch
+ * the same LIMIT 500 rows forever and burn Voyage quota.
+ *
+ * Use staleBefore after changing buildRfpEmbeddingText (e.g. when new fields
+ * like NAICS titles are folded in). Always set the cutoff once before the
+ * loop starts; never recompute it inside the loop.
  */
-export async function refreshRfpEmbeddings(maxRows = 500): Promise<number> {
-  const rows = await db
-    .select()
-    .from(rfpCache)
-    .where(or(isNull(rfpCache.embedding)))
-    .limit(maxRows);
+export async function refreshRfpEmbeddings(
+  maxRows = 500,
+  options: { staleBefore?: Date } = {},
+): Promise<number> {
+  const rows = options.staleBefore
+    ? await db
+        .select()
+        .from(rfpCache)
+        .where(lt(rfpCache.refreshedAt, options.staleBefore))
+        .limit(maxRows)
+    : await db
+        .select()
+        .from(rfpCache)
+        .where(isNull(rfpCache.embedding))
+        .limit(maxRows);
 
   if (rows.length === 0) return 0;
 

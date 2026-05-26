@@ -50,6 +50,27 @@
       "when": 1779456000000,
       "tag": "0006_multi_select_prime_gov",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1779744947499,
+      "tag": "0007_add_naics_to_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1779776251833,
+      "tag": "0008_match_state_cache",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1779784239689,
+      "tag": "0009_rfp_scope_summary",
+      "breakpoints": true
     }
   ]
 }

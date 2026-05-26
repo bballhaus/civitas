@@ -81,6 +81,7 @@ interface DetailRfp {
   evaluationCriteria: string[];
   clearancesRequired: string[];
   attachmentUrls: string[];
+  mirroredAttachments: { filename: string; s3Key: string; originalUrl: string | null }[];
   attachmentRollup: unknown;
   eventUrl: string | null;
   contactName: string | null;
@@ -318,6 +319,9 @@ export default function RfpDetailPage() {
     : null;
 
   // Fetch match summary once we have the data + profile (profile may be null).
+  // /api/match-summary streams plain-text tokens — we drop the spinner on
+  // the first byte and re-render the accumulating text on each chunk, so
+  // the paragraph "types itself in" instead of materializing all at once.
   useEffect(() => {
     if (!data || !profileLoaded || !llmRfpPayload) return;
     const detail = data;
@@ -325,35 +329,55 @@ export default function RfpDetailPage() {
     setMatchSummaryLoading(true);
     setMatchSummaryError(false);
     const ruleSummary = buildRuleBasedSummary(detail);
-    fetch("/api/match-summary", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        rfp: llmRfpPayload,
-        profile: llmProfilePayload,
-        currentSummary: ruleSummary,
-        positiveReasons: detail.breakdown
-          .filter((b) => b.status === "strong" || b.status === "partial")
-          .map((b) => `${b.category}: ${b.detail}`),
-        negativeReasons: detail.breakdown
-          .filter((b) => b.status === "weak" || b.status === "missing")
-          .map((b) => `${b.category}: ${b.detail}`),
-      }),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text());
-        return res.json();
-      })
-      .then((json) => setMatchSummary(json.summary ?? ruleSummary))
-      .catch((err) => {
+
+    (async () => {
+      try {
+        const res = await fetch("/api/match-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            rfp: llmRfpPayload,
+            profile: llmProfilePayload,
+            currentSummary: ruleSummary,
+            positiveReasons: detail.breakdown
+              .filter((b) => b.status === "strong" || b.status === "partial")
+              .map((b) => `${b.category}: ${b.detail}`),
+            negativeReasons: detail.breakdown
+              .filter((b) => b.status === "weak" || b.status === "missing")
+              .map((b) => `${b.category}: ${b.detail}`),
+          }),
+        });
+        if (!res.ok || !res.body) throw new Error(await res.text());
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        let firstChunk = true;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          accumulated += decoder.decode(value, { stream: true });
+          if (firstChunk) {
+            // First byte: replace the loading spinner with the partial text.
+            setMatchSummaryLoading(false);
+            firstChunk = false;
+          }
+          setMatchSummary(accumulated);
+        }
+        // Flush any tail bytes the decoder was holding.
+        accumulated += decoder.decode();
+        setMatchSummary(accumulated || ruleSummary);
+      } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setMatchSummaryError(true);
         setMatchSummary(ruleSummary);
-      })
-      .finally(() => {
+      } finally {
         if (!controller.signal.aborted) setMatchSummaryLoading(false);
-      });
+      }
+    })();
+
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.rfp.id, profileLoaded]);
@@ -1063,27 +1087,43 @@ export default function RfpDetailPage() {
           )}
         </section>
 
-        {/* Attachments — links to source-portal PDFs. */}
-        {data.rfp.attachmentUrls.length > 0 && (
-          <section className="mt-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
-            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
-              Attachments ({data.rfp.attachmentUrls.length})
-            </h2>
-            <ul className="space-y-2">
-              {data.rfp.attachmentUrls.map((url, i) => {
-                const filename = (() => {
+        {/* Attachments — prefer S3-mirrored PDFs (served via /api/attachments/);
+            fall back to original source URLs only when no mirror exists. */}
+        {(() => {
+          const mirrors = data.rfp.mirroredAttachments ?? [];
+          const fallback = (data.rfp.attachmentUrls ?? []).filter(
+            (url) => url && !url.startsWith("planetbids://"),
+          );
+          type Link = { href: string; label: string; key: string };
+          const links: Link[] = [
+            ...mirrors.map((m, i) => ({
+              href: `/api/attachments/${m.s3Key}`,
+              label: m.filename || `Attachment ${i + 1}`,
+              key: `mirror-${m.s3Key}`,
+            })),
+            ...(mirrors.length === 0
+              ? fallback.map((url, i) => {
+                  let label = `Attachment ${i + 1}`;
                   try {
                     const u = new URL(url);
                     const last = u.pathname.split("/").filter(Boolean).pop();
-                    return last ? decodeURIComponent(last) : `Attachment ${i + 1}`;
-                  } catch {
-                    return `Attachment ${i + 1}`;
-                  }
-                })();
-                return (
-                  <li key={`${url}-${i}`}>
+                    if (last) label = decodeURIComponent(last);
+                  } catch {}
+                  return { href: url, label, key: `src-${url}-${i}` };
+                })
+              : []),
+          ];
+          if (links.length === 0) return null;
+          return (
+            <section className="mt-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
+                Attachments ({links.length})
+              </h2>
+              <ul className="space-y-2">
+                {links.map((link) => (
+                  <li key={link.key}>
                     <a
-                      href={url}
+                      href={link.href}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200 transition-colors"
@@ -1096,7 +1136,7 @@ export default function RfpDetailPage() {
                       >
                         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm0 7V3.5L19.5 9H14z" />
                       </svg>
-                      <span className="truncate max-w-[40ch]">{filename}</span>
+                      <span className="truncate max-w-[40ch]">{link.label}</span>
                       <svg
                         className="w-3.5 h-3.5 text-slate-400 shrink-0"
                         fill="none"
@@ -1113,11 +1153,11 @@ export default function RfpDetailPage() {
                       </svg>
                     </a>
                   </li>
-                );
-              })}
-            </ul>
-          </section>
-        )}
+                ))}
+              </ul>
+            </section>
+          );
+        })()}
 
         {/* Contact info pulled from the RFP raw payload. */}
         {(data.rfp.contactName || data.rfp.contactEmail || data.rfp.contactPhone) && (

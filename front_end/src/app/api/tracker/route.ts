@@ -3,12 +3,13 @@
 // RFPs. One round-trip per /tracker page load.
 
 import { NextResponse } from "next/server";
-import { inArray } from "drizzle-orm";
+import { and, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
 import { rfpCache } from "@/db/schema";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getTrackerEntries, type PipelineStatus } from "@/db/queries/match-state";
 import { getAllTasksForUser, seedDefaultTasks } from "@/db/queries/rfp-tasks";
+import { visibleRfpSourceClause } from "@/lib/rfp-source-visibility";
 
 interface TrackerRfp {
   id: string;
@@ -60,7 +61,7 @@ export async function GET(request: Request) {
             sourceId: rfpCache.sourceId,
           })
           .from(rfpCache)
-          .where(inArray(rfpCache.id, rfpIds)),
+          .where(and(inArray(rfpCache.id, rfpIds), visibleRfpSourceClause())),
     getAllTasksForUser(user.userId),
   ]);
 

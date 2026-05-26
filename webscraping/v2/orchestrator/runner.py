@@ -15,9 +15,12 @@ import asyncio
 import json
 import logging
 import os
+import random
+import time
 from datetime import datetime
 
 import requests
+from botocore.exceptions import ClientError
 
 from webscraping.v2.config import (
     S3_BUCKET,
@@ -212,7 +215,9 @@ def merge_events(
 
 
 def upload_manifest(s3, source_id: str, source_name: str, events: list[EnrichedEvent]):
-    """Upload source manifest to v2 path."""
+    """Upload source manifest to v2 path. Unconditional write — used by tests
+    and for first-time manifest creation. Concurrent scrape runs should use
+    upload_manifest_cas() instead to avoid clobbering each other's writes."""
     manifest = SourceManifest(
         source_id=source_id,
         source_name=source_name,
@@ -229,6 +234,144 @@ def upload_manifest(s3, source_id: str, source_name: str, events: list[EnrichedE
     open_count = sum(1 for e in events if e.status == EventStatus.OPEN)
     closed_count = len(events) - open_count
     logger.info(f"Uploaded manifest: {key} ({open_count} open, {closed_count} closed, {len(events)} total)")
+
+
+def upload_manifest_cas(
+    s3,
+    source_id: str,
+    source_name: str,
+    new_events: list[EnrichedEvent],
+    close_missing: bool = False,
+    max_retries: int = 6,
+) -> None:
+    """Apply `new_events` into the latest manifest atomically via S3 ETag CAS.
+
+    The chained Lambda invocations on Cal eProcure (and the `mode=all` fan-out
+    on PlanetBids/agentic sites) write the same manifest from multiple
+    in-flight Lambdas. A blind put_object lets the last writer clobber
+    in-between batches' work — the symptom we saw is PDFs mirrored into
+    s3://civitas-ai/scrapes/v2/attachments/... that never made it into the
+    manifest because another batch's write landed on top.
+
+    This helper closes that race with a get-modify-put loop:
+
+      1. GET manifest, capture ETag.
+      2. Merge `new_events` into the loaded dict (preserve first_seen_at,
+         carry forward bid_results / award when this run didn't capture them).
+      3. If `close_missing`, mark anything in `existing` but not in
+         `new_events` as closed — only used by full-sweep `merge_events`
+         callers, NOT by the per-batch path.
+      4. PUT with `If-Match: <etag>` (or `If-None-Match: *` if creating new).
+      5. On `PreconditionFailed`, exponential-backoff retry up to max_retries.
+
+    Raises RuntimeError if retries exhaust — caller can decide whether to
+    re-queue this batch or surface the failure.
+    """
+    key = f"{S3_V2_PREFIX}manifests/{source_id}/latest.json"
+    now = datetime.now().isoformat()
+
+    for attempt in range(max_retries):
+        # 1. GET latest with ETag (or note that the manifest doesn't exist yet).
+        existing_etag: str | None = None
+        existing: dict[str, EnrichedEvent] = {}
+        try:
+            resp = s3.get_object(Bucket=S3_BUCKET, Key=key)
+            existing_etag = resp.get("ETag")
+            try:
+                data = json.loads(resp["Body"].read())
+                existing = {
+                    e["id"]: EnrichedEvent(**e)
+                    for e in data.get("events", [])
+                }
+            except Exception as parse_err:
+                logger.warning(
+                    f"upload_manifest_cas: existing manifest parse failed "
+                    f"({parse_err}); treating as empty"
+                )
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code")
+            if code != "NoSuchKey":
+                raise
+
+        # 2. Merge fresh events on top.
+        merged: dict[str, EnrichedEvent] = dict(existing)
+        fresh_ids: set[str] = set()
+        for event in new_events:
+            fresh_ids.add(event.id)
+            prior = existing.get(event.id)
+            if prior is not None:
+                event.first_seen_at = prior.first_seen_at
+                # Carry forward market intel that wasn't captured this run
+                # (Awarded-only data on a Bidding-only re-scrape).
+                if not event.bid_results and prior.bid_results:
+                    event.bid_results = prior.bid_results
+                if event.award is None and prior.award is not None:
+                    event.award = prior.award
+            event.last_seen_at = now
+            event.status = EventStatus.OPEN
+            event.closed_at = None
+            merged[event.id] = event
+
+        # 3. Optional sweep-close of events absent from this run.
+        if close_missing:
+            for eid, evt in list(merged.items()):
+                if eid not in fresh_ids:
+                    evt.status = EventStatus.CLOSED
+                    if not evt.closed_at:
+                        evt.closed_at = now
+
+        all_events = list(merged.values())
+
+        # 4. PUT with conditional header.
+        manifest = SourceManifest(
+            source_id=source_id,
+            source_name=source_name,
+            total_events=len(all_events),
+            events=all_events,
+        )
+        body = manifest.model_dump_json(indent=2)
+        put_kwargs: dict = {
+            "Bucket": S3_BUCKET,
+            "Key": key,
+            "Body": body,
+            "ContentType": "application/json",
+        }
+        if existing_etag is not None:
+            put_kwargs["IfMatch"] = existing_etag
+        else:
+            # No existing manifest yet — refuse to overwrite if someone else
+            # creates one between our GET and PUT.
+            put_kwargs["IfNoneMatch"] = "*"
+
+        try:
+            s3.put_object(**put_kwargs)
+            open_count = sum(1 for e in all_events if e.status == EventStatus.OPEN)
+            closed_count = len(all_events) - open_count
+            logger.info(
+                f"Uploaded manifest CAS (attempt={attempt + 1}): {key} "
+                f"({open_count} open, {closed_count} closed, "
+                f"{len(all_events)} total, new={len(new_events)})"
+            )
+            return
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code")
+            # S3 returns PreconditionFailed for If-Match mismatch and
+            # ConditionalRequestConflict / PreconditionFailed for If-None-Match.
+            if code in ("PreconditionFailed", "ConditionalRequestConflict"):
+                # Backoff with jitter so retries don't synchronize.
+                wait = min(2 ** attempt, 8) + random.uniform(0, 0.5)
+                logger.warning(
+                    f"upload_manifest_cas: ETag conflict on {source_id} "
+                    f"(attempt {attempt + 1}/{max_retries}), retrying in {wait:.1f}s"
+                )
+                time.sleep(wait)
+                continue
+            raise
+
+    raise RuntimeError(
+        f"upload_manifest_cas: exhausted {max_retries} retries on {source_id} "
+        "due to concurrent writes"
+    )
 
 
 def notify_rfp_cache_sync(source_id: str) -> None:
@@ -374,19 +517,23 @@ async def run_site(
         enriched = normalize_event(event, extraction)
         enriched_events.append(enriched)
 
-    # 4. Merge with existing events + Upload
+    # 4. Merge with existing events + Upload (atomic CAS to survive
+    #    chained-Lambda concurrent writes on the same manifest)
     if not skip_upload:
-        logger.info("=== Merging with existing events and uploading to S3 ===")
+        logger.info("=== Atomically applying scrape to S3 manifest (CAS) ===")
         s3 = get_s3()
 
-        # Load existing manifest and merge
-        existing = load_existing_manifest(s3, config.site_id)
-        if existing:
-            logger.info(f"Loaded {len(existing)} existing events from manifest")
-        merged_events = merge_events(existing, enriched_events)
+        # close_missing=True for a full scrape: events absent from this run
+        # are marked closed. The batched path uses close_missing=False.
+        upload_manifest_cas(
+            s3, config.site_id, config.name, enriched_events,
+            close_missing=True,
+        )
 
-        # v2 manifest
-        upload_manifest(s3, config.site_id, config.name, merged_events)
+        # Re-load post-CAS to get the truthy merged view for downstream
+        # operations (legacy format dump, return value).
+        merged_dict = load_existing_manifest(s3, config.site_id)
+        merged_events = list(merged_dict.values())
 
         # Legacy format (for backward compat — only includes open events)
         if site_id == "caleprocure":
@@ -500,25 +647,19 @@ async def run_site_batch(
         extraction = AE(**enrichments[event.source_event_id]) if event.source_event_id in enrichments else None
         enriched_events.append(normalize_event(event, extraction))
 
-    # Merge with existing and upload
+    # Apply this batch to the manifest atomically. For chained Cal eProcure
+    # batches running concurrently, a blind upload_manifest let later writers
+    # clobber earlier writers' events (the orphaned-mirror bug). CAS GET-PUT
+    # with ETag conflict retry serializes the writes.
     s3 = get_s3()
-    existing = load_existing_manifest(s3, config.site_id)
-    if existing:
-        logger.info(f"Loaded {len(existing)} existing events")
+    upload_manifest_cas(
+        s3, config.site_id, config.name, enriched_events,
+        close_missing=False,
+    )
 
-    # For batched scraping, we ADD to existing without marking anything as closed
-    # (since we're only scraping a subset). Closing happens only on full scrapes.
-    now = datetime.now().isoformat()
-    for event in enriched_events:
-        eid = event.id
-        if eid in existing:
-            event.first_seen_at = existing[eid].first_seen_at
-        event.last_seen_at = now
-        event.status = EventStatus.OPEN
-        existing[eid] = event
-
-    all_events = list(existing.values())
-    upload_manifest(s3, config.site_id, config.name, all_events)
+    # Re-load post-CAS for the legacy format dump (Cal eProcure only).
+    merged_dict = load_existing_manifest(s3, config.site_id)
+    all_events = list(merged_dict.values())
 
     # Legacy format
     if site_id == "caleprocure":

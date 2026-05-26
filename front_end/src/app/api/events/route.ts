@@ -37,6 +37,7 @@ interface V2EnrichedEvent {
   certifications: string[];
   contact: { name?: string; email?: string; phone?: string };
   attachment_urls: string[];
+  mirrored_attachments?: { filename: string; s3_key: string; original_url?: string | null }[];
   clearances_required: string[];
   set_aside_types: string[];
   deliverables: string[];
@@ -85,7 +86,14 @@ async function loadV2Manifests(): Promise<V2Manifest[]> {
       }
     }
 
-    v2Cache = { manifests, timestamp: now };
+    // Only cache positive results. If S3 LIST succeeded but every individual
+    // GET failed (transient outage, throttling), the loop returns []. Caching
+    // that for the full TTL pins a single bad Lambda instance to serving
+    // 500s for 5 minutes after the issue clears. Returning [] uncached lets
+    // the next request retry.
+    if (manifests.length > 0) {
+      v2Cache = { manifests, timestamp: now };
+    }
 
     // rfp_cache mirroring now happens at scrape time: the Lambda calls
     // /api/cron/sync-rfp-cache after each batch, which upserts rows and
@@ -117,6 +125,11 @@ function v2EventToRfp(e: V2EnrichedEvent) {
     contactEmail: e.contact?.email,
     contactPhone: e.contact?.phone,
     attachmentUrls: e.attachment_urls || [],
+    mirroredAttachments: (e.mirrored_attachments || []).map((m) => ({
+      filename: m.filename,
+      s3Key: m.s3_key,
+      originalUrl: m.original_url ?? null,
+    })),
     clearancesRequired: e.clearances_required,
     setAsideTypes: e.set_aside_types,
     deliverables: e.deliverables,

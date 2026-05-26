@@ -11,4 +11,4 @@
 --     scope sentence rather than raw scraped boilerplate
 --   - eventually, an "About this RFP" snippet on the detail page
 
-ALTER TABLE "rfp_cache" ADD COLUMN "scope_summary" text;
+ALTER TABLE "rfp_cache" ADD COLUMN IF NOT EXISTS "scope_summary" text;

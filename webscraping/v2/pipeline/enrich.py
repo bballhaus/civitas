@@ -381,11 +381,19 @@ def enrich_event(
 
     Returns AttachmentExtraction or None if no text could be extracted.
     """
+    from webscraping.v2.pipeline.attachments_mirror import mirror_pdf_from_path
+    from webscraping.v2.utils import make_event_id
+
     pre_extracted = event.raw_metadata.get("attachment_texts", {})
     has_pre_extracted = any(text for text in pre_extracted.values() if text)
 
     if not has_pre_extracted and not event.attachment_urls:
         return None
+
+    event_id = make_event_id(event.source_id, event.source_event_id)
+    # Eager-stash sink for the public-URL fallback path. setdefault →
+    # append == idempotent if normalize.py is re-run on the same event.
+    mirror_sink = event.raw_metadata.setdefault("mirrored_attachments", [])
 
     # Classify and sort by priority
     attachments = []
@@ -439,6 +447,16 @@ def enrich_event(
             tmp_path = None
             try:
                 tmp_path = download_pdf(url, cookies=cookies)
+                # Mirror the bytes to our S3 bucket before consuming the
+                # temp file. download_pdf may have followed redirects, so
+                # we capture whatever the canonical filename is here.
+                s3_key = mirror_pdf_from_path(event_id, filename, tmp_path)
+                if s3_key:
+                    mirror_sink.append({
+                        "filename": filename,
+                        "s3_key": s3_key,
+                        "original_url": url,
+                    })
                 text = extract_text_from_pdf(tmp_path)
                 if not text:
                     logger.debug(f"No text from {filename}")

@@ -1843,13 +1843,27 @@ function RFPDetailPanel({
             tier: match.tier,
           }),
         });
-        if (!res.ok) {
+        if (!res.ok || !res.body) {
           const errText = await res.text();
           console.error("[match-summary] API error:", res.status, errText);
           throw new Error(errText);
         }
-        const data = await res.json();
-        const summary = data.summary ?? initialSummary;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (controller.signal.aborted) {
+            reader.cancel();
+            return;
+          }
+          accumulated += decoder.decode(value, { stream: true });
+          setLlmSummary(accumulated);
+        }
+        accumulated += decoder.decode();
+        const summary = accumulated || initialSummary;
         setLlmSummary(summary);
         onSummaryReady(rfp.id, summary);
       } catch (err) {

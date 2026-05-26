@@ -21,6 +21,7 @@ import { matchState, profiles, rfpCache, users } from "@/db/schema";
 import { getFullProfile } from "@/db/queries/profile";
 import { matchV2 } from "@/lib/matching-v2";
 import { sendDailyRoundupEmail, type RoundupRfp } from "@/lib/email";
+import { visibleRfpSourceClause } from "@/lib/rfp-source-visibility";
 
 const DIGEST_HOUR = 7; // 7am local
 const DEDUPE_HOURS = 23; // belt-and-suspenders against duplicate firings
@@ -117,7 +118,7 @@ async function runRoundup() {
   const openRfps = await db
     .select()
     .from(rfpCache)
-    .where(gte(rfpCache.deadline, now));
+    .where(and(gte(rfpCache.deadline, now), visibleRfpSourceClause()));
 
   const origin = process.env.CIVITAS_APP_ORIGIN ?? "";
   if (!origin) {
@@ -174,7 +175,7 @@ async function runRoundup() {
       agency: rfp.agency,
       matchScore: m.score,
       deadline: rfp.deadline ? rfp.deadline.toISOString().slice(0, 10) : null,
-      detailUrl: `${origin}/dashboard/rfp/${encodeURIComponent(rfp.id)}`,
+      detailUrl: `${origin}/matches/${encodeURIComponent(rfp.id)}`,
     }));
 
     const ok = await sendDailyRoundupEmail(c.email, items, origin);

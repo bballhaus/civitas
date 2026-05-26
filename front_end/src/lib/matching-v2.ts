@@ -119,11 +119,13 @@ export interface MatchResult {
 
 // Capability is now the NAICS-substitutes scorer (see data/naics-substitutes.json
 // + lib/naics-similarity.ts) — replaces the regex bag-of-tokens version that
-// produced ~32% wrong tags. Specialty stays as a small cosine bonus for
-// free-text niches NAICS doesn't cover (e.g. "concrete flatwork"). Scope
-// is the dollar-value/budget-band scorer (unchanged from v1). The old
-// description scorer is deleted — it was a bag-of-tokens duplicating
-// signal already in the RFP embedding.
+// produced ~32% wrong tags AND subsumes the standalone NAICS-overlap scorer
+// from origin/main (4fe4941) since the substitutes matrix already does direct
+// overlap as a special case (sim=1.0 on exact code match). Specialty stays
+// as a small cosine bonus for free-text niches NAICS doesn't cover (e.g.
+// "concrete flatwork"). Scope is the dollar-value/budget-band scorer
+// (unchanged from v1). The old description scorer is deleted — it was a
+// bag-of-tokens duplicating signal already in the RFP embedding.
 const WEIGHTS: Record<string, number> = {
   capability: 0.4,
   specialty: 0.1,
@@ -657,6 +659,12 @@ function scoreLocation(profile: FullProfile, rfp: RfpCacheRow): CategoryBreakdow
   return { category: "Location", status: "missing", score: 0, weight: WEIGHTS.location, detail: `${rfp.location} not in any of your work areas.` };
 }
 
+// scoreNaicsOverlap (origin/main 4fe4941) was deleted as part of the
+// merge — its direct-overlap logic is now a special case of scoreCapability
+// (exact code match returns sim=1.0 from the substitutes matrix, with the
+// added benefit that partial/related codes also score via the curated
+// weights instead of returning 0).
+
 // ---------------------------------------------------------------------------
 // Stage 4 — Soft cert bonus (spec § 9.5)
 // ---------------------------------------------------------------------------
@@ -755,7 +763,9 @@ function scoreAsSub(
   // share because the sub-eligibility floor is sim ≥ 0.3 against any RFP
   // code (vs ≥ 0.5 against the primary for prime). Location stays
   // important since subs are typically local. Specialty as a small cosine
-  // bonus when embeddings exist.
+  // bonus when embeddings exist. scoreNaicsOverlap from origin/main was
+  // dropped here for the same reason as in the prime track — its logic is
+  // subsumed by scoreCapability's matrix lookup.
   const subCapability = { ...scoreCapabilityForSub(profile, rfp), weight: 0.4 };
   const subSpecialty = { ...scoreSpecialty(profile, rfp, dq), weight: 0.25 };
   const subLocation = { ...scoreLocation(profile, rfp), weight: 0.25 };

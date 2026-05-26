@@ -1,21 +1,23 @@
 /**
- * Email sending via AWS SES.
- *
- * In sandbox mode, both sender and recipient must be verified in SES.
- * In production mode (after requesting SES production access), only sender needs verification.
+ * Transactional email via Resend.
  *
  * Setup:
- *   1. Verify sender: aws ses verify-email-identity --email-address your@email.com --region us-east-1
- *   2. Set CIVITAS_FROM_EMAIL env var to the verified email
- *   3. In sandbox: also verify any recipient emails you want to test with
+ *   1. Add `civitas-ai.net` to your Resend dashboard and verify DNS.
+ *   2. Set RESEND_API_KEY in env (starts with `re_`).
+ *   3. Set CIVITAS_FROM_EMAIL to a verified sender on that domain,
+ *      e.g. `Civitas <register@civitas-ai.net>`.
+ *
+ * In dev without RESEND_API_KEY or CIVITAS_FROM_EMAIL, sendEmail logs
+ * the message instead of dispatching it and returns true so the calling
+ * flow (signup, password reset, daily digest) continues to work locally.
  */
-import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import { Resend } from "resend";
 
-const ses = new SESClient({ region: process.env.AWS_REGION || "us-east-1" });
-
+const API_KEY = process.env.RESEND_API_KEY || "";
 const FROM_EMAIL = process.env.CIVITAS_FROM_EMAIL || "";
-const CONFIG_SET = process.env.CIVITAS_SES_CONFIG_SET || "civitas-transactional";
 const isDev = process.env.NODE_ENV === "development";
+
+const resend = API_KEY ? new Resend(API_KEY) : null;
 
 interface EmailParams {
   to: string;
@@ -25,36 +27,28 @@ interface EmailParams {
 }
 
 export async function sendEmail(params: EmailParams): Promise<boolean> {
-  // In dev without SES configured, just log
-  if (!FROM_EMAIL) {
-    console.log(`[Email] No CIVITAS_FROM_EMAIL set. Would send to ${params.to}: ${params.subject}`);
+  if (!resend || !FROM_EMAIL) {
+    console.log(
+      `[Email] RESEND_API_KEY or CIVITAS_FROM_EMAIL not set. Would send to ${params.to}: ${params.subject}`,
+    );
     if (isDev) console.log(`[Email] Body: ${params.textBody}`);
     return true;
   }
 
-  try {
-    await ses.send(
-      new SendEmailCommand({
-        Source: FROM_EMAIL,
-        Destination: { ToAddresses: [params.to] },
-        Message: {
-          Subject: { Data: params.subject, Charset: "UTF-8" },
-          Body: {
-            Text: { Data: params.textBody, Charset: "UTF-8" },
-            ...(params.htmlBody
-              ? { Html: { Data: params.htmlBody, Charset: "UTF-8" } }
-              : {}),
-          },
-        },
-        ConfigurationSetName: CONFIG_SET,
-      })
-    );
-    console.log(`[Email] Sent to ${params.to}: ${params.subject}`);
-    return true;
-  } catch (err) {
-    console.error(`[Email] Failed to send to ${params.to}:`, err);
+  const { data, error } = await resend.emails.send({
+    from: FROM_EMAIL,
+    to: [params.to],
+    subject: params.subject,
+    text: params.textBody,
+    ...(params.htmlBody ? { html: params.htmlBody } : {}),
+  });
+
+  if (error) {
+    console.error(`[Email] Failed to send to ${params.to}:`, error);
     return false;
   }
+  console.log(`[Email] Sent to ${params.to} (id=${data?.id}): ${params.subject}`);
+  return true;
 }
 
 export async function sendVerificationEmail(
@@ -127,7 +121,7 @@ export async function sendDailyRoundupEmail(
       return lines.join("\n");
     }),
     "",
-    `Open the dashboard: ${appOrigin}/home`,
+    `View matches: ${appOrigin}/matches`,
     "",
     "You're getting this because you opted in at the end of onboarding. Manage notifications in your profile settings.",
   ];
@@ -167,8 +161,8 @@ export async function sendDailyRoundupEmail(
         </p>
         <table style="width:100%; border-collapse:collapse; margin-top:16px;">${htmlRows}</table>
         <p style="margin: 24px 0;">
-          <a href="${escapeHtml(appOrigin)}/home" style="background:#3C89C6; color:white; padding:12px 20px; border-radius:6px; text-decoration:none; font-weight:600;">
-            Open dashboard
+          <a href="${escapeHtml(appOrigin)}/matches" style="background:#3C89C6; color:white; padding:12px 20px; border-radius:6px; text-decoration:none; font-weight:600;">
+            View matches
           </a>
         </p>
         <p style="color:#94a3b8; font-size:12px;">

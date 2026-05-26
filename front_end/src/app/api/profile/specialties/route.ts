@@ -6,6 +6,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { addSpecialty } from "@/db/queries/profile";
 import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
 import { recomputeProfileNaics } from "@/lib/profile-naics";
+import { triggerProfileChangedRescore } from "@/lib/match-rescore-trigger";
 
 export async function POST(request: Request) {
   const auth = await getAuthenticatedUser(request);
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
       }
     }
 
+    await triggerProfileChangedRescore(auth.userId);
     return NextResponse.json(row, { status: 201 });
   } catch (err) {
     console.error("Add specialty error:", err);
