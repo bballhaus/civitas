@@ -9,7 +9,7 @@
 // and the volumes are tiny enough that adding an SDK is overkill (~$0.001 to
 // embed a full profile, ~$0.36 for a full RFP catalog refresh per § 8).
 
-import { eq, isNull } from "drizzle-orm";
+import { eq, isNull, lt } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   specialties,
@@ -248,21 +248,30 @@ export function buildRfpEmbeddingText(rfp: RfpCacheRow): string {
 /**
  * Compute and store embeddings for RFP cache rows.
  *
- * Default behaviour (force=false) embeds only rows where embedding IS NULL —
- * cheap, idempotent, safe to call on every scrape.
+ * Default behaviour embeds only rows where embedding IS NULL — cheap,
+ * idempotent, safe to call on every scrape.
  *
- * With force=true, re-embeds ALL rows in the cache regardless of existing
- * vector. Use after changing buildRfpEmbeddingText (e.g. when adding new
- * fields like NAICS titles) so existing rows pick up the new format. Run
- * via scripts/embed-rfp-cache-rebuild.ts, not from a cron — full rebuilds
- * burn through the Voyage quota.
+ * Pass `staleBefore: Date` to re-embed every row whose refreshed_at is older
+ * than the cutoff. The function writes `refreshed_at = now()` on each
+ * successful pass, so rows it has already processed roll past the cutoff and
+ * naturally drop out of subsequent passes — this is how the rebuild script
+ * paginates safely. Without this filter, a force-style loop would re-fetch
+ * the same LIMIT 500 rows forever and burn Voyage quota.
+ *
+ * Use staleBefore after changing buildRfpEmbeddingText (e.g. when new fields
+ * like NAICS titles are folded in). Always set the cutoff once before the
+ * loop starts; never recompute it inside the loop.
  */
 export async function refreshRfpEmbeddings(
   maxRows = 500,
-  options: { force?: boolean } = {},
+  options: { staleBefore?: Date } = {},
 ): Promise<number> {
-  const rows = options.force
-    ? await db.select().from(rfpCache).limit(maxRows)
+  const rows = options.staleBefore
+    ? await db
+        .select()
+        .from(rfpCache)
+        .where(lt(rfpCache.refreshedAt, options.staleBefore))
+        .limit(maxRows)
     : await db
         .select()
         .from(rfpCache)
