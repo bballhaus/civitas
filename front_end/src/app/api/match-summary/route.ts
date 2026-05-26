@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { chatCompletion } from "@/lib/llm";
+import { chatCompletionStream } from "@/lib/llm";
+
+// Streams a plain-text response so the detail page can render the summary
+// progressively (first token in ~200-500ms vs ~1-3s for the full payload).
+// Content-Type is text/plain — no JSON wrapper, no SSE framing. The client
+// reads res.body via getReader() and accumulates chunks into state.
+export const runtime = "nodejs";
 
 const PROMPT = `You are helping a vendor/contractor understand why an RFP (Request for Proposal) is or isn't a good match for their business.
 
@@ -28,39 +34,43 @@ Rules:
 - Output exactly two paragraphs of plain text. No bullet points, no labels.`;
 
 export async function POST(req: Request) {
+  let body: {
+    rfp?: Record<string, unknown>;
+    profile?: Record<string, unknown> | null;
+    currentSummary?: string;
+    positiveReasons?: string[];
+    negativeReasons?: string[];
+  };
   try {
-    const body = await req.json();
-    const {
-      rfp,
-      profile,
-      currentSummary,
-      positiveReasons,
-      negativeReasons,
-    }: {
-      rfp: Record<string, unknown>;
-      profile: Record<string, unknown> | null;
-      currentSummary: string;
-      positiveReasons?: string[];
-      negativeReasons?: string[];
-    } = body;
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
 
-    if (!rfp || !currentSummary) {
-      return NextResponse.json(
-        { error: "rfp and currentSummary are required" },
-        { status: 400 }
-      );
-    }
+  const {
+    rfp,
+    profile,
+    currentSummary,
+    positiveReasons,
+    negativeReasons,
+  } = body;
 
-    // Build structured attachment context
-    const rfpAny = rfp as Record<string, unknown>;
-    const naicsCodes = Array.isArray(rfpAny.naicsCodes) ? (rfpAny.naicsCodes as string[]).join(", ") : "";
-    const clearances = Array.isArray(rfpAny.clearancesRequired) ? (rfpAny.clearancesRequired as string[]).join(", ") : "";
-    const setAsides = Array.isArray(rfpAny.setAsideTypes) ? (rfpAny.setAsideTypes as string[]).join(", ") : "";
-    const deliverables = Array.isArray(rfpAny.deliverables) ? (rfpAny.deliverables as string[]).slice(0, 5).join(", ") : "";
-    const attachmentRollup = rfpAny.attachmentRollup;
-    const hasAttachments = attachmentRollup && typeof attachmentRollup === "object";
+  if (!rfp || !currentSummary) {
+    return NextResponse.json(
+      { error: "rfp and currentSummary are required" },
+      { status: 400 }
+    );
+  }
 
-    const input = `RFP: ${JSON.stringify(rfp)}
+  const rfpAny = rfp as Record<string, unknown>;
+  const naicsCodes = Array.isArray(rfpAny.naicsCodes) ? (rfpAny.naicsCodes as string[]).join(", ") : "";
+  const clearances = Array.isArray(rfpAny.clearancesRequired) ? (rfpAny.clearancesRequired as string[]).join(", ") : "";
+  const setAsides = Array.isArray(rfpAny.setAsideTypes) ? (rfpAny.setAsideTypes as string[]).join(", ") : "";
+  const deliverables = Array.isArray(rfpAny.deliverables) ? (rfpAny.deliverables as string[]).slice(0, 5).join(", ") : "";
+  const attachmentRollup = rfpAny.attachmentRollup;
+  const hasAttachments = attachmentRollup && typeof attachmentRollup === "object";
+
+  const input = `RFP: ${JSON.stringify(rfp)}
 ${naicsCodes ? `NAICS codes: ${naicsCodes}` : ""}
 ${clearances ? `Clearances required: ${clearances}` : ""}
 ${setAsides ? `Set-aside types: ${setAsides}` : ""}
@@ -69,33 +79,49 @@ ${hasAttachments ? `Attachment data: ${JSON.stringify(attachmentRollup).slice(0,
 Profile: ${profile ? JSON.stringify(profile) : "No profile"}
 Rule-based summary: ${currentSummary}
 Positive reasons: ${
-      Array.isArray(positiveReasons) ? JSON.stringify(positiveReasons) : "[]"
-    }
-Negative reasons: ${
-      Array.isArray(negativeReasons) ? JSON.stringify(negativeReasons) : "[]"
-    }`;
-
-    const result = await chatCompletion(
-      [
-        { role: "system", content: PROMPT },
-        { role: "user", content: input },
-      ],
-      {
-        provider: "anthropic",
-        model: "claude-haiku-4-5-20251001",
-        temperature: 0.3,
-        maxTokens: 280,
-      },
-    );
-
-    const summary = result.content?.trim() ?? currentSummary;
-
-    return NextResponse.json({ summary });
-  } catch (err) {
-    console.error("[match-summary] Error:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to generate summary" },
-      { status: 500 }
-    );
+    Array.isArray(positiveReasons) ? JSON.stringify(positiveReasons) : "[]"
   }
+Negative reasons: ${
+    Array.isArray(negativeReasons) ? JSON.stringify(negativeReasons) : "[]"
+  }`;
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const chunk of chatCompletionStream(
+          [
+            { role: "system", content: PROMPT },
+            { role: "user", content: input },
+          ],
+          {
+            provider: "anthropic",
+            model: "claude-haiku-4-5-20251001",
+            temperature: 0.3,
+            maxTokens: 280,
+          },
+        )) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      } catch (err) {
+        console.error("[match-summary] streaming error:", err);
+        // The stream may have emitted partial output already; closing with
+        // an error surfaces as a network-level failure on the client, which
+        // its catch handler treats as "fall back to rule-based summary".
+        controller.error(err);
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      // Defeat any upstream buffering (some CDNs/proxies hold small text
+      // bodies until they hit a buffer threshold, which would defeat the
+      // point of streaming).
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

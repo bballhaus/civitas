@@ -272,14 +272,30 @@ export default function RFPDetailPage() {
           }),
         });
         if (cancelled) return;
-        if (!res.ok) {
+        if (!res.ok || !res.body) {
           const errText = await res.text();
           console.error("[match-summary] API error:", res.status, errText);
           throw new Error(errText);
         }
-        const data = await res.json();
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (cancelled) {
+            reader.cancel();
+            return;
+          }
+          accumulated += decoder.decode(value, { stream: true });
+          const partial = accumulated;
+          startTransition(() => setSummary(partial));
+        }
+        accumulated += decoder.decode();
         if (cancelled) return;
-        startTransition(() => setSummary(data.summary ?? initialSummary));
+        const final = accumulated || initialSummary;
+        startTransition(() => setSummary(final));
       } catch (err) {
         console.error("[match-summary] Fetch failed:", err);
         if (!cancelled) {
