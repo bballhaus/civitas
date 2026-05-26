@@ -569,36 +569,22 @@ export function StepSpecialties({ snapshot }: StepProps) {
   const commit = useCommit();
   const [input, setInput] = useState("");
 
-  // Tracks recently-inferred NAICS chips so the user can spot bad LLM
-  // mappings (e.g. asphalt-paving → painting from a real failure case)
-  // before they ship to the matcher. Cleared on remove or step nav (this
-  // state is component-local).
-  const [recentInferred, setRecentInferred] = useState<{ code: string; sourceValue: string }[]>([]);
-
-  // Server-side derive in lib/profile-naics.ts handles NAICS propagation
-  // (both NAICS-titled picks and free-text adds via LLM inference). The
+  // Server-side derive in lib/profile-naics.ts owns NAICS propagation for
+  // both NAICS-titled picks and free-text adds (LLM inference). The
   // `entry?: NaicsEntry` arg is no longer consumed here but is kept on the
   // signature so NaicsPicker's call shape doesn't have to special-case
-  // Specialties.
+  // Specialties. The inferred-NAICS chip banner that used to sit under the
+  // list was removed 2026-05-26 — it surfaced too much NAICS detail during
+  // a step that's supposed to be about plain-English specialties; users now
+  // review/edit codes on Step 4 instead.
   const add = async (value: string, _entry?: NaicsEntry) => {
     const v = value.trim();
     if (!v) return;
-    const { addedNaicsCodes } = await commit.addSpecialty({ value: v, weight: "primary" });
-    if (addedNaicsCodes.length > 0) {
-      setRecentInferred((prev) => [
-        ...addedNaicsCodes.map((code) => ({ code, sourceValue: v })),
-        ...prev,
-      ]);
-    }
+    await commit.addSpecialty({ value: v, weight: "primary" });
     setInput("");
   };
   const remove = async (id: string) => {
     await commit.removeSpecialty(id);
-  };
-  const dismissInferred = async (code: string) => {
-    const next = (snapshot.naicsCodes ?? []).filter((c) => c !== code);
-    await commit.patch({ naicsCodes: next });
-    setRecentInferred((prev) => prev.filter((x) => x.code !== code));
   };
 
   const currentValues = useMemo(
@@ -619,7 +605,6 @@ export function StepSpecialties({ snapshot }: StepProps) {
           ))
         )}
       </div>
-      <InferredNaicsBanner items={recentInferred} onDismiss={dismissInferred} />
       <NaicsPicker
         label="Pick from the NAICS catalog"
         onPick={add}
@@ -664,49 +649,6 @@ export function StepSpecialties({ snapshot }: StepProps) {
   );
 }
 
-// Renders a small banner below the specialty/capability list showing
-// NAICS codes the server (via lib/profile-naics) just attached to the
-// profile. Most surfaces are LLM inferences on free-text adds — the
-// dismiss button removes the code from profile.naics_codes so the user
-// can correct asphalt-paving-style mistakes inline.
-function InferredNaicsBanner({
-  items,
-  onDismiss,
-}: {
-  items: { code: string; sourceValue: string }[];
-  onDismiss: (code: string) => Promise<void>;
-}) {
-  if (items.length === 0) return null;
-  return (
-    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-      <p className="mb-1.5 font-semibold">Industry codes auto-mapped from your last add:</p>
-      <div className="flex flex-wrap gap-1.5">
-        {items.map((item) => (
-          <span
-            key={`${item.code}-${item.sourceValue}`}
-            className="inline-flex items-center gap-1 rounded-full bg-white border border-amber-200 px-2 py-0.5"
-            title={`Mapped from "${item.sourceValue}"`}
-          >
-            <span className="font-mono opacity-70">{item.code}</span>
-            <span>{NAICS_MAP[item.code] ?? "Unknown"}</span>
-            <button
-              type="button"
-              onClick={() => void onDismiss(item.code)}
-              className="ml-1 text-amber-700 hover:text-amber-900"
-              aria-label={`Remove ${item.code}`}
-            >
-              ×
-            </button>
-          </span>
-        ))}
-      </div>
-      <p className="mt-1.5 opacity-75">
-        Wrong fit? Click × to remove. Edit anytime on the NAICS step.
-      </p>
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Step 3: Capabilities
 // ---------------------------------------------------------------------------
@@ -719,31 +661,18 @@ export function StepCapabilities({ snapshot }: StepProps) {
     [snapshot.capabilities],
   );
 
-  // Same inferred-NAICS chip pattern as Specialties — see StepSpecialties
-  // for the full rationale.
-  const [recentInferred, setRecentInferred] = useState<{ code: string; sourceValue: string }[]>([]);
-
-  // Same as Specialties — server-side derive in lib/profile-naics.ts owns
-  // NAICS propagation. Keep the entry arg for picker signature parity.
+  // Server-side derive in lib/profile-naics.ts owns NAICS propagation.
+  // Keep the entry arg for picker signature parity. The inferred-NAICS
+  // chip banner that used to sit under the list was removed 2026-05-26
+  // (see StepSpecialties for the full rationale).
   const add = async (value: string, _entry?: NaicsEntry) => {
     const v = value.trim();
     if (!v) return;
-    const { addedNaicsCodes } = await commit.addCapability({ value: v });
-    if (addedNaicsCodes.length > 0) {
-      setRecentInferred((prev) => [
-        ...addedNaicsCodes.map((code) => ({ code, sourceValue: v })),
-        ...prev,
-      ]);
-    }
+    await commit.addCapability({ value: v });
     setInput("");
   };
   const remove = async (id: string) => {
     await commit.removeCapability(id);
-  };
-  const dismissInferred = async (code: string) => {
-    const next = (snapshot.naicsCodes ?? []).filter((c) => c !== code);
-    await commit.patch({ naicsCodes: next });
-    setRecentInferred((prev) => prev.filter((x) => x.code !== code));
   };
 
   return (
@@ -759,7 +688,6 @@ export function StepCapabilities({ snapshot }: StepProps) {
           ))
         )}
       </div>
-      <InferredNaicsBanner items={recentInferred} onDismiss={dismissInferred} />
       <NaicsPicker
         label="Pick from the NAICS catalog"
         onPick={add}
