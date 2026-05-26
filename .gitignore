@@ -42,6 +42,13 @@
 .DS_Store
 *.pem
 
+# macOS iCloud Drive conflict copies. When the same file is edited on two
+# devices iCloud appends " 2" / " 3" / etc. to one of them (e.g.
+# "route 2.ts", "Dockerfile 2"). These are sync artifacts, never source.
+# Patterns cover both extensioned and extensionless cases.
+*\ [0-9]
+*\ [0-9].*
+
 # typescript
 *.tsbuildinfo
 /front_end/next-env.d.ts
