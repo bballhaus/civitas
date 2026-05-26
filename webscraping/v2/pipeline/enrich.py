@@ -259,7 +259,10 @@ def call_anthropic(text: str, max_retries: int = 4) -> dict[str, Any]:
 
     Uses prompt caching on the (~1KB) system prompt so each subsequent
     enrichment call only pays for the per-PDF user text — typically
-    10-100x cheaper than re-sending the schema every call.
+    10-100x cheaper than re-sending the schema every call. 1h TTL
+    amortizes the cache-write premium across the daily scrape burst,
+    which spans many chained Lambda invocations and routinely exceeds
+    the default 5-min cache window.
     """
     client = _get_anthropic_client()
 
@@ -273,7 +276,7 @@ def call_anthropic(text: str, max_retries: int = 4) -> dict[str, Any]:
                     {
                         "type": "text",
                         "text": EXTRACTION_SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},
+                        "cache_control": {"type": "ephemeral", "ttl": "1h"},
                     }
                 ],
                 messages=[{"role": "user", "content": text}],
