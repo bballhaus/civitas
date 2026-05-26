@@ -86,7 +86,14 @@ async function loadV2Manifests(): Promise<V2Manifest[]> {
       }
     }
 
-    v2Cache = { manifests, timestamp: now };
+    // Only cache positive results. If S3 LIST succeeded but every individual
+    // GET failed (transient outage, throttling), the loop returns []. Caching
+    // that for the full TTL pins a single bad Lambda instance to serving
+    // 500s for 5 minutes after the issue clears. Returning [] uncached lets
+    // the next request retry.
+    if (manifests.length > 0) {
+      v2Cache = { manifests, timestamp: now };
+    }
 
     // rfp_cache mirroring now happens at scrape time: the Lambda calls
     // /api/cron/sync-rfp-cache after each batch, which upserts rows and
