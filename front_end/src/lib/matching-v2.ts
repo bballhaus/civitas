@@ -584,6 +584,8 @@ function scoreComplexity(profile: FullProfile, rfp: RfpCacheRow): CategoryBreakd
   if (pref === "simple_only" && tier === "simple") return strong("Complexity", "Simple job, fits your preference.", 1.0);
   if (pref === "simple_only") return { category: "Complexity", status: "weak", score: 0.1, weight: WEIGHTS.complexity, detail: `${tier} job, you prefer simple-only.` };
   if (pref === "any_with_subs") return strong("Complexity", "Any complexity ok with subs.", 1.0);
+  // "any" means the user opted in to every tier — credit it as a full match.
+  if (pref === "any") return strong("Complexity", `${tier} complexity, fits your "any" preference.`, 1.0);
   return partial("Complexity", `${tier} complexity, you said any.`, 0.7);
 }
 

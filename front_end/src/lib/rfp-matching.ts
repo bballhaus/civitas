@@ -10,8 +10,14 @@ export interface CompanyProfile {
   certifications: string[];
   clearances: string[];
   naicsCodes: string[];
+  /** Split out of v2's unified workAreas table by `kind`; retained for the
+   *  v1 dashboard filter UI that keys by city/county. */
   workCities: string[];
   workCounties: string[];
+  /** Flat list of every work area name — what the LLM match-summary prompt
+   *  expects (capabilities/specialties/workAreas as plain string arrays). */
+  workAreas?: string[];
+  specialties?: string[];
   capabilities: string[];
   agencyExperience: string[];
   contractTypes: string[];
