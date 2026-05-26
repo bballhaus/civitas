@@ -40,9 +40,13 @@ export async function POST(request: Request) {
     // Derive profile.naics_codes from NAICS-titled specialties. Server-side
     // so it covers API-direct adds and /profile-setup edits, not just the
     // onboarding picker. Fail-soft — a stale naics_codes column shouldn't
-    // block adding a specialty.
+    // block adding a specialty. The `added` list is bubbled back in the
+    // response so the onboarding UI can show the user which codes were
+    // just inferred (and let them remove bad LLM picks).
+    let addedNaicsCodes: string[] = [];
     try {
-      await recomputeProfileNaics(auth.userId);
+      const result = await recomputeProfileNaics(auth.userId);
+      addedNaicsCodes = result.added;
     } catch (err) {
       console.error("[specialties] naics recompute failed:", err);
     }
@@ -61,7 +65,7 @@ export async function POST(request: Request) {
     }
 
     await triggerProfileChangedRescore(auth.userId);
-    return NextResponse.json(row, { status: 201 });
+    return NextResponse.json({ ...row, addedNaicsCodes }, { status: 201 });
   } catch (err) {
     console.error("Add specialty error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

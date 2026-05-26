@@ -168,7 +168,17 @@ export async function inferNaicsForTexts(values: string[]): Promise<string[][]> 
  *
  * Idempotent. Safe to call on every spec/cap mutation and from the backfill.
  */
-export async function recomputeProfileNaics(userId: string): Promise<string[]> {
+export interface RecomputeResult {
+  /** Final, persisted NAICS code list (union of all sources, sorted). */
+  codes: string[];
+  /** Subset of `codes` that were newly added by this recompute call —
+   *  i.e. not previously on the profile. The onboarding UI uses this to
+   *  surface "we mapped your free-text entry to NAICS X" chips so users
+   *  can spot and remove bad LLM inferences (e.g. asphalt-paving → painting). */
+  added: string[];
+}
+
+export async function recomputeProfileNaics(userId: string): Promise<RecomputeResult> {
   const [specs, caps, profileRows] = await Promise.all([
     db
       .select({ value: specialties.value })
@@ -184,7 +194,8 @@ export async function recomputeProfileNaics(userId: string): Promise<string[]> {
       .where(eq(profiles.userId, userId)),
   ]);
 
-  const merged = new Set<string>(profileRows[0]?.naicsCodes ?? []);
+  const existing = new Set<string>(profileRows[0]?.naicsCodes ?? []);
+  const merged = new Set<string>(existing);
 
   // Pass 1: exact NAICS title match (no LLM cost).
   const freeTextValues: string[] = [];
@@ -206,9 +217,10 @@ export async function recomputeProfileNaics(userId: string): Promise<string[]> {
   }
 
   const codes = [...merged].sort();
+  const added = codes.filter((c) => !existing.has(c));
   await db
     .update(profiles)
     .set({ naicsCodes: codes })
     .where(eq(profiles.userId, userId));
-  return codes;
+  return { codes, added };
 }

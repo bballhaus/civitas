@@ -25,10 +25,8 @@ async function main() {
   console.log(`[backfill-naics] ${rows.length} profiles to process`);
 
   let changed = 0;
-  for (const { userId, naicsCodes } of rows) {
-    const before = new Set(naicsCodes ?? []);
-    const after = await recomputeProfileNaics(userId);
-    const added = after.filter((c) => !before.has(c));
+  for (const { userId } of rows) {
+    const { added } = await recomputeProfileNaics(userId);
     if (added.length > 0) {
       changed++;
       console.log(
