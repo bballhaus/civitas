@@ -24,3 +24,29 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Tracker page: nudge FullCalendar text and date-input hint text to a darker
+   slate so they're comfortably readable over the translucent white card. */
+.tracker-page .fc {
+  color: #334155; /* slate-700 */
+}
+.tracker-page .fc .fc-daygrid-day-number,
+.tracker-page .fc .fc-col-header-cell-cushion,
+.tracker-page .fc .fc-toolbar-title,
+.tracker-page .fc .fc-list-day-text,
+.tracker-page .fc .fc-list-day-side-text {
+  color: #334155; /* slate-700 */
+}
+.tracker-page input[type="date"] {
+  color: #334155; /* slate-700 — used for the mm/dd/yyyy hint and the typed value */
+}
+.tracker-page input[type="date"]::-webkit-datetime-edit-text,
+.tracker-page input[type="date"]::-webkit-datetime-edit-month-field,
+.tracker-page input[type="date"]::-webkit-datetime-edit-day-field,
+.tracker-page input[type="date"]::-webkit-datetime-edit-year-field {
+  color: #475569; /* slate-600 */
+}
+.tracker-page input::placeholder {
+  color: #475569; /* slate-600 */
+  opacity: 1;
+}
