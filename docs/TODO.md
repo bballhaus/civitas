@@ -1,71 +1,121 @@
 # TODO — Market Readiness
 
-## Infrastructure
+Tracking remaining work against the [priority list](../README.md):
+matching quality → correctness → explainability → security → speed →
+completeness → documentation.
 
-- [x] **Custom domain** — `civitas-ai.net` is live on Vercel
-- [x] **Remove `back_end/` directory** — Legacy Django code removed
-- [x] **S3 bucket encryption** — SSE-S3 (AES256) already enabled on `civitas-ai` bucket
-- [x] **S3 bucket versioning** — Enabled via `aws s3api put-bucket-versioning`
-- [ ] **Error monitoring** — Set up Vercel analytics or Sentry for production error tracking
-- [x] **Rate limiting** — In-memory sliding window rate limiter on login/signup (5 req/15min per IP)
+Cross-references to active retirements / deferrals live in
+[Retired Features](Retired-Features).
 
-## Security
+---
 
-- [x] **HTTPS-only cookies** — JWT moved from localStorage to HttpOnly/Secure/SameSite=Strict cookies
-- [x] **Token revocation** — Logout clears the HttpOnly cookie server-side; expiry is 7 days (via `auth.jwtExpiryDays` in `civitas.config.json`)
-- [x] **Input sanitization audit** — File upload magic byte validation, RFP ID format validation, LLM prompt injection mitigation (system/user message separation)
-- [x] **Security headers** — CSP (removed `unsafe-eval`), HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-Permitted-Cross-Domain-Policies all configured in `next.config.ts`
-- [x] **Dependency audit** — `npm audit fix` applied; Next.js upgraded to 16.2.4 (6 CVEs fixed); 0 remaining vulnerabilities
-- [x] **Security event logging** — Structured JSON logging for login/signup/password events
-- [x] **SSRF protection** — URL validation on PDF downloads in scraper pipeline (blocks private IPs, metadata endpoints)
-- [x] **Docker non-root user** — Lambda container runs as non-root `scraper` user
-- [x] **S3 default credentials** — Switched from hardcoded keys to default credential provider chain
-- [ ] **IAM permissions** — CodeBuild/CloudWatch policies use `Resource: "*"` — scope to specific resources before production (kept for dev flexibility)
-- [x] **Nonce-based CSP** — Per-request nonce generated in `proxy.ts`; `'unsafe-inline'` removed from script-src (style-src still needs it for Tailwind v4)
-- [ ] **AWS Secrets Manager** — Move API keys from Lambda env vars to Secrets Manager
+## Matching quality (priority 1)
 
-## LLM
+- [ ] **Match impression + outcome logging** —
+      [Matching-Finetuning § 3](Matching-Finetuning.md#3-data-model)
+      `match_impressions` / `match_outcomes` tables, plus the
+      exploration-slot wiring. Not started; required before any
+      weight-learning.
+- [ ] **Background match scoring for new RFPs** — `rfp_cache` rows
+      added by a scrape are scored on first user demand and a
+      fire-and-forget background populate via
+      `lib/match-rescore-trigger.ts`. Convert into a scheduled cron
+      so users always land on pre-scored results.
+- [ ] **Contract duration filter on `/matches`** — needs the
+      `contract_duration` column populated by enrichment + a UI
+      filter chip. Currently we extract `contract_start` /
+      `contract_end` separately; consolidate.
+- [ ] **PlanetBids document unblock** — per-agency vendor
+      registration would unlock PDF-extracted requirements
+      (NAICS, licenses, certs, deliverables) for ~43 portals. Legal /
+      ops decision; tracked in
+      [COVERAGE.md](../webscraping/v2/COVERAGE.md).
+- [ ] **Agentic LA + SF on Lambda** — LA's `labavn.org` DNS-fails;
+      SF URL is 404. Re-onboard via `{"mode":"discover"}` +
+      `{"mode":"onboard"}` when working endpoints are confirmed.
+- [ ] **OpenGov Cloudflare bypass** — Pasadena (and any future
+      OpenGov onboards) blocked. Investigate API-only path or a
+      bypass service.
 
-- [x] **Upgrade from Groq free tier** — Groq's free tier has rate limits; upgrade or switch provider for production
-- [x] **LLM provider abstraction** — Provider-agnostic `chatCompletion` layer in `lib/llm.ts` supports Groq, OpenAI, and Anthropic. Switch via `civitas.config.json`
-- [x] **Centralized configuration** — All infrastructure config (auth, rate limiting, caching, uploads) in `civitas.config.json`. Secrets stay in `.env.local`
-- [x] **S3 client consolidation** — Removed duplicate S3Client from events/route.ts; all routes use shared `lib/s3.ts`
-- [x] **Extraction quality testing** — PyMuPDF chosen for the backend pipeline; mupdf for the frontend. See [tests/pdf_benchmark_report.md](../tests/pdf_benchmark_report.md)
+## Correctness (priority 2)
 
-## Data
+- [ ] **`feedback-driven weight tuning`** — once impression logs land,
+      empirically learn the v2 weight vector per
+      [Matching-Finetuning § 4](Matching-Finetuning.md#4-the-model).
+- [ ] **NAICS critic ground-truth eval set** — pick ~100 RFPs,
+      hand-label primary + secondary NAICS, measure Haiku and Sonnet
+      agreement / accuracy. Currently we trust Sonnet over Haiku on
+      disagreement without absolute calibration.
+- [ ] **Profile aggregation tests** — golden fixtures for
+      `lib/claim-acceptance.ts` covering merge / dedup / overwrite
+      decisions on each `field_path`.
+- [ ] **Saved RFPs → Postgres migration** — generated POE / proposal
+      markdown + match-feedback snapshot still live in the per-user S3
+      JSON blob via [`lib/user-data.ts`](../front_end/src/lib/user-data.ts)
+      and [`lib/rfp-status.ts`](../front_end/src/lib/rfp-status.ts).
+      `match_state` already carries the feedback snapshot in v2
+      columns; finish the migration so S3 user-data can be retired.
 
-- [ ] **Migrate old user data** — If old team provides working AWS credentials for `civitas-uploads`, migrate existing user profiles and contracts
-- [x] **S3 concurrent write protection** — ETag-based optimistic locking on user data saves
-- [ ] **Backup strategy** — Set up S3 cross-region replication or scheduled backups
+## Explainability (priority 3)
 
-## Scraping
+- [ ] **Profile completeness indicator** — surface what fields are
+      empty and how each empty field affects match quality.
+      `profiles.completeness_score` exists; needs UI.
+- [ ] **Per-field provenance in `/profile/v2`** — `/api/profile/provenance`
+      exists but the UI doesn't yet render the "evidenced by" link
+      next to every field.
+- [ ] **Citation hover-over on match list** — extend the per-RFP card
+      to surface the strongest citation without requiring a click into
+      detail.
 
-- [ ] **Agentic scrapers (LA City, SF City)** — Disabled in the registry. LA's `labavn.org` DNS-fails on Lambda; SF's contracting opportunities URL is a 404. Re-onboard via the agentic onboarding pipeline when target URLs are confirmed working.
-- [ ] **PlanetBids / BidSync document login** — Most RFP documents on PlanetBids require vendor login to download (items marked with `*`). BidSync detail pages also appear to require authentication. Need to: (1) investigate creating vendor accounts for scraping, (2) determine if there's a public API alternative, (3) consider whether free addenda-only access is sufficient for matching, (4) evaluate legal/ToS implications of automated vendor account access
-- [x] **Automated RFP scraping schedule** — EventBridge `civitas-scrape-all` triggers Lambda every 12 hours (`cron(0 6,18 * * ? *)`) with `{"mode": "all"}`; a separate daily exploration/onboarding rule fires at 13:00 UTC
-- [x] **PlanetBids status filtering** — Filter to "Bidding" status only (was scraping closed/awarded bids too)
-- [x] **PlanetBids infinite scroll** — Scroll table container to load all rows (was capped at 30)
-- [x] **Lambda batched chaining** — Sites run in batches of 3 per invocation, chained via async self-invocation
+## Security (priority 4)
 
-## Matching Algorithm
+- [ ] **IAM permission scoping** — CodeBuild / CloudWatch policies use
+      `Resource: "*"` — scope to specific resources before production
+      tightening (kept for dev flexibility).
+- [ ] **AWS Secrets Manager** — Move Lambda LLM keys (`ANTHROPIC_API_KEY`,
+      `GROQ_API_KEY`, `VOYAGE_API_KEY`) out of env vars.
+- [ ] **CSRF tokens** — `SameSite=Strict` cookies mitigate same-origin
+      CSRF; explicit tokens still deferred. Low priority.
+- [ ] **Style nonce support** — Tailwind v4 still requires
+      `'unsafe-inline'` for `style-src`. Track upstream.
+- [ ] **S3 backup strategy** — set up cross-region replication or
+      scheduled snapshots for `civitas-ai`.
 
-- [x] **User feedback loop** — Thumbs up/down on RFP cards with optional reason, stored in S3 with score/tier snapshots
-- [ ] **Feedback-driven weight tuning** — Analyze collected feedback to adjust category weight distribution (25/15/15/10/10/10/5/5/5)
-- [ ] **Tier threshold calibration** — Use feedback data to validate or adjust tier thresholds (75/55/35)
-- [ ] **Synonym gap detection** — Mine bad-match feedback reasons to discover missing synonym groups
-- [ ] **Feedback analytics dashboard** — Build an admin view to analyze feedback patterns across users
+## Speed (priority 5)
 
-## Features
+- [ ] **Match list initial render** — `/matches` first paint is
+      dominated by `/api/match` + profile fetch; investigate streaming
+      the cached rows from `match_state` before live scoring backfills.
+- [ ] **Tracker calendar virtualization** — FullCalendar renders every
+      key date in the user's pipeline; profile and decide on
+      virtualization at 100+ saved RFPs.
+- [ ] **Vercel function cold starts** — profile the slowest cron and
+      `/api/match` paths after the next deploy.
 
-- [x] **Email uniqueness check** — S3-based email index (`system/email-index.json`) prevents duplicate registrations
-- [x] **Password reset flow** — Forgot-password + reset-password with token-based verification
-- [x] **Email verification** — Auto-verified in dev; token-based in production via SES
-- [ ] **Profile completeness indicator** — Help users understand what profile data improves match quality
-- [x] **Email delivery (Resend)** — Migrated from AWS SES to Resend for transactional email; verify the sending domain in the Resend dashboard and set `RESEND_API_KEY` + `CIVITAS_FROM_EMAIL`
+## Completeness (priority 6)
 
-## Testing
+- [ ] **End-to-end tests** — full user flow: signup → verify →
+      onboard → upload → claim review → matches → save → tracker.
+- [ ] **API route unit tests** — coverage on each `/api/*` route with
+      edge cases.
+- [ ] **Load testing** — verify Vercel function limits under concurrent
+      load.
+- [ ] **Error monitoring** — Sentry or Vercel Analytics for production
+      error tracking (Vercel logs alone don't cluster).
+- [ ] **Decide on AI Proposal / POE generation** — the routes
+      `/api/generate-proposal` and `/api/generate-plan-of-execution`
+      remain wired up but have no UI entry point
+      (see [Retired Features](Retired-Features)). Either re-surface
+      on `/matches/[rfpId]` with a feature flag, or delete the backend
+      and the `generated_documents` table.
 
-- [ ] **End-to-end tests** — Full user flow: signup → upload → profile → dashboard → proposal
-- [ ] **API route unit tests** — Test each API route with edge cases
-- [ ] **Profile aggregation tests** — Cover the v2 claims-acceptance pipeline (`lib/claim-acceptance.ts`) with golden fixtures
-- [ ] **Load testing** — Verify Vercel function limits work for concurrent users
+## Documentation (priority 7)
+
+- [ ] **Per-source coverage snapshot in `/admin/kpis`** — surface the
+      `webscraping/v2/scrapes/v2/_summary.json` health rollup inside
+      the admin dashboard so we notice stale scrapers without manually
+      hitting S3.
+- [ ] **Operator runbook** — concrete "what to do when X" entries for
+      cron failures, Resend bounce volume spikes, RDS connection
+      saturation, and Vercel deploy rollback.

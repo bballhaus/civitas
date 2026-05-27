@@ -1,19 +1,26 @@
-# Matching Algorithm (v1)
+# Matching Algorithm v1 (Retired)
 
-The matching algorithm is the core intelligence of Civitas. It scores every RFP against a user's company profile, producing a 0-100 relevance score with a detailed breakdown explaining exactly why the score is what it is.
-
-> **Note:** This page documents the **v1** matcher (`rfp-matching.ts`). The
-> production matcher today is **v2** (`matching-v2.ts`) — source-aware
-> scoring, hard gates that fire only on non-empty data, pgvector-backed
-> semantic specialty/capability matching, prime/sub parallel tracks, and
-> an incumbent state machine. The v2 design lives in
-> [Architecture-v2 § 9](Architecture-v2.md) and the weight-learning
-> roadmap in [Matching-Finetuning](Matching-Finetuning.md). v1 is retained
-> as a fallback / regression baseline and still informs the synonym +
-> canonicalization helpers reused by v2.
+> **Retired.** This page is preserved for historical context. The
+> production matcher today is **v2** —
+> [Matching-Algorithm-v2](Matching-Algorithm-v2),
+> [`lib/matching-v2.ts`](../front_end/src/lib/matching-v2.ts), with
+> source-aware scoring, hard gates that fire only on non-empty data,
+> pgvector-backed semantic specialty / capability matching, prime / sub
+> parallel tracks, and an incumbent state machine.
+>
+> v1 (`lib/rfp-matching.ts`) is no longer reachable from any active
+> navigation surface — see [Retired Features](Retired-Features) for the
+> details. The file still ships because retired pages
+> (`/dashboard`, `/dashboard/rfp/[id]`) import it and the v2 detail page
+> still imports its `CompanyProfile` / `RFP` *types*. The synonym map
+> and canonicalization tables continue to inform helpers reused by v2
+> (`profile-naics.ts`, `naics-similarity.ts`).
+>
+> The rest of this document describes how v1 worked and is otherwise
+> unchanged.
 
 **Source:** `front_end/src/lib/rfp-matching.ts` (1,300+ lines)
-**Execution:** Runs entirely client-side in the browser
+**Execution:** Ran entirely client-side in the browser
 **Output:** Score (0-100), tier classification, per-category breakdown, and human-readable explanations
 
 > **Note on LLM usage:** The matching algorithm itself does **not** use LLMs. All scoring is done with deterministic methods (regex, Jaccard similarity, synonym lookup, canonicalization). LLMs are used in two *separate* parts of the system:

@@ -1,19 +1,28 @@
 # Civitas
 
-Civitas reduces the time it takes small and medium government contractors to find compatible RFPs. It aggregates procurement opportunities from 57+ California government sites into a single searchable dashboard with AI-powered matching.
+Civitas reduces the time it takes small and medium government
+contractors to find compatible RFPs. It aggregates procurement
+opportunities from 60+ California government sites and uses
+source-aware semantic matching plus a per-RFP citation breakdown to
+surface the highest-fit opportunities — see
+[Key Features](docs/Key-Features.md) for the live product.
 
 ## Documentation
 
+Start with [Home](docs/Home.md).
+
 - [Frontend Architecture](docs/Frontend.md)
 - [Backend Architecture](docs/Backend.md)
+- [Architecture v2](docs/Architecture-v2.md) — largely shipped; remaining items inline
 - [Key Features](docs/Key-Features.md)
-- [Matching Algorithm (v1)](docs/Matching-Algorithm.md)
-- [Architecture v2 (working spec)](docs/Architecture-v2.md)
+- [Matching Algorithm v2](docs/Matching-Algorithm-v2.md) — the production matcher
 - [Matching Values](docs/Matching-Values.md)
-- [Matching Fine-Tuning](docs/Matching-Finetuning.md)
+- [Matching Fine-Tuning](docs/Matching-Finetuning.md) — weight-learning roadmap
 - [Security & Optimization](docs/Security.md)
 - [KPIs](docs/KPIs.md)
+- [Retired Features](docs/Retired-Features.md)
 - [TODO](docs/TODO.md)
+- [Matching Algorithm v1 (historical)](docs/Matching-Algorithm.md) — retired
 - [Example Test Profiles](docs/Example-Test-Profiles.md)
 
 ## Architecture
@@ -27,8 +36,9 @@ Civitas reduces the time it takes small and medium government contractors to fin
 | Email | Resend (transactional) | API |
 | LLM | Provider-agnostic (Groq / OpenAI / Anthropic) via `civitas.config.json` | API |
 | PDF enrichment (scraping) | Claude Haiku 4.5 (default) with prompt caching; Groq fallback | API |
+| KPI events | DynamoDB (`civitas-kpi-events`, `civitas-kpi-users`) | AWS us-east-1 |
 | Scraping | Playwright + Python | AWS Lambda (container, non-root) |
-| Scheduling | EventBridge | Every 12 hours |
+| Scheduling | EventBridge | Scraping `rate(48 hours)`; daily roundup Lambda `rate(1 hour)` |
 
 ## Project Structure
 
@@ -53,7 +63,7 @@ civitas/
 
 | Control | Implementation |
 |---------|---------------|
-| Authentication | JWT in HttpOnly/Secure/SameSite=Strict cookies (24h expiry) |
+| Authentication | JWT in HttpOnly/Secure/SameSite=Strict cookies (7-day expiry) |
 | Password hashing | bcrypt (12 rounds) |
 | CSP | Nonce-based script-src (no `unsafe-inline` or `unsafe-eval`) |
 | Rate limiting | Sliding window: 5 req/15min on auth, 3/15min on password reset |
@@ -70,15 +80,15 @@ civitas/
 
 ## Scraping Coverage
 
-57+ California procurement sites across four platforms:
+60+ California procurement sites across four platforms:
 
-- **Cal eProcure** (1) -- California state-level procurement; full pipeline including inline PDF download and LLM-extracted requirements
-- **PlanetBids** (41 agencies) -- cities and counties including San Diego, Sacramento, Fresno, Anaheim, Riverside; market intel (prospective bidders / bid results / awards) via shared cross-portal vendor login; PDFs gated per-bid
-- **BidSync / Periscope** (15 agencies) -- counties and special districts; search-result metadata only (detail pages require login)
-- **OpenGov Procurement** (S3-onboarded portals) -- direct JSON API at `api.procurement.opengov.com`; full pipeline including PDFs
-- **Agentic** (LA City, SF City) -- disabled pending Lambda fixes
+- **Cal eProcure** (1) — California state-level procurement; full pipeline including inline PDF download and LLM-extracted requirements
+- **PlanetBids** (43 agencies) — cities and counties including San Diego, Sacramento, Fresno, Anaheim, Riverside; market intel (prospective bidders / bid results / awards) via shared cross-portal vendor login; PDFs gated per-agency (`vendor_registered=True` unlocks the Documents tab)
+- **BidSync / Periscope** (15 agencies) — counties and special districts; search-result metadata only (detail pages require login)
+- **OpenGov Procurement** — direct JSON API at `api.procurement.opengov.com`; currently blocked by Cloudflare on the listing host
+- **Agentic** (LA City, SF City) — disabled in the registry pending Lambda fixes
 
-See [webscraping/v2/README.md](webscraping/v2/README.md) for details on the scraping system and [webscraping/v2/COVERAGE.md](webscraping/v2/COVERAGE.md) for the per-source field matrix.
+See [webscraping/v2/README.md](webscraping/v2/README.md) for the scraping system and [webscraping/v2/COVERAGE.md](webscraping/v2/COVERAGE.md) for the per-source field matrix.
 
 ## Local Development
 
@@ -130,4 +140,4 @@ python -m webscraping.v2.orchestrator.runner --list
 
 - **Frontend**: Push to `main` triggers Vercel deployment
 - **Scraping**: `aws codebuild start-build --project-name civitas-scraper-build --source-version main` rebuilds the Lambda container
-- **Schedule**: EventBridge rule `civitas-scrape-all` triggers Lambda every 12 hours (`cron(0 6,18 * * ? *)`); a separate daily exploration/onboarding rule fires at 13:00 UTC
+- **Schedule**: EventBridge rule `civitas-scrape-all` triggers Lambda on `rate(48 hours)`; a separate daily exploration / onboarding rule fires at `cron(0 13 * * ? *)`. The daily-roundup Lambda runs on `rate(1 hour)` so it can fire at each user's local 7am — see [infra/notifications/](infra/notifications/).
