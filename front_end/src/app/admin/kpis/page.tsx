@@ -1,0 +1,562 @@
+"use client";
+
+// Dev-only KPI dashboard. Reads /api/admin/kpis (which proxies the daily S3
+// snapshot at metrics/aggregate/latest.json) plus /api/admin/events for raw
+// drill-down. Admin allowlist enforced server-side; the client only renders
+// what the API returns. See lib/admin-auth.ts for the gate.
+//
+// No charting library — all viz is plain CSS bars + tables. Keeps the bundle
+// light and the page works in any browser without JS framework gymnastics.
+
+import { useCallback, useEffect, useState } from "react";
+import { AppHeader } from "@/components/AppHeader";
+import { MeshBackground } from "@/components/MeshBackground";
+import type { KpiSummary } from "@/lib/kpi-aggregator";
+import { ALL_EVENT_TYPES } from "@/lib/events";
+
+interface AdminKpisResponse {
+  snapshot: KpiSummary | null;
+  error?: string;
+}
+
+interface AdminEventRow {
+  type: string;
+  timestamp: string;
+  username?: string;
+  sessionId?: string;
+  payload?: Record<string, unknown>;
+}
+
+interface AdminEventsResponse {
+  type: string;
+  count: number;
+  events: AdminEventRow[];
+  error?: string;
+}
+
+export default function AdminKpisPage() {
+  const [summary, setSummary] = useState<KpiSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [drillType, setDrillType] = useState<string>("filter_applied");
+  const [drillRows, setDrillRows] = useState<AdminEventRow[]>([]);
+  const [drillLoading, setDrillLoading] = useState(false);
+
+  const fetchSummary = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/kpis", { cache: "no-store" });
+      if (res.status === 401) {
+        setError("Not authorized — only admin emails can view this page.");
+        setSummary(null);
+        return;
+      }
+      const data = (await res.json()) as AdminKpisResponse;
+      if (!res.ok) {
+        setError(data.error ?? `Failed to load KPIs (${res.status})`);
+        setSummary(null);
+        return;
+      }
+      setSummary(data.snapshot);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load KPIs");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const fetchDrill = useCallback(async (type: string) => {
+    setDrillLoading(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events?type=${encodeURIComponent(type)}&limit=50`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) {
+        setDrillRows([]);
+        return;
+      }
+      const data = (await res.json()) as AdminEventsResponse;
+      setDrillRows(data.events ?? []);
+    } catch {
+      setDrillRows([]);
+    } finally {
+      setDrillLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchSummary();
+  }, [fetchSummary]);
+
+  useEffect(() => {
+    void fetchDrill(drillType);
+  }, [drillType, fetchDrill]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const res = await fetch("/api/admin/kpis", { method: "POST" });
+      if (res.ok) {
+        const data = (await res.json()) as { snapshot: KpiSummary };
+        setSummary(data.snapshot);
+      } else {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? `Refresh failed (${res.status})`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Refresh failed");
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  if (loading) {
+    return (
+      <Frame>
+        <p className="text-sm text-slate-600">Loading KPIs…</p>
+      </Frame>
+    );
+  }
+
+  if (error && !summary) {
+    return (
+      <Frame>
+        <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-700">
+          {error}
+        </div>
+      </Frame>
+    );
+  }
+
+  if (!summary) {
+    return (
+      <Frame>
+        <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800 flex items-center justify-between gap-3">
+          <span>No KPI snapshot found yet. Run a refresh to build one.</span>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold disabled:opacity-60"
+          >
+            {refreshing ? "Refreshing…" : "Refresh now"}
+          </button>
+        </div>
+      </Frame>
+    );
+  }
+
+  return (
+    <Frame>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">KPI dashboard</h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Snapshot computed {new Date(summary.computed_at).toLocaleString()} ·
+            event rollups span last {summary.event_rollups.window_days} days
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="px-4 py-2 rounded-lg bg-[#3C89C6] text-white text-sm font-semibold hover:bg-[#2d6fa0] disabled:opacity-60"
+        >
+          {refreshing ? "Refreshing…" : "Refresh now"}
+        </button>
+      </div>
+
+      {/* Top-line totals */}
+      <Section title="Active users">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Stat label="Total users" value={summary.total_users} />
+          <Stat label="DAU" value={summary.active_users.DAU} />
+          <Stat label="WAU" value={summary.active_users.WAU} />
+          <Stat label="MAU" value={summary.active_users.MAU} />
+        </div>
+      </Section>
+
+      <Section title="Signups">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Stat label="Last 24h" value={summary.signups.last_24h} />
+          <Stat label="Last 7d" value={summary.signups.last_7d} />
+          <Stat label="Last 30d" value={summary.signups.last_30d} />
+          <Stat label="All time" value={summary.signups.total} />
+        </div>
+      </Section>
+
+      <Section title="Funnel totals">
+        <SimpleBarTable
+          rows={Object.entries(summary.funnel_totals).map(([k, v]) => ({
+            label: k,
+            value: v,
+          }))}
+        />
+      </Section>
+
+      <Section title="Funnel conversion (%)">
+        <SimpleBarTable
+          rows={Object.entries(summary.funnel_conversion_rates).map(([k, v]) => ({
+            label: k,
+            value: v,
+            suffix: "%",
+            max: 100,
+          }))}
+        />
+      </Section>
+
+      <Section title="Satisfaction & generation">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Stat label="Proposals generated" value={summary.satisfaction.proposals_generated} />
+          <Stat label="Proposals regenerated" value={summary.satisfaction.proposals_regenerated} />
+          <Stat
+            label="Proposal acceptance %"
+            value={summary.satisfaction.proposal_acceptance_rate}
+            suffix="%"
+          />
+          <Stat label="POEs generated" value={summary.satisfaction.poes_generated} />
+          <Stat label="POEs regenerated" value={summary.satisfaction.poes_regenerated} />
+          <Stat
+            label="POE acceptance %"
+            value={summary.satisfaction.poe_acceptance_rate}
+            suffix="%"
+          />
+          <Stat label="Total logins" value={summary.satisfaction.total_logins} />
+          <Stat label="Total RFP views" value={summary.satisfaction.total_rfps_viewed} />
+        </div>
+      </Section>
+
+      <Section title="RFP click-through (last 30d)">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Stat label="Impressions" value={summary.event_rollups.rfp_ctr.impressions} />
+          <Stat label="Views" value={summary.event_rollups.rfp_ctr.views} />
+          <Stat label="CTR %" value={summary.event_rollups.rfp_ctr.ctr} suffix="%" />
+          <Stat label="Attachment clicks" value={summary.event_rollups.rfp_attachment_clicks} />
+          <Stat
+            label="External-link clicks"
+            value={summary.event_rollups.rfp_external_link_clicks}
+          />
+          <Stat
+            label="Dwell median (s)"
+            value={
+              summary.event_rollups.rfp_dwell_ms_median
+                ? Math.round(summary.event_rollups.rfp_dwell_ms_median / 100) / 10
+                : 0
+            }
+            suffix="s"
+          />
+          <Stat
+            label="Dwell p90 (s)"
+            value={
+              summary.event_rollups.rfp_dwell_ms_p90
+                ? Math.round(summary.event_rollups.rfp_dwell_ms_p90 / 100) / 10
+                : 0
+            }
+            suffix="s"
+          />
+        </div>
+      </Section>
+
+      <Section title="RFP detail — sections expanded">
+        <KeyValueTable counts={summary.event_rollups.rfp_section_expansions} />
+      </Section>
+
+      <Section title="Top filter values applied">
+        {summary.event_rollups.top_filter_values.length === 0 ? (
+          <Empty />
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase tracking-wider text-slate-500 border-b border-slate-200">
+              <tr>
+                <th className="text-left py-2 px-2">Filter</th>
+                <th className="text-left py-2 px-2">Values</th>
+                <th className="text-right py-2 px-2">Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.event_rollups.top_filter_values.map((r, i) => (
+                <tr key={i} className="border-b border-slate-100">
+                  <td className="py-1.5 px-2 font-medium text-slate-800">{r.filterName}</td>
+                  <td className="py-1.5 px-2 text-slate-600 break-all">{r.filterValues || "—"}</td>
+                  <td className="py-1.5 px-2 text-right font-semibold">{r.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Section>
+
+      <Section title="Filters cleared">
+        <KeyValueTable counts={summary.event_rollups.filter_cleared_counts} />
+      </Section>
+
+      <Section title="Search behavior">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase text-slate-500 mb-2">Query length</p>
+            <SimpleBarTable
+              rows={summary.event_rollups.top_search_lengths.map((r) => ({
+                label: r.bucket,
+                value: r.count,
+              }))}
+            />
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase text-slate-500 mb-2">Zero-result rate</p>
+            <Stat
+              label="% of searches returning 0"
+              value={summary.event_rollups.search_zero_result_rate}
+              suffix="%"
+            />
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Sort choices">
+        <KeyValueTable counts={summary.event_rollups.sort_key_distribution} />
+      </Section>
+
+      <Section title="Onboarding — median time per step (s)">
+        <KeyValueTable
+          counts={Object.fromEntries(
+            Object.entries(summary.event_rollups.onboarding_step_dwell_ms_median).map(
+              ([step, ms]) => [step, Math.round(ms / 100) / 10],
+            ),
+          )}
+          suffix="s"
+        />
+      </Section>
+
+      <Section title="Onboarding — skip rate (%)">
+        <KeyValueTable counts={summary.event_rollups.onboarding_step_skip_rate} suffix="%" />
+      </Section>
+
+      <Section title="Onboarding — validation errors (step::field)">
+        <KeyValueTable counts={summary.event_rollups.onboarding_validation_errors} />
+      </Section>
+
+      <Section title="Homepage CTAs">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase text-slate-500 mb-2">CTA clicks</p>
+            <KeyValueTable counts={summary.event_rollups.home_cta_distribution} />
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase text-slate-500 mb-2">Widget views</p>
+            <KeyValueTable counts={summary.event_rollups.home_widget_views} />
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Tracker — status transitions">
+        <KeyValueTable counts={summary.event_rollups.tracker_status_transitions} />
+      </Section>
+
+      <Section title="Tracker — notes">
+        <div className="grid grid-cols-2 gap-3">
+          <Stat label="Notes added" value={summary.event_rollups.tracker_notes_added} />
+          <Stat label="Notes edited" value={summary.event_rollups.tracker_notes_edited} />
+        </div>
+      </Section>
+
+      <Section title="All event counts (last 30d)">
+        <KeyValueTable counts={summary.event_rollups.event_counts} />
+      </Section>
+
+      <Section title="Per-user breakdown">
+        <PerUserTable users={summary.per_user} />
+      </Section>
+
+      <Section title="Drill-down — raw events">
+        <div className="flex items-center gap-2 mb-3">
+          <label className="text-xs font-semibold text-slate-600">Type:</label>
+          <select
+            value={drillType}
+            onChange={(e) => setDrillType(e.target.value)}
+            className="px-2 py-1 text-sm border border-slate-300 rounded-md"
+          >
+            {ALL_EVENT_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          {drillLoading && <span className="text-xs text-slate-400">Loading…</span>}
+        </div>
+        {drillRows.length === 0 ? (
+          <Empty />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                <tr>
+                  <th className="text-left py-1.5 px-2">When</th>
+                  <th className="text-left py-1.5 px-2">User</th>
+                  <th className="text-left py-1.5 px-2">Payload</th>
+                </tr>
+              </thead>
+              <tbody className="font-mono">
+                {drillRows.map((r, i) => (
+                  <tr key={i} className="border-b border-slate-100 align-top">
+                    <td className="py-1 px-2 text-slate-500 whitespace-nowrap">
+                      {r.timestamp ? new Date(r.timestamp).toLocaleString() : "—"}
+                    </td>
+                    <td className="py-1 px-2 text-slate-700 whitespace-nowrap">
+                      {r.username ?? "—"}
+                    </td>
+                    <td className="py-1 px-2 text-slate-800 break-all">
+                      {r.payload ? JSON.stringify(r.payload) : "{}"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+    </Frame>
+  );
+}
+
+function Frame({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
+      <MeshBackground />
+      <AppHeader />
+      <main className="relative max-w-6xl mx-auto px-6 md:px-10 py-10">{children}</main>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-5">
+      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function Stat({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+      <p className="text-2xl font-extrabold text-slate-900">
+        {value}
+        {suffix && <span className="text-base font-bold text-slate-500 ml-0.5">{suffix}</span>}
+      </p>
+    </div>
+  );
+}
+
+function Empty() {
+  return <p className="text-sm text-slate-400 italic">No events in window.</p>;
+}
+
+function SimpleBarTable({
+  rows,
+}: {
+  rows: Array<{ label: string; value: number; suffix?: string; max?: number }>;
+}) {
+  if (rows.length === 0) return <Empty />;
+  const max = Math.max(...rows.map((r) => r.max ?? r.value), 1);
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r, i) => (
+        <div key={i} className="flex items-center gap-3">
+          <span className="text-xs text-slate-700 font-medium w-40 truncate">{r.label}</span>
+          <div className="flex-1 h-4 bg-slate-100 rounded overflow-hidden">
+            <div
+              className="h-full bg-[#3C89C6]"
+              style={{ width: `${Math.min(100, (r.value / max) * 100)}%` }}
+            />
+          </div>
+          <span className="text-xs font-bold text-slate-800 w-16 text-right">
+            {r.value}
+            {r.suffix ?? ""}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function KeyValueTable({
+  counts,
+  suffix,
+}: {
+  counts: Record<string, number>;
+  suffix?: string;
+}) {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return <Empty />;
+  const max = Math.max(...entries.map(([, v]) => v), 1);
+  return (
+    <div className="space-y-1.5">
+      {entries.map(([k, v]) => (
+        <div key={k} className="flex items-center gap-3">
+          <span className="text-xs text-slate-700 font-medium w-56 truncate" title={k}>
+            {k}
+          </span>
+          <div className="flex-1 h-3 bg-slate-100 rounded overflow-hidden">
+            <div
+              className="h-full bg-emerald-500"
+              style={{ width: `${Math.min(100, (v / max) * 100)}%` }}
+            />
+          </div>
+          <span className="text-xs font-bold text-slate-800 w-16 text-right">
+            {v}
+            {suffix ?? ""}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PerUserTable({ users }: { users: KpiSummary["per_user"] }) {
+  if (users.length === 0) return <Empty />;
+  const sorted = [...users].sort(
+    (a, b) =>
+      (b.last_active_at ? Date.parse(b.last_active_at) : 0) -
+      (a.last_active_at ? Date.parse(a.last_active_at) : 0),
+  );
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+          <tr>
+            <th className="text-left py-1.5 px-2">User</th>
+            <th className="text-left py-1.5 px-2">Signed up</th>
+            <th className="text-left py-1.5 px-2">Last active</th>
+            <th className="text-right py-1.5 px-2">RFP views</th>
+            <th className="text-right py-1.5 px-2">Saved</th>
+            <th className="text-right py-1.5 px-2">Applied</th>
+            <th className="text-right py-1.5 px-2">Sessions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((u) => (
+            <tr key={u.username} className="border-b border-slate-100">
+              <td className="py-1 px-2 font-medium text-slate-800">{u.username}</td>
+              <td className="py-1 px-2 text-slate-500">
+                {u.signup_at ? new Date(u.signup_at).toLocaleDateString() : "—"}
+              </td>
+              <td className="py-1 px-2 text-slate-500">
+                {u.last_active_at
+                  ? `${u.days_since_last_active ?? "?"}d ago`
+                  : "—"}
+              </td>
+              <td className="py-1 px-2 text-right">{u.counters.counter_rfps_viewed ?? 0}</td>
+              <td className="py-1 px-2 text-right">{u.counters.counter_rfps_saved ?? 0}</td>
+              <td className="py-1 px-2 text-right">{u.counters.counter_rfps_applied ?? 0}</td>
+              <td className="py-1 px-2 text-right">{u.counters.counter_sessions ?? 0}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

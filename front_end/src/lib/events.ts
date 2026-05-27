@@ -62,12 +62,33 @@ export const CLIENT_EVENT_TYPES = [
   "onboarding_step_advanced",
   "onboarding_step_skipped",
   "onboarding_step_back",
+  "onboarding_step_dwell",
+  "onboarding_validation_error",
+  "onboarding_field_touched",
   "rfp_viewed",
+  "rfp_impression",
+  "rfp_section_expanded",
+  "rfp_attachment_clicked",
+  "rfp_external_link_clicked",
+  "rfp_dwell",
+  "proposal_copied",
+  "proposal_downloaded",
+  "poe_copied",
+  "poe_downloaded",
   "filter_applied",
   "filter_cleared",
   "sort_changed",
   "search_submitted",
+  "search_result_count",
   "profile_section_edited",
+  "home_cta_clicked",
+  "home_widget_viewed",
+  "home_recent_match_clicked",
+  "tracker_column_viewed",
+  "tracker_status_changed_from_tracker",
+  "tracker_filter_applied",
+  "tracker_note_added",
+  "tracker_note_edited",
   "page_viewed",
   "session_start",
   "session_heartbeat",
@@ -104,12 +125,31 @@ export function isEventType(s: string): s is EventType {
  *   - sessionId?: string     — client-generated UUID for grouping
  *   - clientTimestamp?: string  — ISO when fired client-side (server stamp wins)
  *   - durationMs?: number    — for session_heartbeat / session_end
- *   - filterName?: string    — for filter_applied
- *   - filterValueCount?: number  — *count* of selected values, never the values
+ *   - filterName?: string    — for filter_applied / filter_cleared
+ *   - filterValueCount?: number  — count of selected values
+ *   - filterValues?: string  — selected values joined by "|", trimmed to fit
+ *                              the 200-char sanitizer cap. Allowlisted filters
+ *                              only (status/agency/industry/etc.) — never free-text.
  *   - sortKey?: string       — for sort_changed
+ *   - direction?: string     — "asc" | "desc" for sort_changed
  *   - queryLength?: number   — for search_submitted (length only, not text)
+ *   - resultCount?: number   — for search_result_count
+ *   - zeroResults?: boolean  — for search_result_count
  *   - sectionName?: string   — for profile_section_edited
  *   - pagePath?: string      — for page_viewed
+ *   - durationMs?: number    — for *_dwell events (time spent on step/page)
+ *   - field?: string         — for onboarding_field_touched / validation_error
+ *   - code?: string          — error code for onboarding_validation_error
+ *   - position?: number      — index in list (0-based) for impressions / clicks
+ *   - section?: string       — RFP detail section key ("attachments" | "scope" | ...)
+ *   - attachmentIndex?: number   — index of attachment for rfp_attachment_clicked
+ *   - hasMirror?: boolean    — whether the attachment had a mirrored S3 copy
+ *   - source?: string        — origin (already documented above)
+ *   - matchTier?: string     — already documented above
+ *   - ctaKey?: string        — homepage CTA identifier
+ *   - widgetKey?: string     — homepage widget identifier
+ *   - columnKey?: string     — tracker column key ("saved" | "in_progress" | ...)
+ *   - from?: string / to?: string  — RFP status transition (tracker_status_changed_from_tracker)
  */
 export interface EventPayload {
   [key: string]: unknown;
@@ -157,10 +197,28 @@ export const EVENT_COUNTER: Partial<Record<EventType, string>> = {
   contract_deleted: "counter_contracts_deleted",
   profile_extracted: "counter_profile_extractions",
   filter_applied: "counter_filters_applied",
+  filter_cleared: "counter_filters_cleared",
   sort_changed: "counter_sorts_changed",
   search_submitted: "counter_searches",
   page_viewed: "counter_page_views",
   session_start: "counter_sessions",
+  rfp_impression: "counter_rfp_impressions",
+  rfp_section_expanded: "counter_rfp_sections_expanded",
+  rfp_attachment_clicked: "counter_rfp_attachments_clicked",
+  rfp_external_link_clicked: "counter_rfp_external_links",
+  proposal_copied: "counter_proposals_copied",
+  proposal_downloaded: "counter_proposals_downloaded",
+  poe_copied: "counter_poes_copied",
+  poe_downloaded: "counter_poes_downloaded",
+  home_cta_clicked: "counter_home_ctas",
+  home_recent_match_clicked: "counter_home_recent_match_clicks",
+  tracker_column_viewed: "counter_tracker_column_views",
+  tracker_status_changed_from_tracker: "counter_tracker_status_changes",
+  tracker_filter_applied: "counter_tracker_filters",
+  tracker_note_added: "counter_tracker_notes_added",
+  tracker_note_edited: "counter_tracker_notes_edited",
+  onboarding_validation_error: "counter_onboarding_validation_errors",
+  onboarding_field_touched: "counter_onboarding_field_touches",
 };
 
 /**

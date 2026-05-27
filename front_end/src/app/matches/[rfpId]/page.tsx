@@ -7,7 +7,7 @@
 // it (spec § 9.10). Top of page shows a data_quality summary so the user
 // knows whether they're reading full extracted requirements or just a title.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
@@ -265,6 +265,7 @@ export default function RfpDetailPage() {
           pagePath: "/matches",
           matchScore: d.score,
           matchTier: d.tier,
+          source: "rfp_detail",
         });
       })
       .catch((e) => {
@@ -277,6 +278,22 @@ export default function RfpDetailPage() {
       cancelled = true;
     };
   }, [rfpId, router]);
+
+  // Dwell time on the detail page. Fires on unmount with how long the user
+  // spent here — useful for surface-level engagement signal alongside the
+  // section expansion / attachment-click events below. Beacon-friendly: the
+  // event tracker already flushes via sendBeacon on visibilitychange/pagehide.
+  const detailEnteredAtRef = useRef<number>(Date.now());
+  useEffect(() => {
+    detailEnteredAtRef.current = Date.now();
+    return () => {
+      if (!rfpId) return;
+      const dur = Date.now() - detailEnteredAtRef.current;
+      if (dur >= 500) {
+        trackEvent("rfp_dwell", { rfpId, durationMs: dur });
+      }
+    };
+  }, [rfpId]);
 
   // Build the per-route RFP payload the LLM endpoints expect. /api/events
   // returns a richer shape than /api/match/[rfpId] historically did, so
@@ -785,6 +802,13 @@ export default function RfpDetailPage() {
                 href={data.rfp.eventUrl}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() =>
+                  trackEvent("rfp_external_link_clicked", {
+                    rfpId: data.rfp.id,
+                    source: "detail",
+                    sourceId: data.rfp.sourceId,
+                  })
+                }
                 className="ml-auto text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors text-slate-500 hover:text-slate-700 hover:bg-slate-100"
               >
                 View on {portalLabel(data.rfp.sourceId)}
@@ -855,7 +879,12 @@ export default function RfpDetailPage() {
         <section className="mb-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
           <button
             type="button"
-            onClick={() => setMatchSummaryOpen((o) => !o)}
+            onClick={() => {
+              setMatchSummaryOpen((o) => {
+                if (!o && rfpId) trackEvent("rfp_section_expanded", { rfpId, section: "match_summary" });
+                return !o;
+              });
+            }}
             className="w-full flex items-center justify-between gap-2 text-left"
           >
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
@@ -893,7 +922,12 @@ export default function RfpDetailPage() {
         <section className="mb-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
           <button
             type="button"
-            onClick={() => setAboutRfpOpen((o) => !o)}
+            onClick={() => {
+              setAboutRfpOpen((o) => {
+                if (!o && rfpId) trackEvent("rfp_section_expanded", { rfpId, section: "about_rfp" });
+                return !o;
+              });
+            }}
             className="w-full flex items-center justify-between gap-2 text-left"
           >
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
@@ -1092,7 +1126,12 @@ export default function RfpDetailPage() {
         <section className="mt-8 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-6">
           <button
             type="button"
-            onClick={() => setCapabilitiesOpen((o) => !o)}
+            onClick={() => {
+              setCapabilitiesOpen((o) => {
+                if (!o && rfpId) trackEvent("rfp_section_expanded", { rfpId, section: "capabilities" });
+                return !o;
+              });
+            }}
             className="w-full flex items-center justify-between gap-2 text-left"
           >
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
@@ -1156,12 +1195,19 @@ export default function RfpDetailPage() {
                 Attachments ({links.length})
               </h2>
               <ul className="space-y-2">
-                {links.map((link) => (
+                {links.map((link, idx) => (
                   <li key={link.key}>
                     <a
                       href={link.href}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={() =>
+                        trackEvent("rfp_attachment_clicked", {
+                          rfpId: data.rfp.id,
+                          attachmentIndex: idx,
+                          hasMirror: link.key.startsWith("mirror-"),
+                        })
+                      }
                       className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200 transition-colors"
                     >
                       <svg

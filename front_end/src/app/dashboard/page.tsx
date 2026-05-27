@@ -353,6 +353,29 @@ function countActiveFilters(f: RFPFilters): number {
   );
 }
 
+// Diff two filter snapshots and fire one event per changed dimension. Joined-
+// values fit the 200-char sanitizer cap; we truncate gracefully when over.
+// Filters here are all bounded, enum-like lists — no free-text — so logging
+// raw values is safe and far more useful than counts alone.
+function emitFilterChangeEvents(prev: RFPFilters, next: RFPFilters): void {
+  const keys = Object.keys(next) as (keyof RFPFilters)[];
+  for (const key of keys) {
+    const prevArr = prev[key] ?? [];
+    const nextArr = next[key] ?? [];
+    if (prevArr.length === nextArr.length && prevArr.every((v, i) => v === nextArr[i])) continue;
+    if (nextArr.length === 0) {
+      trackEvent("filter_cleared", { filterName: String(key) });
+    } else {
+      const joined = nextArr.join("|");
+      trackEvent("filter_applied", {
+        filterName: String(key),
+        filterValueCount: nextArr.length,
+        filterValues: joined.length > 180 ? joined.slice(0, 180) + "…" : joined,
+      });
+    }
+  }
+}
+
 // Use shared matching functions from rfp-matching.ts
 const computeMatch = computeMatchLib;
 const generateMatchSummary = generateMatchSummaryLib;
@@ -872,6 +895,10 @@ export default function DashboardPage() {
     if (q.length === 0) return;
     trackEvent("search_submitted", { queryLength: q.length });
   }, [deferredSearchQuery]);
+  // Result-count companion: re-fires whenever the displayed list size shifts
+  // for the current query. The two events together give us CTR (impressions
+  // already track downstream) plus a clean zero-result rate per query length.
+  const lastResultCountKeyRef = useRef<string>("");
   const [sortBy, setSortBy] = useState<"score" | "deadline" | "value">("score");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
@@ -1150,6 +1177,52 @@ export default function DashboardPage() {
     }
   }, [displayedRfps, selectedRfpId]);
 
+  // Emit a search_result_count event after every meaningful change to the
+  // displayed list. Key includes the query + activeFilterCount + listFilter
+  // so we don't fire on selection-only re-renders. Zero-result rate is the
+  // most actionable signal here for query/filter tuning.
+  useEffect(() => {
+    const q = deferredSearchQuery.trim();
+    const key = `${q}::${countActiveFilters(filters)}::${listFilter}::${displayedRfps.length}`;
+    if (key === lastResultCountKeyRef.current) return;
+    lastResultCountKeyRef.current = key;
+    trackEvent("search_result_count", {
+      queryLength: q.length,
+      resultCount: displayedRfps.length,
+      zeroResults: displayedRfps.length === 0,
+      activeFilterCount: countActiveFilters(filters),
+      listFilter,
+    });
+  }, [deferredSearchQuery, filters, listFilter, displayedRfps.length]);
+
+  // Impression tracker: when the displayed list changes, log up to the first
+  // 25 RFPs the user could see. Debounced via a short timeout so a flicker
+  // during sort/filter doesn't spam events. Position + (best-effort) tier
+  // gives us per-position CTR when joined with rfp_viewed.
+  const lastImpressionKeyRef = useRef<string>("");
+  useEffect(() => {
+    const top = displayedRfps.slice(0, 25);
+    const key = top.map((r) => r.id).join(",");
+    if (key === lastImpressionKeyRef.current) return;
+    const handle = setTimeout(() => {
+      lastImpressionKeyRef.current = key;
+      for (let i = 0; i < top.length; i++) {
+        const r = top[i];
+        const tier =
+          typeof (r as { match?: { tier?: string } }).match?.tier === "string"
+            ? (r as { match?: { tier?: string } }).match!.tier
+            : undefined;
+        trackEvent("rfp_impression", {
+          rfpId: r.id,
+          position: i,
+          source: "dashboard",
+          ...(tier ? { matchTier: tier } : {}),
+        });
+      }
+    }, 800);
+    return () => clearTimeout(handle);
+  }, [displayedRfps]);
+
   // When arriving from home page (saved/applied/in progress/due soon), open dashboard with that RFP selected and filter applied
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1266,10 +1339,8 @@ export default function DashboardPage() {
                     filterOptions={dynamicFilterOptions}
                     filters={filters}
                     onFiltersChange={(next: RFPFilters) => {
+                      emitFilterChangeEvents(filters, next);
                       setFilters(next);
-                      trackEvent("filter_applied", {
-                        activeFilterCount: countActiveFilters(next),
-                      });
                     }}
                     onClose={() => setFilterPanelOpen(false)}
                     expandedSections={expandedFilterSections}
