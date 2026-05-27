@@ -657,28 +657,33 @@ function TimeseriesChart({
   points: TimeseriesPoint[];
   metric: keyof TimeseriesPoint;
 }) {
-  // SVG line chart. ViewBox uses a fixed coordinate space so all charts on
-  // the page render identically regardless of container width; preserveAspect
-  // is "none" so the line stretches horizontally to fill the slot.
+  // SVG line chart with proper axes. ViewBox uses a fixed coordinate space
+  // (W × H) so every chart renders identically regardless of container width.
+  // preserveAspectRatio="none" lets the plot stretch horizontally to fill the
+  // slot. Axis labels live inside the same SVG so they scale with the chart.
   const values = points.map((p) => Number(p[metric] ?? 0));
-  const max = Math.max(...values, 1);
+  const rawMax = Math.max(...values, 1);
+  // Round max up to a "nice" number so Y-axis ticks come out clean
+  // (e.g. 87 → 100, 17 → 20). Without this the tick labels get noisy.
+  const niceMax = niceCeil(rawMax);
   const last = values[values.length - 1] ?? 0;
-  const W = 800;
-  const H = 100;
-  const PAD_X = 4;
-  const PAD_Y = 6;
 
-  // Y position: max is at PAD_Y, zero is at H - PAD_Y.
+  const W = 800;
+  const H = 140;
+  const PAD_LEFT = 44;
+  const PAD_RIGHT = 12;
+  const PAD_TOP = 10;
+  const PAD_BOTTOM = 24;
+  const plotW = W - PAD_LEFT - PAD_RIGHT;
+  const plotH = H - PAD_TOP - PAD_BOTTOM;
+
   const yFor = (v: number) => {
-    if (max <= 0) return H - PAD_Y;
-    const usable = H - PAD_Y * 2;
-    return PAD_Y + usable * (1 - v / max);
+    if (niceMax <= 0) return PAD_TOP + plotH;
+    return PAD_TOP + plotH * (1 - v / niceMax);
   };
-  // X position spans the chart. With one point, place it at the right edge so
-  // the "latest" reading is obvious.
   const xFor = (i: number) => {
-    if (points.length <= 1) return W - PAD_X;
-    return PAD_X + ((W - PAD_X * 2) * i) / (points.length - 1);
+    if (points.length <= 1) return PAD_LEFT + plotW;
+    return PAD_LEFT + (plotW * i) / (points.length - 1);
   };
 
   const linePath = values
@@ -686,41 +691,99 @@ function TimeseriesChart({
     .join(" ");
   const areaPath =
     values.length > 0
-      ? `${linePath} L${xFor(values.length - 1).toFixed(2)},${H - PAD_Y} L${xFor(0).toFixed(2)},${H - PAD_Y} Z`
+      ? `${linePath} L${xFor(values.length - 1).toFixed(2)},${PAD_TOP + plotH} L${xFor(0).toFixed(2)},${PAD_TOP + plotH} Z`
       : "";
+
+  // Y-axis ticks: 5 evenly spaced. Each tick gets a gridline + label.
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((frac) => ({
+    frac,
+    value: Math.round(niceMax * frac),
+    y: PAD_TOP + plotH * (1 - frac),
+  }));
+  // X-axis ticks: pick a handful of evenly spaced indices. Fewer when the
+  // labels would overlap (long ISO dates take ~70px each at this font size).
+  const tickCount = Math.min(points.length, points.length <= 12 ? points.length : 6);
+  const xTickIndices: number[] = [];
+  if (points.length > 0) {
+    if (tickCount <= 1) xTickIndices.push(0);
+    else for (let i = 0; i < tickCount; i++) {
+      xTickIndices.push(Math.round((i * (points.length - 1)) / (tickCount - 1)));
+    }
+  }
 
   return (
     <div title={help}>
       <div className="flex items-baseline justify-between mb-1">
         <p className="text-xs font-semibold text-slate-800">{title}</p>
         <p className="text-[11px] text-slate-600">
-          max <span className="font-semibold text-slate-800">{max}</span> · latest{" "}
+          max <span className="font-semibold text-slate-800">{rawMax}</span> · latest{" "}
           <span className="font-semibold text-slate-800">{last}</span> · {points.length}{" "}
           {points.length === 1 ? "point" : "points"}
         </p>
       </div>
       {points.length === 0 ? (
-        <div className="h-24 flex items-center justify-center bg-slate-50 rounded border border-slate-100 text-xs text-slate-400">
+        <div className="h-32 flex items-center justify-center bg-slate-50 rounded border border-slate-100 text-xs text-slate-400">
           No snapshots in window — the chart fills in as days accumulate.
         </div>
       ) : (
         <svg
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="none"
-          className="w-full h-24 bg-slate-50 rounded border border-slate-100"
+          className="w-full h-32 bg-slate-50 rounded border border-slate-100"
         >
-          {/* Horizontal gridlines at 0%, 50%, 100%. */}
-          {[0, 0.5, 1].map((frac) => (
-            <line
-              key={frac}
-              x1={PAD_X}
-              x2={W - PAD_X}
-              y1={PAD_Y + (H - PAD_Y * 2) * (1 - frac)}
-              y2={PAD_Y + (H - PAD_Y * 2) * (1 - frac)}
-              stroke="#e2e8f0"
-              strokeWidth="1"
-              strokeDasharray={frac === 0 || frac === 1 ? "0" : "2,3"}
-            />
+          {/* Y-axis gridlines + tick labels. Dashed for inner ticks, solid for the baseline. */}
+          {yTicks.map((t) => (
+            <g key={t.frac}>
+              <line
+                x1={PAD_LEFT}
+                x2={W - PAD_RIGHT}
+                y1={t.y}
+                y2={t.y}
+                stroke="#e2e8f0"
+                strokeWidth="1"
+                strokeDasharray={t.frac === 0 ? "0" : "2,3"}
+              />
+              <text
+                x={PAD_LEFT - 6}
+                y={t.y + 3}
+                textAnchor="end"
+                className="fill-slate-500"
+                style={{ fontSize: 10 }}
+              >
+                {t.value}
+              </text>
+            </g>
+          ))}
+          {/* Y-axis line. */}
+          <line
+            x1={PAD_LEFT}
+            x2={PAD_LEFT}
+            y1={PAD_TOP}
+            y2={PAD_TOP + plotH}
+            stroke="#cbd5e1"
+            strokeWidth="1"
+          />
+          {/* X-axis ticks + labels at evenly spaced bucket indices. */}
+          {xTickIndices.map((i) => (
+            <g key={i}>
+              <line
+                x1={xFor(i)}
+                x2={xFor(i)}
+                y1={PAD_TOP + plotH}
+                y2={PAD_TOP + plotH + 4}
+                stroke="#cbd5e1"
+                strokeWidth="1"
+              />
+              <text
+                x={xFor(i)}
+                y={PAD_TOP + plotH + 16}
+                textAnchor="middle"
+                className="fill-slate-500"
+                style={{ fontSize: 10 }}
+              >
+                {formatBucketShort(points[i].bucket)}
+              </text>
+            </g>
           ))}
           {/* Filled area under the line for visual weight. */}
           {points.length > 1 && (
@@ -754,12 +817,56 @@ function TimeseriesChart({
           ))}
         </svg>
       )}
-      <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-        <span>{points[0]?.bucket ?? ""}</span>
-        <span>{points[points.length - 1]?.bucket ?? ""}</span>
-      </div>
     </div>
   );
+}
+
+/**
+ * Round a positive number up to a "nice" axis maximum. Picks the smallest
+ * value of the form {1,2,2.5,5,10} × 10ⁿ that's >= v. Yields clean tick
+ * labels (10, 20, 25, 50, 100, …) instead of arbitrary values like 87.
+ */
+function niceCeil(v: number): number {
+  if (v <= 0) return 1;
+  const exp = Math.floor(Math.log10(v));
+  const base = Math.pow(10, exp);
+  const norm = v / base; // ∈ [1, 10)
+  let nice: number;
+  if (norm <= 1) nice = 1;
+  else if (norm <= 2) nice = 2;
+  else if (norm <= 2.5) nice = 2.5;
+  else if (norm <= 5) nice = 5;
+  else nice = 10;
+  return nice * base;
+}
+
+/**
+ * Shorten a bucket key for the X-axis. Daily snapshots become "May 27",
+ * weeks stay "W21", months become "May".
+ */
+function formatBucketShort(bucket: string): string {
+  // Daily: "2026-05-27"
+  if (/^\d{4}-\d{2}-\d{2}$/.test(bucket)) {
+    const d = new Date(`${bucket}T00:00:00Z`);
+    return d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+  }
+  // Monthly: "2026-05"
+  if (/^\d{4}-\d{2}$/.test(bucket)) {
+    const [y, m] = bucket.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, {
+      month: "short",
+      year: "2-digit",
+      timeZone: "UTC",
+    });
+  }
+  // Weekly: "2026-W21" — keep the W## part; year is implied by context.
+  const wk = bucket.match(/W(\d{2})/);
+  if (wk) return `W${wk[1]}`;
+  return bucket;
 }
 
 function Stat({

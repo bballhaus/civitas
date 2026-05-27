@@ -16,9 +16,10 @@
  */
 
 const TEST_USERS_RAW: string[] = [
-  // Add usernames here, e.g.:
-  // "brooke",
-  // "demo",
+  "brooke",
+  "sierrawest",
+  "sierraw",
+  "testuser",
 ];
 
 export const TEST_USERS: ReadonlySet<string> = new Set(
