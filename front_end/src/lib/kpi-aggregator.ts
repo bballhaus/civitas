@@ -111,6 +111,22 @@ export interface KpiSummary {
     funnel: Record<string, string>;
   }>;
   /**
+   * Per-counter distribution across users — lets the dashboard show the
+   * spread (mean, median, p90, max) rather than just totals. Useful for
+   * spotting whether one super-user is dragging the totals up.
+   */
+  user_distributions: Record<
+    string,
+    {
+      users_with_value: number;
+      total: number;
+      mean: number;
+      median: number;
+      p90: number;
+      max: number;
+    }
+  >;
+  /**
    * Event-payload rollups for the last EVENT_WINDOW_DAYS days. These come
    * from scanning the byEventType GSI on civitas-kpi-events and are intended
    * to drive the dev /admin/kpis dashboard's drill-downs.
@@ -292,6 +308,35 @@ function aggregate(users: UserSummary[], now: Date): KpiSummary {
     });
   }
 
+  // Per-counter distribution. Walk every counter that's ever appeared on
+  // any user (union of keys), collect non-zero values, compute summary
+  // stats. Skipping zero-only counters keeps the dashboard list short.
+  const allCounterKeys = new Set<string>();
+  for (const u of users) for (const k of Object.keys(u.counters)) allCounterKeys.add(k);
+  const userDistributions: KpiSummary["user_distributions"] = {};
+  for (const key of allCounterKeys) {
+    const values = users
+      .map((u) => u.counters[key] ?? 0)
+      .filter((v) => v > 0);
+    if (values.length === 0) continue;
+    const sum = values.reduce((a, b) => a + b, 0);
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const medianVal =
+      sorted.length % 2 === 0
+        ? (sorted[mid - 1] + sorted[mid]) / 2
+        : sorted[mid];
+    const p90Idx = Math.min(sorted.length - 1, Math.floor(0.9 * sorted.length));
+    userDistributions[key] = {
+      users_with_value: values.length,
+      total: sum,
+      mean: Math.round((sum / values.length) * 100) / 100,
+      median: Math.round(medianVal * 100) / 100,
+      p90: sorted[p90Idx],
+      max: Math.max(...values),
+    };
+  }
+
   const proposalAcceptance =
     totalProposalsGenerated > 0
       ? Math.max(
@@ -346,6 +391,7 @@ function aggregate(users: UserSummary[], now: Date): KpiSummary {
       total_rfps_applied: totalRfpsApplied,
     },
     per_user: perUser,
+    user_distributions: userDistributions,
     // Filled in by computeAndStoreKpiSummary — aggregate() is sync and the
     // rollup pass is async. We seed an empty shape here so the type stays
     // honest and consumers that read aggregate() directly (none today) still
