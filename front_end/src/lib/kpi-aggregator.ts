@@ -16,7 +16,33 @@ import {
   getKpiUsersTable,
 } from "./dynamodb";
 import { putObjectJSON } from "./s3";
-import { isTestUser } from "./test-users";
+import { TEST_USERS, isTestEmail } from "./test-users";
+import { db } from "@/db/client";
+import { users as usersTable } from "@/db/schema";
+
+/**
+ * Resolve the test-user list into a flat set of usernames by joining the
+ * username-based TEST_USERS_RAW with any Postgres users whose email lands in
+ * TEST_EMAILS_RAW. One Postgres query per aggregator run — cheap.
+ *
+ * Falls back to the static TEST_USERS set if the Postgres lookup fails, so
+ * email-based test users may temporarily leak through but the rest still
+ * filters correctly.
+ */
+async function resolveTestUsernames(): Promise<ReadonlySet<string>> {
+  const fromUsernames = new Set(TEST_USERS);
+  try {
+    const rows = await db
+      .select({ username: usersTable.username, email: usersTable.email })
+      .from(usersTable);
+    for (const r of rows) {
+      if (isTestEmail(r.email)) fromUsernames.add(r.username.toLowerCase());
+    }
+  } catch (err) {
+    console.warn("[kpi-aggregator] test-email resolution failed; falling back to username-only list:", err);
+  }
+  return fromUsernames;
+}
 
 // Event types whose payloads we roll up beyond raw counters. Aggregations are
 // done by scanning the byEventType GSI on civitas-kpi-events for events from
@@ -157,7 +183,9 @@ export interface KpiSummary {
   };
 }
 
-async function scanAllUsers(): Promise<UserSummary[]> {
+async function scanAllUsers(
+  testUsernames: ReadonlySet<string>,
+): Promise<UserSummary[]> {
   const out: UserSummary[] = [];
   let lastKey: Record<string, unknown> | undefined;
   do {
@@ -184,7 +212,7 @@ async function scanAllUsers(): Promise<UserSummary[]> {
       // Exclude test accounts from KPI rollups — events were still recorded
       // for them, but they'd bias DAU/MAU, funnel rates, and per-user spread
       // calculations. See lib/test-users.ts for the list.
-      if (isTestUser(username)) continue;
+      if (testUsernames.has(username.toLowerCase())) continue;
       out.push({
         username,
         signup_at: typeof item.signup_at === "string" ? item.signup_at : undefined,
@@ -503,7 +531,10 @@ function topN<T extends Record<string, number>>(
     .map(([key, count]) => ({ key, count }));
 }
 
-async function buildEventRollups(now: Date): Promise<KpiSummary["event_rollups"]> {
+async function buildEventRollups(
+  now: Date,
+  testUsernames: ReadonlySet<string>,
+): Promise<KpiSummary["event_rollups"]> {
   const cutoff = new Date(now.getTime() - EVENT_WINDOW_DAYS * DAY_MS).toISOString();
   // One Query per event type, in parallel. Each is GSI-keyed + time-bounded so
   // they stay cheap even as the event log grows.
@@ -516,7 +547,9 @@ async function buildEventRollups(now: Date): Promise<KpiSummary["event_rollups"]
       const [t, evs] = r.value;
       // Drop events authored by test accounts so rollups (CTR, dwell,
       // filter values, etc.) reflect real users only. See lib/test-users.ts.
-      eventsByType[t] = evs.filter((ev) => !isTestUser(ev.username));
+      eventsByType[t] = evs.filter(
+        (ev) => !ev.username || !testUsernames.has(ev.username.toLowerCase()),
+      );
     } else {
       console.warn("[kpi-aggregator] event rollup query failed:", r.reason);
     }
@@ -698,9 +731,12 @@ const LATEST_KEY = "metrics/aggregate/latest.json";
  */
 export async function computeAndStoreKpiSummary(): Promise<KpiSummary> {
   const now = new Date();
+  // Resolve test users once; both the per-user scan and the event-rollup
+  // pass need the same set so the snapshot stays internally consistent.
+  const testUsernames = await resolveTestUsernames();
   const [users, rollups] = await Promise.all([
-    scanAllUsers(),
-    buildEventRollups(now).catch((err) => {
+    scanAllUsers(testUsernames),
+    buildEventRollups(now, testUsernames).catch((err) => {
       // Rollups failing shouldn't break the per-user summary — log and emit
       // an empty rollup so the rest of the snapshot still lands.
       console.warn("[kpi-aggregator] event rollups failed:", err);
