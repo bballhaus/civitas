@@ -36,6 +36,10 @@ const TEST_USERS_RAW: string[] = [
 
 const TEST_EMAILS_RAW: string[] = [
   "brookeballhaus@me.com",
+  "brookeballhaus@gmail.com",
+  "brooke@civitas-ai.net",
+  "civitas@civitas-ai.net",
+  "ballhaus@stanford.edu",
   "gretzky@stanford.edu",
 ];
 
