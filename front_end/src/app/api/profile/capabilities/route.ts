@@ -2,13 +2,13 @@
 // (Architecture-v2 § 11)
 
 import { NextResponse, after } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/db/client";
 import { profiles } from "@/db/schema";
 import { addCapability } from "@/db/queries/profile";
 import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
-import { recomputeProfileNaics } from "@/lib/profile-naics";
+import { naicsCodeForValue, recomputeProfileNaics } from "@/lib/profile-naics";
 import { rescoreUserMatches } from "@/lib/match-rescore";
 
 export async function POST(request: Request) {
@@ -28,43 +28,44 @@ export async function POST(request: Request) {
 
     const row = await addCapability({ userId: auth.userId, value, canonicalId });
 
-    // Derive profile.naics_codes from NAICS-titled capabilities. Server-side
-    // mirror of the specialties path — covers every write path, not just
-    // the onboarding picker. Stays inline (not deferred to after()) so the
-    // onboarding wizard's GET /api/onboarding/state on Continue returns
-    // fresh codes for Step 4. The `added` list bubbles back in the
-    // response for any callers that still consume it; the onboarding UI
-    // no longer renders the inferred-NAICS banner so this is effectively
-    // just a contract leftover.
-    let addedNaicsCodes: string[] = [];
+    // Fast inline path mirrors specialties/route.ts — see that file for the
+    // full rationale. When the user picked a NAICS-titled capability from
+    // the catalog, union the code into profile.naics_codes and set the
+    // rescore pending flag in a single combined UPDATE. Free-text adds
+    // skip the union and land their LLM-inferred codes via the after()
+    // recompute below.
+    const titleCode = naicsCodeForValue(value);
     try {
-      const result = await recomputeProfileNaics(auth.userId);
-      addedNaicsCodes = result.added;
+      if (titleCode) {
+        await db
+          .update(profiles)
+          .set({
+            naicsCodes: sql`(
+              SELECT ARRAY(
+                SELECT DISTINCT unnest(COALESCE(${profiles.naicsCodes}, ARRAY[]::text[]) || ARRAY[${titleCode}]::text[])
+              )
+            )`,
+            matchScoresPendingSince: new Date(),
+          })
+          .where(eq(profiles.userId, auth.userId));
+      } else {
+        await db
+          .update(profiles)
+          .set({ matchScoresPendingSince: new Date() })
+          .where(eq(profiles.userId, auth.userId));
+      }
     } catch (err) {
-      console.error("[capabilities] naics recompute failed:", err);
+      console.error("[capabilities] inline naics/pending update failed:", err);
     }
 
-    // Set the rescore pending flag inline so /matches's stale banner fires
-    // immediately on the user's next GET, even before the post-response
-    // rescore has finished. Same effect as triggerProfileChangedRescore
-    // used to give us, just hoisted out so the slow work can move into
-    // after() below.
-    try {
-      await db
-        .update(profiles)
-        .set({ matchScoresPendingSince: new Date() })
-        .where(eq(profiles.userId, auth.userId));
-    } catch (err) {
-      console.error("[capabilities] failed to set rescore pending flag:", err);
-    }
-
-    // Voyage embed (~500ms per pick) + RFP rescore (sweeps the cache) used
-    // to block the response, making the onboarding Continue button wait
-    // for the slowest in-flight POST when the optimistic handler drained
-    // pending. Move both into after() so the row insert alone determines
-    // the POST latency (~50ms). Sequenced — rescore reads the freshly
-    // written embeddings, so embed must finish first. Both are fail-soft.
+    // Slow work post-response. Recompute first so LLM-inferred codes for
+    // free-text adds get persisted before the rescore reads naics_codes.
     after(async () => {
+      try {
+        await recomputeProfileNaics(auth.userId);
+      } catch (err) {
+        console.error("[capabilities] naics recompute failed:", err);
+      }
       try {
         await refreshProfileEmbeddings(auth.userId);
       } catch (err) {
@@ -81,7 +82,7 @@ export async function POST(request: Request) {
       }
     });
 
-    return NextResponse.json({ ...row, addedNaicsCodes }, { status: 201 });
+    return NextResponse.json({ ...row, addedNaicsCodes: [] }, { status: 201 });
   } catch (err) {
     console.error("Add capability error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

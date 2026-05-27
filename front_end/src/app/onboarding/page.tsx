@@ -12,13 +12,70 @@ import { MeshBackground } from "@/components/MeshBackground";
 import { TOTAL_STEPS, STEP_META } from "@/lib/onboarding-data";
 import { trackEvent } from "@/lib/event-tracker";
 import { OnboardingStep } from "./Steps";
-import { CommitProvider, makeOptimisticCommitHandler } from "./commit";
+import { CommitProvider, makeOptimisticCommitHandler, isDraftId } from "./commit";
 import type { OnboardingSnapshot } from "./types";
+
+// Merge optimistic (draft-id) rows from the local snapshot into a freshly-
+// fetched server snapshot. Without this, a refresh that lands between the
+// optimistic chip being added and the POST committing wipes the chip — the
+// scheduleRefresh-side guard in commit.tsx catches most of the window but
+// has a small race where a new POST starts after the pending Set has been
+// snapshotted for the await. Merging on the read side closes that window
+// definitively: any draft-id row in the prior local state that isn't yet
+// in the server response is preserved (matched by value, case-insensitive)
+// so the chip stays put until the next refresh confirms it.
+function mergeOptimisticRows(
+  prev: OnboardingSnapshot | null,
+  server: OnboardingSnapshot,
+): OnboardingSnapshot {
+  if (!prev) return server;
+  // Defensive: any unexpected shape (missing array, etc.) falls back to the
+  // server snapshot rather than throwing inside setState — a throw here
+  // would propagate out of refreshSnapshot and prevent goNext from calling
+  // setStep, which presents to the user as a "Continue does nothing"
+  // button hang.
+  try {
+    const mergeCollection = <T extends { id: string; value: string }>(
+      prevRows: T[] | undefined,
+      serverRows: T[] | undefined,
+    ): T[] => {
+      const safeServer = serverRows ?? [];
+      const safePrev = prevRows ?? [];
+      const serverByValue = new Set(safeServer.map((r) => r.value.toLowerCase()));
+      const optimistic = safePrev.filter(
+        (r) => isDraftId(r.id) && !serverByValue.has(r.value.toLowerCase()),
+      );
+      return optimistic.length === 0 ? safeServer : [...safeServer, ...optimistic];
+    };
+    return {
+      ...server,
+      specialties: mergeCollection(prev.specialties, server.specialties),
+      capabilities: mergeCollection(prev.capabilities, server.capabilities),
+    };
+  } catch (err) {
+    console.error("[onboarding] mergeOptimisticRows failed; falling back to server:", err);
+    return server;
+  }
+}
 
 // Helper: stable, lowercase step label suitable for grouping in KPI queries.
 // Falls back to "step_N" if META is missing (shouldn't happen but defensive).
 function stepLabel(n: number): string {
   return STEP_META[n - 1]?.short ?? `step_${n}`;
+}
+
+// Race a promise against a deadline. Rejects with a labelled error if the
+// promise hasn't settled by then. Used to bound the Continue / Finish
+// pre-step-advance work so a hung fetch can never visibly freeze the
+// wizard — the caller catches and presses on either way.
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (err) => { clearTimeout(t); reject(err); },
+    );
+  });
 }
 
 interface OnboardingStateResponse {
@@ -84,7 +141,10 @@ export default function OnboardingPage() {
     const res = await fetch("/api/onboarding/state/", { cache: "no-store" });
     if (!res.ok) return;
     const data = (await res.json()) as OnboardingStateResponse;
-    setSnapshot(data.snapshot);
+    // Functional setSnapshot so we read the latest local state when
+    // merging — using `snapshot` from closure would be stale after rapid
+    // optimistic adds. See mergeOptimisticRows for the rationale.
+    setSnapshot((prev) => mergeOptimisticRows(prev, data.snapshot));
     setCompleteness(data.completenessScore);
   };
 
@@ -121,9 +181,21 @@ export default function OnboardingPage() {
     // Drain any in-flight optimistic POSTs *before* refreshing — otherwise
     // a rapid Continue after a NAICS pick races the GET ahead of the POST,
     // refresh returns server state without the row, and setSnapshot wipes
-    // the optimistic chip the user just placed.
-    await commitHandler.drainPending();
-    await refreshSnapshot();
+    // the optimistic chip the user just placed. Bounded with a 2.5s
+    // timeout because a hung POST (network blip, Lambda overload) used to
+    // make the Continue button visibly do nothing — the await never
+    // returned. Falling through after the timeout means the wizard keeps
+    // advancing; the next page mount re-fetches state anyway.
+    try {
+      await withTimeout(commitHandler.drainPending(), 2500, "drainPending");
+    } catch (err) {
+      console.error("[onboarding] drainPending failed/timed out:", err);
+    }
+    try {
+      await withTimeout(refreshSnapshot(), 2500, "refreshSnapshot");
+    } catch (err) {
+      console.error("[onboarding] refreshSnapshot failed/timed out:", err);
+    }
     if (step < TOTAL_STEPS) setStep(step + 1);
   };
   const goBack = () => {
@@ -145,8 +217,13 @@ export default function OnboardingPage() {
     try {
       // Same race protection as goNext — wait for any background writes
       // to land before we POST /api/onboarding/state/ (which reads the
-      // profile to compute completeness / set onboarded_at).
-      await commitHandler.drainPending();
+      // profile to compute completeness / set onboarded_at). Bounded so
+      // a stuck POST can't strand the Finish button.
+      try {
+        await withTimeout(commitHandler.drainPending(), 2500, "drainPending");
+      } catch (err) {
+        console.error("[onboarding] finish drainPending failed/timed out:", err);
+      }
       const res = await fetch("/api/onboarding/state/", { method: "POST" });
       if (!res.ok) {
         setError("Failed to finalize onboarding");

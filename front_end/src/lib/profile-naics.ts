@@ -37,6 +37,17 @@ function naicsForText(text: string): string | undefined {
   return TITLE_TO_CODE.get(text.toLowerCase().trim());
 }
 
+/**
+ * Look up the NAICS code for a value the user just picked, without touching
+ * the DB. Returns the code for any exact NAICS-title match (the common case
+ * when the user picks from the onboarding catalog), undefined otherwise.
+ * Free-text values fall through and are handled by the deferred
+ * recomputeProfileNaics call (which may run LLM inference).
+ */
+export function naicsCodeForValue(value: string): string | undefined {
+  return naicsForText(value);
+}
+
 // In-process cache for LLM inference. Most free-text values repeat across
 // users ("concrete flatwork", "electrical wiring", etc.) so caching avoids
 // re-paying Haiku for the same string. Keyed by lowercase+trim of the
