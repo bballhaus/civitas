@@ -293,6 +293,39 @@ test("Capability matches via matrix substitute (not just exact code)", () => {
   );
 });
 
+test("Specialty fires strong on direct NAICS overlap", () => {
+  // User picked 237310 during onboarding; the RFP is tagged 237310.
+  // This is the "you specifically chose this code" preference boost.
+  const profile = makeProfile({ naicsCodes: ["237310"] });
+  const rfp = makeRfp({ naicsCodes: ["237310"] });
+  const result = matchV2(profile, rfp);
+  const spec = result.breakdown.find((b) => b.category === "Specialty")!;
+  assert.equal(spec.status, "strong");
+  assert.equal(spec.score, 1.0);
+  assert.equal(spec.profileClaim, "237310");
+});
+
+test("Specialty is neutral when profile NAICS don't overlap the RFP's", () => {
+  // 541511 vs 541512 substitute via the matrix (Capability would partial),
+  // but Specialty requires an exact pick overlap — codes differ → neutral,
+  // so the row is dropped from the weighted average (no penalty).
+  const profile = makeProfile({ naicsCodes: ["541511"] });
+  const rfp = makeRfp({ naicsCodes: ["541512"] });
+  const result = matchV2(profile, rfp);
+  const spec = result.breakdown.find((b) => b.category === "Specialty")!;
+  assert.equal(spec.status, "neutral");
+  assert.equal(spec.score, null);
+});
+
+test("Specialty is neutral when profile has no NAICS", () => {
+  const profile = makeProfile({ naicsCodes: null });
+  const rfp = makeRfp({ naicsCodes: ["237310"] });
+  const result = matchV2(profile, rfp);
+  const spec = result.breakdown.find((b) => b.category === "Specialty")!;
+  assert.equal(spec.status, "neutral");
+  assert.equal(spec.score, null);
+});
+
 test("Capability citation includes RFP phrase and matched profile NAICS", () => {
   // Capability now owns the scope-match signal — its citation should name
   // both the RFP's primary NAICS (with title) and the vendor's matched code.
