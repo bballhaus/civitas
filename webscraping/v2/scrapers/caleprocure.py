@@ -19,11 +19,16 @@ from playwright.async_api import async_playwright, Page, BrowserContext
 
 from webscraping.v2.models import RawScrapedEvent, ContactInfo, SiteConfig
 from webscraping.v2.scrapers.base import BaseScraper
+from webscraping.v2.scrapers.caleprocure_dept_codes import (
+    AGENCY_TO_BUS_UNIT,
+    normalize_agency,
+)
 from webscraping.v2.utils import make_event_id
 
 logger = logging.getLogger(__name__)
 
 SEARCH_URL = "https://caleprocure.ca.gov/pages/Events-BS3/event-search.aspx"
+EVENT_URL_TEMPLATE = "https://caleprocure.ca.gov/event/{bus_unit}/{auc_id}"
 MAX_EVENTS = 1000
 # How many event pages to scrape concurrently within a batch
 CONCURRENCY = 5
@@ -114,144 +119,217 @@ class CalEprocureScraper(BaseScraper):
                 await browser.close()
 
     async def _get_event_urls(self, context: BrowserContext) -> list[str]:
-        """Load the search page and extract all event detail URLs."""
+        """Load the search page and construct event detail URLs.
+
+        URL shape is `/event/{BUSINESS_UNIT}/{AUC_ID}`. AUC_ID is exposed in
+        the row's `tdEventId` cell. BUSINESS_UNIT is *not* in the DOM — but
+        the agency display name (in `tdDepName`) maps 1:1 to BUSINESS_UNIT
+        across CalEP's stable PeopleSoft enumeration, so we look it up in
+        `AGENCY_TO_BUS_UNIT` instead of clicking through PeopleSoft's
+        redirect. Click-based discovery was ~97% flaky because the popup
+        intermittently navigates to the underlying `event-details.aspx`
+        form (which then bounces to `/pages/`) instead of the friendly
+        `/event/...` rewrite.
+
+        Falls back to a single click for any agency missing from the map,
+        and logs a WARNING naming the agency so we can extend the dict.
+        """
         page = await context.new_page()
         try:
-            await page.goto(SEARCH_URL, wait_until="networkidle", timeout=60000)
-            # The Cal eProcure search table is hydrated after networkidle.
-            # The old `wait_for_timeout(5000)` race was sometimes too short
-            # under Lambda contention, leaving the page with no rows and
-            # the scraper returning 0 events. Wait for an actual row, then
-            # a small settle.
+            # Don't gate on networkidle — CalEP's analytics + GTM never
+            # settle. Wait specifically for a data row to be attached
+            # (visibility check fails under headless because PSoft's
+            # data-binding pass marks rows attached before they're visually
+            # painted; `state="attached"` is the real readiness signal).
+            await page.goto(SEARCH_URL, wait_until="domcontentloaded", timeout=60000)
             try:
                 await page.wait_for_selector(
-                    '[data-if-label^="tblBodyTr"]', timeout=30000
+                    "tr[id^='trRESP_INQA_HD_VW']", state="attached", timeout=30000
                 )
-                await page.wait_for_timeout(1500)
+                # Give the PSoft data-binding pass a moment to populate
+                # cell text from the underlying model.
+                await page.wait_for_timeout(2000)
             except Exception:
                 logger.warning(
                     "Search-page rows did not appear within 30s — "
                     "table may be empty or page hit a soft block."
                 )
+                return []
 
-            # Extract event IDs and construct URLs directly
-            # Each row has a click handler that opens /event/{dept_id}/{event_id}
-            # We can extract these from the row data attributes
-            urls = await page.evaluate("""() => {
-                const rows = document.querySelectorAll('[data-if-label^="tblBodyTr"]');
-                const urls = [];
+            # Extract (auc_id, agency) for every row in one round-trip.
+            # Hidden rows (the unbound template clones) are filtered by
+            # `if-hide` class; the populated rows have id prefix
+            # `trRESP_INQA_HD_VW`.
+            rows_data = await page.evaluate("""() => {
+                const rows = document.querySelectorAll("tr[id^='trRESP_INQA_HD_VW']");
+                const out = [];
                 for (const row of rows) {
-                    if (row.classList.contains('if-hide') || row.offsetParent === null) continue;
-
-                    // Get event ID from the cell
+                    if (row.classList.contains('if-hide')) continue;
                     const idCell = row.querySelector('[data-if-label="tdEventId"]');
-                    if (!idCell) continue;
-
-                    // Look for onclick or href that reveals the event URL
-                    const links = row.querySelectorAll('a[href*="event"]');
-                    if (links.length > 0) {
-                        urls.push(links[0].href);
-                        continue;
-                    }
-
-                    // Extract the event ID text — we'll need to click to get URLs
-                    const eventId = idCell.textContent.trim();
-                    if (eventId) {
-                        urls.push(eventId);
-                    }
+                    const depCell = row.querySelector('[data-if-label="tdDepName"]');
+                    if (!idCell || !depCell) continue;
+                    const aucId = (idCell.textContent || '').trim();
+                    const agency = (depCell.textContent || '').trim();
+                    if (aucId) out.push({aucId, agency});
                 }
-                return urls;
+                return out;
             }""")
 
-            self.total_available = len(urls)
+            self.total_available = len(rows_data)
+            logger.info(
+                f"Discovered {len(rows_data)} events on search page; "
+                f"agency map has {len(AGENCY_TO_BUS_UNIT)} entries."
+            )
 
-            # If we got event IDs instead of URLs, we need to click to discover URLs
-            if urls and not urls[0].startswith("http"):
-                logger.info(f"Got {len(urls)} event IDs, discovering URL pattern via click...")
-                event_urls = await self._discover_urls_by_clicking(context, page, urls)
-                return event_urls
+            # Honor batch_offset / batch_size: the Lambda chains batches
+            # across invocations, so this scraper instance only handles
+            # its assigned slice.
+            start = self.batch_offset
+            end = min(
+                start + (self.batch_size or len(rows_data)),
+                len(rows_data),
+                MAX_EVENTS,
+            )
+            batch = rows_data[start:end]
 
-            return urls[:MAX_EVENTS]
+            # Resolve URLs from the map; collect any unknown agencies for
+            # a per-row click fallback.
+            urls: list[str] = []
+            unknown_indices: list[int] = []
+            for i, item in enumerate(batch):
+                agency = normalize_agency(item["agency"])
+                bus_unit = AGENCY_TO_BUS_UNIT.get(agency)
+                if bus_unit:
+                    urls.append(
+                        EVENT_URL_TEMPLATE.format(
+                            bus_unit=bus_unit, auc_id=item["aucId"]
+                        )
+                    )
+                else:
+                    unknown_indices.append(i)
+
+            if unknown_indices:
+                unknown_agencies = sorted({batch[i]["agency"] for i in unknown_indices})
+                logger.warning(
+                    f"{len(unknown_indices)} rows have agencies not in "
+                    f"AGENCY_TO_BUS_UNIT (will fall back to click): "
+                    f"{unknown_agencies}"
+                )
+                fallback_urls = await self._click_discover_for_unknowns(
+                    context, page, batch, unknown_indices
+                )
+                urls.extend(fallback_urls)
+
+            return urls
         finally:
             await page.close()
 
-    async def _discover_urls_by_clicking(
-        self, context: BrowserContext, search_page: Page, event_ids: list[str]
+    async def _click_discover_for_unknowns(
+        self,
+        context: BrowserContext,
+        search_page: Page,
+        batch: list[dict],
+        unknown_indices: list[int],
     ) -> list[str]:
-        """Click each event row to discover its URL (via the loading.html redirect)."""
-        urls = []
+        """Per-row click fallback for agencies missing from AGENCY_TO_BUS_UNIT.
 
-        all_rows = await search_page.query_selector_all('[data-if-label^="tblBodyTr"]')
-        visible_rows = []
-        for row in all_rows:
-            cls = await row.get_attribute("class") or ""
-            if "if-hide" not in cls and await row.is_visible():
-                visible_rows.append(row)
+        Same flaky popup-redirect flow as the old code path, but now only
+        runs for new agencies — typically zero rows. Each successful click
+        also extends AGENCY_TO_BUS_UNIT in-memory so a later row from the
+        same new agency hits the cache instead of clicking again.
 
-        # Click first row to discover URL pattern
-        if visible_rows:
-            row = visible_rows[0]
-            cell = await row.query_selector('[data-if-label="tdEventId"]')
-            if cell:
-                async with context.expect_page(timeout=15000) as new_page_info:
-                    await cell.click()
-                event_page = await new_page_info.value
-                try:
-                    await event_page.wait_for_url("**/event/**", timeout=30000)
-                    # URL pattern: https://caleprocure.ca.gov/event/{dept}/{id}
-                    url = event_page.url
-                    logger.info(f"Discovered URL pattern: {url}")
+        Capped at MAX_FALLBACK_CLICKS per invocation: each click costs
+        ~30s on the slow path, so an avalanche of unknown rows could blow
+        the Lambda timeout. Anything past the cap is skipped and surfaces
+        through the WARNING emitted by the caller — we'd rather lose a
+        few rows this run than the whole batch.
+        """
+        MAX_FALLBACK_CLICKS = 3
+        urls: list[str] = []
+        # Group unknowns by agency so we only burn one click per new
+        # agency, then resolve the rest from the freshly-cached BUS_UNIT.
+        by_agency: dict[str, list[int]] = {}
+        for i in unknown_indices:
+            agency = normalize_agency(batch[i]["agency"])
+            by_agency.setdefault(agency, []).append(i)
 
-                    # The URL follows pattern: base/event/{dept_code}/{event_number}
-                    # We can construct URLs for all events using their IDs
-                    # But Cal eProcure URLs require dept code which isn't in the search table
-                    # So we need to click each one individually
-                finally:
-                    await event_page.close()
-
-        # Click each row to discover its URL. Only click the rows we need
-        # for this batch (respects batch_offset and batch_size from Lambda).
-        start = self.batch_offset
-        end = min(
-            start + (self.batch_size or len(visible_rows)),
-            len(visible_rows),
-            MAX_EVENTS,
-        )
-        batch_rows = list(range(start, end))
-        logger.info(f"Clicking events {start+1}-{end} of {len(visible_rows)} to get URLs...")
-        for i in batch_rows:
-            try:
-                # Need to reload search page for each click (Cal eProcure quirk)
-                if i > 0:
-                    await search_page.goto(SEARCH_URL, wait_until="networkidle", timeout=60000)
-                    await search_page.wait_for_timeout(3000)
-                    all_rows = await search_page.query_selector_all('[data-if-label^="tblBodyTr"]')
-                    visible_rows = [
-                        r for r in all_rows
-                        if "if-hide" not in (await r.get_attribute("class") or "")
-                        and await r.is_visible()
-                    ]
-                    if i >= len(visible_rows):
-                        break
-                    row = visible_rows[i]
-
-                cell = await row.query_selector('[data-if-label="tdEventId"]')
-                if not cell:
-                    continue
-
-                async with context.expect_page(timeout=15000) as new_page_info:
-                    await cell.click()
-                event_page = await new_page_info.value
-                try:
-                    await event_page.wait_for_url("**/event/**", timeout=30000)
-                    urls.append(event_page.url)
-                finally:
-                    await event_page.close()
-
-            except Exception as e:
-                logger.debug(f"Could not get URL for event {i}: {e}")
-
+        clicks_done = 0
+        for agency, indices in by_agency.items():
+            if clicks_done >= MAX_FALLBACK_CLICKS:
+                logger.warning(
+                    f"Fallback click cap ({MAX_FALLBACK_CLICKS}) hit; "
+                    f"skipping {len(by_agency) - clicks_done} more new agencies "
+                    f"this batch."
+                )
+                break
+            probe_idx = indices[0]
+            probe_auc_id = batch[probe_idx]["aucId"]
+            bus_unit = await self._discover_bus_unit_via_click(
+                context, search_page, probe_auc_id, agency
+            )
+            clicks_done += 1
+            if bus_unit is None:
+                continue
+            AGENCY_TO_BUS_UNIT[agency] = bus_unit
+            for i in indices:
+                urls.append(
+                    EVENT_URL_TEMPLATE.format(
+                        bus_unit=bus_unit, auc_id=batch[i]["aucId"]
+                    )
+                )
         return urls
+
+    async def _discover_bus_unit_via_click(
+        self,
+        context: BrowserContext,
+        search_page: Page,
+        auc_id: str,
+        agency: str,
+    ) -> str | None:
+        """Click the row for `auc_id` to discover its BUSINESS_UNIT.
+
+        Uses dispatch_event('click') because PSoft data rows are flagged
+        not-visible by Playwright in headless (the InFlight framework
+        paints them at z-index/opacity that fails Playwright's visibility
+        heuristic even though they're functionally clickable). The PSoft
+        click handler is bound via addEventListener, so dispatch_event
+        triggers the same code path as a real click without the
+        visibility gate.
+        """
+        try:
+            cell = search_page.locator(
+                f"tr[id^='trRESP_INQA_HD_VW']:not(.if-hide) "
+                f"td[data-if-label='tdEventId']:has-text('{auc_id}')"
+            ).first
+            async with context.expect_page(timeout=15000) as new_page_info:
+                await cell.dispatch_event("click")
+            event_page = await new_page_info.value
+            try:
+                await event_page.wait_for_url("**/event/**", timeout=20000)
+                discovered = event_page.url
+                # URL is /event/{bus_unit}/{auc_id}; pull the second-to-last
+                # path segment regardless of trailing slashes.
+                parts = discovered.rstrip("/").split("/")
+                if len(parts) >= 2 and parts[-2].isdigit():
+                    bus_unit = parts[-2]
+                    logger.info(
+                        f"Click fallback resolved new agency {agency!r} "
+                        f"-> BUS_UNIT {bus_unit}. Add to AGENCY_TO_BUS_UNIT."
+                    )
+                    return bus_unit
+                logger.warning(
+                    f"Click fallback for {agency!r} got non-standard URL: "
+                    f"{discovered}"
+                )
+                return None
+            finally:
+                await event_page.close()
+        except Exception as e:
+            logger.warning(
+                f"Click fallback failed for {agency!r} AUC_ID {auc_id}: "
+                f"{type(e).__name__}: {e}"
+            )
+            return None
 
     async def _scrape_event_by_url(
         self,
