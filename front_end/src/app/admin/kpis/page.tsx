@@ -261,9 +261,21 @@ export default function AdminKpisPage() {
       <Section title="Active users">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Stat label="Total users" value={summary.total_users} />
-          <Stat label="DAU" value={summary.active_users.DAU} />
-          <Stat label="WAU" value={summary.active_users.WAU} />
-          <Stat label="MAU" value={summary.active_users.MAU} />
+          <Stat
+            label="DAU — daily (last 24h)"
+            value={summary.active_users.DAU}
+            help="Distinct users with any activity in the last 24 hours."
+          />
+          <Stat
+            label="WAU — weekly (last 7d)"
+            value={summary.active_users.WAU}
+            help="Distinct users with any activity in the last 7 days."
+          />
+          <Stat
+            label="MAU — monthly (last 30d)"
+            value={summary.active_users.MAU}
+            help="Distinct users with any activity in the last 30 days."
+          />
         </div>
       </Section>
 
@@ -296,14 +308,54 @@ export default function AdminKpisPage() {
           </p>
         ) : (
           <div className="space-y-5">
-            <TimeseriesChart title="Signups (in bucket)" points={timeseries} metric="signups_in_bucket" />
-            <TimeseriesChart title="DAU" points={timeseries} metric="DAU" />
-            <TimeseriesChart title="WAU" points={timeseries} metric="WAU" />
-            <TimeseriesChart title="MAU" points={timeseries} metric="MAU" />
-            <TimeseriesChart title="RFP views (in bucket)" points={timeseries} metric="rfp_views_in_bucket" />
-            <TimeseriesChart title="RFP saves (in bucket)" points={timeseries} metric="rfp_saves_in_bucket" />
-            <TimeseriesChart title="RFP applies (in bucket)" points={timeseries} metric="rfp_applies_in_bucket" />
-            <TimeseriesChart title="Cumulative signups" points={timeseries} metric="cumulative_signups" />
+            <TimeseriesChart
+              title="New signups per bucket"
+              help="How many users completed signup in each bucket."
+              points={timeseries}
+              metric="signups_in_bucket"
+            />
+            <TimeseriesChart
+              title="DAU — daily active users (any activity in last 24h)"
+              help="Distinct users with any tracked activity in the last 24 hours, measured at the end of each bucket."
+              points={timeseries}
+              metric="DAU"
+            />
+            <TimeseriesChart
+              title="WAU — weekly active users (any activity in last 7d)"
+              help="Distinct users with any tracked activity in the last 7 days, measured at the end of each bucket."
+              points={timeseries}
+              metric="WAU"
+            />
+            <TimeseriesChart
+              title="MAU — monthly active users (any activity in last 30d)"
+              help="Distinct users with any tracked activity in the last 30 days, measured at the end of each bucket."
+              points={timeseries}
+              metric="MAU"
+            />
+            <TimeseriesChart
+              title="RFP detail views per bucket"
+              help="Number of RFP detail pages opened, summed across users in each bucket."
+              points={timeseries}
+              metric="rfp_views_in_bucket"
+            />
+            <TimeseriesChart
+              title="RFPs saved per bucket"
+              help="How many RFPs users saved to their tracker in each bucket."
+              points={timeseries}
+              metric="rfp_saves_in_bucket"
+            />
+            <TimeseriesChart
+              title="RFPs applied to per bucket"
+              help="How many RFPs users marked as bid-submitted in each bucket."
+              points={timeseries}
+              metric="rfp_applies_in_bucket"
+            />
+            <TimeseriesChart
+              title="Cumulative signups (all-time)"
+              help="Running total of accounts created."
+              points={timeseries}
+              metric="cumulative_signups"
+            />
           </div>
         )}
       </Section>
@@ -499,6 +551,16 @@ export default function AdminKpisPage() {
         <UserDistributionTable distributions={summary.user_distributions ?? {}} />
       </Section>
 
+      <Section title="Page views per user, by page">
+        <p className="text-xs text-slate-500 mb-2">
+          Where individual users spend their time. Same stats as the spread above (users with non-zero, total, mean, median, p90, max) but segmented by page. Detail pages (e.g. <code>/matches/[id]</code>) collapse to <code>rfp_detail</code>.
+        </p>
+        <UserDistributionTable
+          distributions={summary.event_rollups?.page_views_by_path ?? {}}
+          metricLabel="Page"
+        />
+      </Section>
+
       <Section title="Per-user breakdown">
         <PerUserTable users={summary.per_user} />
       </Section>
@@ -596,54 +658,247 @@ function humanAgo(iso: string): string {
 
 function TimeseriesChart({
   title,
+  help,
   points,
   metric,
 }: {
   title: string;
+  help?: string;
   points: TimeseriesPoint[];
   metric: keyof TimeseriesPoint;
 }) {
-  // Vertical bars per bucket. CSS-only — no chart lib. Width per bar
-  // auto-scales to the container; reading the values is via tooltips.
+  // SVG line chart with proper axes. ViewBox uses a fixed coordinate space
+  // (W × H) so every chart renders identically regardless of container width.
+  // preserveAspectRatio="none" lets the plot stretch horizontally to fill the
+  // slot. Axis labels live inside the same SVG so they scale with the chart.
   const values = points.map((p) => Number(p[metric] ?? 0));
-  const max = Math.max(...values, 1);
+  const rawMax = Math.max(...values, 1);
+  // Round max up to a "nice" number so Y-axis ticks come out clean
+  // (e.g. 87 → 100, 17 → 20). Without this the tick labels get noisy.
+  const niceMax = niceCeil(rawMax);
+  const last = values[values.length - 1] ?? 0;
+
+  const W = 800;
+  const H = 140;
+  const PAD_LEFT = 44;
+  const PAD_RIGHT = 12;
+  const PAD_TOP = 10;
+  const PAD_BOTTOM = 24;
+  const plotW = W - PAD_LEFT - PAD_RIGHT;
+  const plotH = H - PAD_TOP - PAD_BOTTOM;
+
+  const yFor = (v: number) => {
+    if (niceMax <= 0) return PAD_TOP + plotH;
+    return PAD_TOP + plotH * (1 - v / niceMax);
+  };
+  const xFor = (i: number) => {
+    if (points.length <= 1) return PAD_LEFT + plotW;
+    return PAD_LEFT + (plotW * i) / (points.length - 1);
+  };
+
+  const linePath = values
+    .map((v, i) => `${i === 0 ? "M" : "L"}${xFor(i).toFixed(2)},${yFor(v).toFixed(2)}`)
+    .join(" ");
+  const areaPath =
+    values.length > 0
+      ? `${linePath} L${xFor(values.length - 1).toFixed(2)},${PAD_TOP + plotH} L${xFor(0).toFixed(2)},${PAD_TOP + plotH} Z`
+      : "";
+
+  // Y-axis ticks: 5 evenly spaced. Each tick gets a gridline + label.
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((frac) => ({
+    frac,
+    value: Math.round(niceMax * frac),
+    y: PAD_TOP + plotH * (1 - frac),
+  }));
+  // X-axis ticks: pick a handful of evenly spaced indices. Fewer when the
+  // labels would overlap (long ISO dates take ~70px each at this font size).
+  const tickCount = Math.min(points.length, points.length <= 12 ? points.length : 6);
+  const xTickIndices: number[] = [];
+  if (points.length > 0) {
+    if (tickCount <= 1) xTickIndices.push(0);
+    else for (let i = 0; i < tickCount; i++) {
+      xTickIndices.push(Math.round((i * (points.length - 1)) / (tickCount - 1)));
+    }
+  }
+
   return (
-    <div>
+    <div title={help}>
       <div className="flex items-baseline justify-between mb-1">
-        <p className="text-xs font-semibold text-slate-600">{title}</p>
-        <p className="text-[10px] text-slate-400">
-          max {max} · last {values[values.length - 1] ?? 0}
+        <p className="text-xs font-semibold text-slate-800">{title}</p>
+        <p className="text-[11px] text-slate-600">
+          max <span className="font-semibold text-slate-800">{rawMax}</span> · latest{" "}
+          <span className="font-semibold text-slate-800">{last}</span> · {points.length}{" "}
+          {points.length === 1 ? "point" : "points"}
         </p>
       </div>
-      <div className="flex items-end gap-0.5 h-24 bg-slate-50 rounded border border-slate-100 px-1 py-1">
-        {points.map((p, i) => {
-          const v = values[i];
-          const pct = max > 0 ? (v / max) * 100 : 0;
-          return (
-            <div
-              key={p.bucket}
-              title={`${p.bucket}: ${v}`}
-              className="flex-1 min-w-[3px] bg-[#3C89C6] hover:bg-[#2d6fa0] rounded-t transition-colors"
-              style={{ height: `${Math.max(pct, v > 0 ? 2 : 0)}%` }}
+      {points.length === 0 ? (
+        <div className="h-32 flex items-center justify-center bg-slate-50 rounded border border-slate-100 text-xs text-slate-400">
+          No snapshots in window — the chart fills in as days accumulate.
+        </div>
+      ) : (
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+          className="w-full h-32 bg-slate-50 rounded border border-slate-100"
+        >
+          {/* Y-axis gridlines + tick labels. Dashed for inner ticks, solid for the baseline. */}
+          {yTicks.map((t) => (
+            <g key={t.frac}>
+              <line
+                x1={PAD_LEFT}
+                x2={W - PAD_RIGHT}
+                y1={t.y}
+                y2={t.y}
+                stroke="#e2e8f0"
+                strokeWidth="1"
+                strokeDasharray={t.frac === 0 ? "0" : "2,3"}
+              />
+              <text
+                x={PAD_LEFT - 6}
+                y={t.y + 3}
+                textAnchor="end"
+                className="fill-slate-500"
+                style={{ fontSize: 10 }}
+              >
+                {t.value}
+              </text>
+            </g>
+          ))}
+          {/* Y-axis line. */}
+          <line
+            x1={PAD_LEFT}
+            x2={PAD_LEFT}
+            y1={PAD_TOP}
+            y2={PAD_TOP + plotH}
+            stroke="#cbd5e1"
+            strokeWidth="1"
+          />
+          {/* X-axis ticks + labels at evenly spaced bucket indices. */}
+          {xTickIndices.map((i) => (
+            <g key={i}>
+              <line
+                x1={xFor(i)}
+                x2={xFor(i)}
+                y1={PAD_TOP + plotH}
+                y2={PAD_TOP + plotH + 4}
+                stroke="#cbd5e1"
+                strokeWidth="1"
+              />
+              <text
+                x={xFor(i)}
+                y={PAD_TOP + plotH + 16}
+                textAnchor="middle"
+                className="fill-slate-500"
+                style={{ fontSize: 10 }}
+              >
+                {formatBucketShort(points[i].bucket)}
+              </text>
+            </g>
+          ))}
+          {/* Filled area under the line for visual weight. */}
+          {points.length > 1 && (
+            <path d={areaPath} fill="#3C89C6" fillOpacity="0.12" />
+          )}
+          {/* The line itself. */}
+          {points.length > 1 && (
+            <path
+              d={linePath}
+              fill="none"
+              stroke="#3C89C6"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
             />
-          );
-        })}
-      </div>
-      <div className="flex justify-between text-[10px] text-slate-400 mt-1">
-        <span>{points[0]?.bucket ?? ""}</span>
-        <span>{points[points.length - 1]?.bucket ?? ""}</span>
-      </div>
+          )}
+          {/* Dot per point — readable when count is small, dense when not. */}
+          {points.map((p, i) => (
+            <circle
+              key={p.bucket}
+              cx={xFor(i)}
+              cy={yFor(values[i])}
+              r={points.length > 30 ? 1.5 : 3}
+              fill="#3C89C6"
+              stroke="white"
+              strokeWidth={points.length > 30 ? 0.5 : 1.5}
+            >
+              <title>{`${p.bucket}: ${values[i]}`}</title>
+            </circle>
+          ))}
+        </svg>
+      )}
     </div>
   );
 }
 
-function Stat({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
+/**
+ * Round a positive number up to a "nice" axis maximum. Picks the smallest
+ * value of the form {1,2,2.5,5,10} × 10ⁿ that's >= v. Yields clean tick
+ * labels (10, 20, 25, 50, 100, …) instead of arbitrary values like 87.
+ */
+function niceCeil(v: number): number {
+  if (v <= 0) return 1;
+  const exp = Math.floor(Math.log10(v));
+  const base = Math.pow(10, exp);
+  const norm = v / base; // ∈ [1, 10)
+  let nice: number;
+  if (norm <= 1) nice = 1;
+  else if (norm <= 2) nice = 2;
+  else if (norm <= 2.5) nice = 2.5;
+  else if (norm <= 5) nice = 5;
+  else nice = 10;
+  return nice * base;
+}
+
+/**
+ * Shorten a bucket key for the X-axis. Daily snapshots become "May 27",
+ * weeks stay "W21", months become "May".
+ */
+function formatBucketShort(bucket: string): string {
+  // Daily: "2026-05-27"
+  if (/^\d{4}-\d{2}-\d{2}$/.test(bucket)) {
+    const d = new Date(`${bucket}T00:00:00Z`);
+    return d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+  }
+  // Monthly: "2026-05"
+  if (/^\d{4}-\d{2}$/.test(bucket)) {
+    const [y, m] = bucket.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, {
+      month: "short",
+      year: "2-digit",
+      timeZone: "UTC",
+    });
+  }
+  // Weekly: "2026-W21" — keep the W## part; year is implied by context.
+  const wk = bucket.match(/W(\d{2})/);
+  if (wk) return `W${wk[1]}`;
+  return bucket;
+}
+
+function Stat({
+  label,
+  value,
+  suffix,
+  help,
+}: {
+  label: string;
+  value: number;
+  suffix?: string;
+  help?: string;
+}) {
   return (
-    <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+    <div
+      className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3"
+      title={help}
+    >
+      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
       <p className="text-2xl font-extrabold text-slate-900">
         {value}
-        {suffix && <span className="text-base font-bold text-slate-500 ml-0.5">{suffix}</span>}
+        {suffix && <span className="text-base font-bold text-slate-700 ml-0.5">{suffix}</span>}
       </p>
     </div>
   );
@@ -738,19 +993,19 @@ function PerUserTable({ users }: { users: KpiSummary["per_user"] }) {
         <tbody>
           {sorted.map((u) => (
             <tr key={u.username} className="border-b border-slate-100">
-              <td className="py-1 px-2 font-medium text-slate-800">{u.username}</td>
-              <td className="py-1 px-2 text-slate-500">
+              <td className="py-1 px-2 font-medium text-slate-900">{u.username}</td>
+              <td className="py-1 px-2 text-slate-700">
                 {u.signup_at ? new Date(u.signup_at).toLocaleDateString() : "—"}
               </td>
-              <td className="py-1 px-2 text-slate-500">
+              <td className="py-1 px-2 text-slate-700">
                 {u.last_active_at
                   ? `${u.days_since_last_active ?? "?"}d ago`
                   : "—"}
               </td>
-              <td className="py-1 px-2 text-right">{u.counters.counter_rfps_viewed ?? 0}</td>
-              <td className="py-1 px-2 text-right">{u.counters.counter_rfps_saved ?? 0}</td>
-              <td className="py-1 px-2 text-right">{u.counters.counter_rfps_applied ?? 0}</td>
-              <td className="py-1 px-2 text-right">{u.counters.counter_sessions ?? 0}</td>
+              <td className="py-1 px-2 text-right text-slate-800">{u.counters.counter_rfps_viewed ?? 0}</td>
+              <td className="py-1 px-2 text-right text-slate-800">{u.counters.counter_rfps_saved ?? 0}</td>
+              <td className="py-1 px-2 text-right text-slate-800">{u.counters.counter_rfps_applied ?? 0}</td>
+              <td className="py-1 px-2 text-right text-slate-800">{u.counters.counter_sessions ?? 0}</td>
             </tr>
           ))}
         </tbody>
@@ -761,40 +1016,56 @@ function PerUserTable({ users }: { users: KpiSummary["per_user"] }) {
 
 function UserDistributionTable({
   distributions,
+  metricLabel = "Metric",
 }: {
-  distributions: NonNullable<KpiSummary["user_distributions"]>;
+  distributions: Record<
+    string,
+    {
+      users_with_value: number;
+      total: number;
+      mean: number;
+      median: number;
+      p90: number;
+      max: number;
+    }
+  >;
+  metricLabel?: string;
 }) {
   const entries = Object.entries(distributions).sort(
     (a, b) => b[1].total - a[1].total,
   );
   if (entries.length === 0) return <Empty />;
   // Shorten the counter_ prefix that's baked into our schema — pure
-  // presentation.
+  // presentation. Non-counter keys (e.g. page categories) pass through.
   const label = (k: string) => k.replace(/^counter_/, "").replace(/_/g, " ");
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+      <table className="w-full text-sm">
+        <thead className="text-[10px] uppercase tracking-wider text-slate-600 border-b border-slate-200">
           <tr>
-            <th className="text-left py-1.5 px-2">Metric</th>
-            <th className="text-right py-1.5 px-2">Users with</th>
-            <th className="text-right py-1.5 px-2">Total</th>
-            <th className="text-right py-1.5 px-2">Mean</th>
-            <th className="text-right py-1.5 px-2">Median</th>
-            <th className="text-right py-1.5 px-2">P90</th>
-            <th className="text-right py-1.5 px-2">Max</th>
+            <th className="text-left py-1.5 px-2">{metricLabel}</th>
+            <th className="text-right py-1.5 px-2" title="Number of users with a non-zero count">
+              Users with
+            </th>
+            <th className="text-right py-1.5 px-2" title="Sum across all users">Total</th>
+            <th className="text-right py-1.5 px-2" title="Average across users with non-zero count">
+              Mean
+            </th>
+            <th className="text-right py-1.5 px-2" title="Median value (typical user)">Median</th>
+            <th className="text-right py-1.5 px-2" title="90th percentile (heavy users)">P90</th>
+            <th className="text-right py-1.5 px-2" title="Highest single user">Max</th>
           </tr>
         </thead>
         <tbody>
           {entries.map(([k, d]) => (
             <tr key={k} className="border-b border-slate-100">
-              <td className="py-1 px-2 font-medium text-slate-800">{label(k)}</td>
-              <td className="py-1 px-2 text-right text-slate-500">{d.users_with_value}</td>
-              <td className="py-1 px-2 text-right font-semibold">{d.total}</td>
-              <td className="py-1 px-2 text-right">{d.mean}</td>
-              <td className="py-1 px-2 text-right">{d.median}</td>
-              <td className="py-1 px-2 text-right">{d.p90}</td>
-              <td className="py-1 px-2 text-right">{d.max}</td>
+              <td className="py-1.5 px-2 font-medium text-slate-900">{label(k)}</td>
+              <td className="py-1.5 px-2 text-right text-slate-700">{d.users_with_value}</td>
+              <td className="py-1.5 px-2 text-right font-semibold text-slate-900">{d.total}</td>
+              <td className="py-1.5 px-2 text-right text-slate-800">{d.mean}</td>
+              <td className="py-1.5 px-2 text-right text-slate-800">{d.median}</td>
+              <td className="py-1.5 px-2 text-right text-slate-800">{d.p90}</td>
+              <td className="py-1.5 px-2 text-right text-slate-800">{d.max}</td>
             </tr>
           ))}
         </tbody>

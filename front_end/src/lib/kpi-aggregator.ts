@@ -16,6 +16,42 @@ import {
   getKpiUsersTable,
 } from "./dynamodb";
 import { putObjectJSON } from "./s3";
+import { TEST_USERS, TEST_EMAILS, isTestEmail } from "./test-users";
+import { db } from "@/db/client";
+import { users as usersTable } from "@/db/schema";
+
+/**
+ * Resolve the test-user list into a flat set of usernames by joining the
+ * username-based TEST_USERS_RAW with any Postgres users whose email lands in
+ * TEST_EMAILS_RAW. One Postgres query per aggregator run — cheap.
+ *
+ * Falls back to the static TEST_USERS set if the Postgres lookup fails, so
+ * email-based test users may temporarily leak through but the rest still
+ * filters correctly.
+ */
+async function resolveTestUsernames(): Promise<ReadonlySet<string>> {
+  const out = new Set(TEST_USERS);
+  // Also treat every test EMAIL as a direct username match. Some events
+  // recorded the email string into the username field (e.g. abandoned
+  // signups where the prospective username happened to be the email, or
+  // older code paths). Adding the emails here catches those rows without
+  // requiring a Postgres user row to exist.
+  for (const e of TEST_EMAILS) out.add(e);
+  // Plus: any Postgres user whose email matches the test-email list — this
+  // catches "real" accounts that completed signup with a test email but
+  // chose a non-email-shaped username.
+  try {
+    const rows = await db
+      .select({ username: usersTable.username, email: usersTable.email })
+      .from(usersTable);
+    for (const r of rows) {
+      if (isTestEmail(r.email)) out.add(r.username.toLowerCase());
+    }
+  } catch (err) {
+    console.warn("[kpi-aggregator] test-email resolution failed; falling back to static lists:", err);
+  }
+  return out;
+}
 
 // Event types whose payloads we roll up beyond raw counters. Aggregations are
 // done by scanning the byEventType GSI on civitas-kpi-events for events from
@@ -44,7 +80,29 @@ const ROLLUP_EVENT_TYPES = [
   "search_submitted",
   "search_result_count",
   "sort_changed",
+  "page_viewed",
 ] as const;
+
+/**
+ * Map a raw pagePath to a stable category. Detail pages (`/matches/abc123`)
+ * collapse to `rfp_detail` so per-user counts aren't fragmented across every
+ * RFP UUID; everything else keeps its top-level segment.
+ */
+function pageCategory(rawPath: string | undefined | null): string {
+  const p = (rawPath ?? "").toLowerCase();
+  if (!p) return "unknown";
+  if (p.startsWith("/matches/") || p.startsWith("/dashboard/rfp/")) return "rfp_detail";
+  if (p === "/home" || p.startsWith("/home")) return "home";
+  if (p === "/dashboard" || p.startsWith("/dashboard")) return "dashboard";
+  if (p === "/matches" || p.startsWith("/matches")) return "matches";
+  if (p === "/tracker" || p.startsWith("/tracker")) return "tracker";
+  if (p.startsWith("/profile")) return "profile";
+  if (p.startsWith("/onboarding")) return "onboarding";
+  if (p.startsWith("/contracts")) return "contracts";
+  if (p.startsWith("/upload")) return "upload";
+  if (p === "/" || p === "") return "root";
+  return p.split("/")[1] ?? "other";
+}
 
 const EVENT_WINDOW_DAYS = 30;
 
@@ -153,10 +211,29 @@ export interface KpiSummary {
     onboarding_step_skip_rate: Record<string, number>;
     onboarding_validation_errors: Record<string, number>;
     sort_key_distribution: Record<string, number>;
+    /**
+     * Per-user page-view distribution, segmented by page category
+     * (home / dashboard / matches / tracker / rfp_detail / profile / ...).
+     * Each entry carries: how many distinct users have visited that page,
+     * total events, mean/median/p90/max visits per user.
+     */
+    page_views_by_path: Record<
+      string,
+      {
+        users_with_value: number;
+        total: number;
+        mean: number;
+        median: number;
+        p90: number;
+        max: number;
+      }
+    >;
   };
 }
 
-async function scanAllUsers(): Promise<UserSummary[]> {
+async function scanAllUsers(
+  testUsernames: ReadonlySet<string>,
+): Promise<UserSummary[]> {
   const out: UserSummary[] = [];
   let lastKey: Record<string, unknown> | undefined;
   do {
@@ -180,6 +257,10 @@ async function scanAllUsers(): Promise<UserSummary[]> {
           : typeof item.pk === "string"
             ? decodeURIComponent(item.pk.replace(/^USER#/, ""))
             : "";
+      // Exclude test accounts from KPI rollups — events were still recorded
+      // for them, but they'd bias DAU/MAU, funnel rates, and per-user spread
+      // calculations. See lib/test-users.ts for the list.
+      if (testUsernames.has(username.toLowerCase())) continue;
       out.push({
         username,
         signup_at: typeof item.signup_at === "string" ? item.signup_at : undefined,
@@ -418,6 +499,7 @@ function aggregate(users: UserSummary[], now: Date): KpiSummary {
       onboarding_step_skip_rate: {},
       onboarding_validation_errors: {},
       sort_key_distribution: {},
+      page_views_by_path: {},
     },
   };
 }
@@ -498,7 +580,10 @@ function topN<T extends Record<string, number>>(
     .map(([key, count]) => ({ key, count }));
 }
 
-async function buildEventRollups(now: Date): Promise<KpiSummary["event_rollups"]> {
+async function buildEventRollups(
+  now: Date,
+  testUsernames: ReadonlySet<string>,
+): Promise<KpiSummary["event_rollups"]> {
   const cutoff = new Date(now.getTime() - EVENT_WINDOW_DAYS * DAY_MS).toISOString();
   // One Query per event type, in parallel. Each is GSI-keyed + time-bounded so
   // they stay cheap even as the event log grows.
@@ -509,7 +594,11 @@ async function buildEventRollups(now: Date): Promise<KpiSummary["event_rollups"]
   for (const r of allowSettled) {
     if (r.status === "fulfilled") {
       const [t, evs] = r.value;
-      eventsByType[t] = evs;
+      // Drop events authored by test accounts so rollups (CTR, dwell,
+      // filter values, etc.) reflect real users only. See lib/test-users.ts.
+      eventsByType[t] = evs.filter(
+        (ev) => !ev.username || !testUsernames.has(ev.username.toLowerCase()),
+      );
     } else {
       console.warn("[kpi-aggregator] event rollup query failed:", r.reason);
     }
@@ -651,6 +740,38 @@ async function buildEventRollups(now: Date): Promise<KpiSummary["event_rollups"]
     sort_key_distribution[k] = (sort_key_distribution[k] ?? 0) + 1;
   }
 
+  // Page views, segmented by page category and grouped by user. The summary
+  // counter_page_views totals every path; this rollup splits it so the
+  // dashboard can show "median tracker visits per user", "median homepage
+  // visits per user", etc. Per-user counts let us compute spread (mean,
+  // median, p90, max) the same way we do for any other counter.
+  const pageViewsByUserAndPath: Record<string, Map<string, number>> = {};
+  for (const ev of eventsByType["page_viewed"] ?? []) {
+    if (!ev.username) continue;
+    const cat = pageCategory(typeof ev.payload.pagePath === "string" ? ev.payload.pagePath : "");
+    const userMap = (pageViewsByUserAndPath[cat] ??= new Map());
+    userMap.set(ev.username, (userMap.get(ev.username) ?? 0) + 1);
+  }
+  const page_views_by_path: KpiSummary["event_rollups"]["page_views_by_path"] = {};
+  for (const [cat, userMap] of Object.entries(pageViewsByUserAndPath)) {
+    const values = Array.from(userMap.values()).filter((v) => v > 0);
+    if (values.length === 0) continue;
+    const sum = values.reduce((a, b) => a + b, 0);
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const med =
+      sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    const p90Idx = Math.min(sorted.length - 1, Math.floor(0.9 * sorted.length));
+    page_views_by_path[cat] = {
+      users_with_value: values.length,
+      total: sum,
+      mean: Math.round((sum / values.length) * 100) / 100,
+      median: Math.round(med * 100) / 100,
+      p90: sorted[p90Idx],
+      max: Math.max(...values),
+    };
+  }
+
   return {
     window_days: EVENT_WINDOW_DAYS,
     event_counts,
@@ -673,6 +794,7 @@ async function buildEventRollups(now: Date): Promise<KpiSummary["event_rollups"]
     onboarding_step_skip_rate,
     onboarding_validation_errors,
     sort_key_distribution,
+    page_views_by_path,
   };
 }
 
@@ -691,9 +813,12 @@ const LATEST_KEY = "metrics/aggregate/latest.json";
  */
 export async function computeAndStoreKpiSummary(): Promise<KpiSummary> {
   const now = new Date();
+  // Resolve test users once; both the per-user scan and the event-rollup
+  // pass need the same set so the snapshot stays internally consistent.
+  const testUsernames = await resolveTestUsernames();
   const [users, rollups] = await Promise.all([
-    scanAllUsers(),
-    buildEventRollups(now).catch((err) => {
+    scanAllUsers(testUsernames),
+    buildEventRollups(now, testUsernames).catch((err) => {
       // Rollups failing shouldn't break the per-user summary — log and emit
       // an empty rollup so the rest of the snapshot still lands.
       console.warn("[kpi-aggregator] event rollups failed:", err);
