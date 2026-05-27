@@ -12,8 +12,39 @@ import { MeshBackground } from "@/components/MeshBackground";
 import { TOTAL_STEPS, STEP_META } from "@/lib/onboarding-data";
 import { trackEvent } from "@/lib/event-tracker";
 import { OnboardingStep } from "./Steps";
-import { CommitProvider, makeOptimisticCommitHandler } from "./commit";
+import { CommitProvider, makeOptimisticCommitHandler, isDraftId } from "./commit";
 import type { OnboardingSnapshot } from "./types";
+
+// Merge optimistic (draft-id) rows from the local snapshot into a freshly-
+// fetched server snapshot. Without this, a refresh that lands between the
+// optimistic chip being added and the POST committing wipes the chip — the
+// scheduleRefresh-side guard in commit.tsx catches most of the window but
+// has a small race where a new POST starts after the pending Set has been
+// snapshotted for the await. Merging on the read side closes that window
+// definitively: any draft-id row in the prior local state that isn't yet
+// in the server response is preserved (matched by value, case-insensitive)
+// so the chip stays put until the next refresh confirms it.
+function mergeOptimisticRows(
+  prev: OnboardingSnapshot | null,
+  server: OnboardingSnapshot,
+): OnboardingSnapshot {
+  if (!prev) return server;
+  const mergeCollection = <T extends { id: string; value: string }>(
+    prevRows: T[],
+    serverRows: T[],
+  ): T[] => {
+    const serverByValue = new Set(serverRows.map((r) => r.value.toLowerCase()));
+    const optimistic = prevRows.filter(
+      (r) => isDraftId(r.id) && !serverByValue.has(r.value.toLowerCase()),
+    );
+    return optimistic.length === 0 ? serverRows : [...serverRows, ...optimistic];
+  };
+  return {
+    ...server,
+    specialties: mergeCollection(prev.specialties, server.specialties),
+    capabilities: mergeCollection(prev.capabilities, server.capabilities),
+  };
+}
 
 // Helper: stable, lowercase step label suitable for grouping in KPI queries.
 // Falls back to "step_N" if META is missing (shouldn't happen but defensive).
@@ -84,7 +115,10 @@ export default function OnboardingPage() {
     const res = await fetch("/api/onboarding/state/", { cache: "no-store" });
     if (!res.ok) return;
     const data = (await res.json()) as OnboardingStateResponse;
-    setSnapshot(data.snapshot);
+    // Functional setSnapshot so we read the latest local state when
+    // merging — using `snapshot` from closure would be stale after rapid
+    // optimistic adds. See mergeOptimisticRows for the rationale.
+    setSnapshot((prev) => mergeOptimisticRows(prev, data.snapshot));
     setCompleteness(data.completenessScore);
   };
 

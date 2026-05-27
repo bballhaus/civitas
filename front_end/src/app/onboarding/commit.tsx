@@ -287,13 +287,15 @@ export function makeOptimisticCommitHandler(
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(async () => {
       refreshTimer = null;
-      // Wait for any still-in-flight POSTs before refreshing. Otherwise a
-      // rapid Pick → Pick sequence can fire the GET between the first
-      // POST resolving and the second POST resolving — the snapshot comes
-      // back without the second row and setSnapshot wipes the optimistic
-      // chip until the second POST's own scheduleRefresh re-fires ~400ms
-      // later. Visible to the user as chips bouncing in and out.
-      if (pending.size > 0) {
+      // Wait for any still-in-flight POSTs before refreshing. A single
+      // [...pending] snapshot misses POSTs that start *during* the await,
+      // so we loop until pending is genuinely empty between awaits — that
+      // way a rapid pick sequence (pick → POST1 → pick → POST2 → …) drains
+      // fully before refresh() fires, instead of letting a late POST race
+      // the GET. Defence-in-depth: page.tsx also merges any draft-id rows
+      // back in on top of the server snapshot, so a slip past this guard
+      // still doesn't visibly drop a chip.
+      while (pending.size > 0) {
         await Promise.allSettled([...pending]);
       }
       void refresh();
