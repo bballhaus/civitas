@@ -9,17 +9,18 @@
 // (/api/profile/*), so this endpoint owns resume state only — not per-step
 // writes. Spec § 5 lists per-step write targets verbatim.
 
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { eq } from "drizzle-orm";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/db/client";
 import { profiles } from "@/db/schema";
 import {
   getFullProfile,
-  refreshCompletenessScore,
+  computeCompletenessScore,
 } from "@/db/queries/profile";
 import { recordEvent } from "@/lib/event-log";
 import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
+import { rescoreUserMatches } from "@/lib/match-rescore";
 
 // Maps spec § 5 step numbers to the readiness check that "moves past" that
 // step. Step 10 is the explicit completion marker (onboarded_at). Step 4
@@ -55,7 +56,24 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  const score = await refreshCompletenessScore(profile);
+  // Compute ephemerally for the response. The persisted score (read by
+  // /api/match for the /matches completeness header) is updated post-response
+  // only when the value actually changed, so this GET — which fires on every
+  // Continue click — stays read-only on the request path.
+  const score = computeCompletenessScore(profile);
+  const persistedScore = Math.round((profile.completenessScore ?? 0) * 100) / 100;
+  if (persistedScore !== score) {
+    after(async () => {
+      try {
+        await db
+          .update(profiles)
+          .set({ completenessScore: score, updatedAt: new Date() })
+          .where(eq(profiles.userId, profile.userId));
+      } catch (err) {
+        console.error("[onboarding/state] completeness persist failed:", err);
+      }
+    });
+  }
   const nextStep = computeNextStep(profile);
 
   return NextResponse.json(
@@ -119,6 +137,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
+  // Read the prior onboardedAt before the upsert so we know whether this
+  // Finish is first-time (rescore needed — per-mutation rescores were
+  // skipped while onboardedAt was null) or an edit-mode re-finish (per-
+  // mutation rescores already ran inline; an extra rescore here would just
+  // be redundant work).
+  const [existing] = await db
+    .select({ onboardedAt: profiles.onboardedAt })
+    .from(profiles)
+    .where(eq(profiles.userId, auth.userId))
+    .limit(1);
+  const wasOnboardedBefore = existing?.onboardedAt != null;
+
   const [row] = await db
     .update(profiles)
     .set({ onboardedAt: new Date(), updatedAt: new Date() })
@@ -131,20 +161,31 @@ export async function POST(request: Request) {
 
   void recordEvent(auth.username, "onboarding_completed");
 
-  // Kick off embedding of the user's specialties + capabilities so the v2
-  // matcher can score them. Spec § 5 calls for this to be a background job;
-  // until we wire up a queue we run it inline but absorb any failures
-  // (missing VOYAGE_API_KEY in dev, transient network issue) without
-  // blocking the user from reaching the dashboard.
-  try {
-    await refreshProfileEmbeddings(auth.userId);
-  } catch (err) {
-    if (err instanceof EmbeddingConfigError) {
-      console.warn("[onboarding] Skipping embeddings — VOYAGE_API_KEY not set");
-    } else {
-      console.error("[onboarding] Embedding refresh failed:", err);
+  // Defer embed + rescore to after() so Finish returns immediately. For
+  // first-time onboarding this is the user's first full rescore (per-
+  // mutation routes deferred it); matchScoresPendingSince is already set
+  // by the last specialty/capability mutation, so the /matches "updating"
+  // banner stays up until this rescore clears it. For edit-mode re-
+  // finishes, per-mutation rescores already ran — skip the redundant one
+  // but still refresh embeddings as a safety net.
+  after(async () => {
+    try {
+      await refreshProfileEmbeddings(auth.userId);
+    } catch (err) {
+      if (err instanceof EmbeddingConfigError) {
+        console.warn("[onboarding] Skipping embeddings — VOYAGE_API_KEY not set");
+      } else {
+        console.error("[onboarding] Embedding refresh failed:", err);
+      }
     }
-  }
+    if (!wasOnboardedBefore) {
+      try {
+        await rescoreUserMatches(auth.userId);
+      } catch (err) {
+        console.error("[onboarding] Finish rescore failed:", err);
+      }
+    }
+  });
 
   return NextResponse.json({ onboardedAt: row.onboardedAt });
 }
