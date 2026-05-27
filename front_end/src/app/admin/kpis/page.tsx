@@ -123,8 +123,16 @@ export default function AdminKpisPage() {
   if (error && !summary) {
     return (
       <Frame>
-        <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-700">
-          {error}
+        <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-700 flex items-center justify-between gap-3">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold disabled:opacity-60"
+          >
+            {refreshing ? "Refreshing…" : "Refresh now"}
+          </button>
         </div>
       </Frame>
     );

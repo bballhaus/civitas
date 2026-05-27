@@ -27,13 +27,11 @@ export async function GET(request: Request) {
 
   try {
     const summary = await getObjectJSON<KpiSummary>(LATEST_KEY);
-    if (!summary) {
-      return NextResponse.json(
-        { error: "No KPI snapshot yet — run a refresh", snapshot: null },
-        { status: 404 },
-      );
-    }
-    return NextResponse.json({ snapshot: summary });
+    // Always 200 — "no snapshot yet" is a legitimate state (fresh deploy,
+    // cron hasn't run). Returning 404 made the client treat the bootstrap
+    // path as an error; the dashboard interprets snapshot:null as the
+    // empty state and surfaces the Refresh button.
+    return NextResponse.json({ snapshot: summary ?? null });
   } catch (err) {
     console.error("[admin/kpis] GET failed:", err);
     return NextResponse.json(
