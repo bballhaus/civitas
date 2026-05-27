@@ -261,9 +261,21 @@ export default function AdminKpisPage() {
       <Section title="Active users">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Stat label="Total users" value={summary.total_users} />
-          <Stat label="DAU" value={summary.active_users.DAU} />
-          <Stat label="WAU" value={summary.active_users.WAU} />
-          <Stat label="MAU" value={summary.active_users.MAU} />
+          <Stat
+            label="DAU — daily (last 24h)"
+            value={summary.active_users.DAU}
+            help="Distinct users with any activity in the last 24 hours."
+          />
+          <Stat
+            label="WAU — weekly (last 7d)"
+            value={summary.active_users.WAU}
+            help="Distinct users with any activity in the last 7 days."
+          />
+          <Stat
+            label="MAU — monthly (last 30d)"
+            value={summary.active_users.MAU}
+            help="Distinct users with any activity in the last 30 days."
+          />
         </div>
       </Section>
 
@@ -296,14 +308,54 @@ export default function AdminKpisPage() {
           </p>
         ) : (
           <div className="space-y-5">
-            <TimeseriesChart title="Signups (in bucket)" points={timeseries} metric="signups_in_bucket" />
-            <TimeseriesChart title="DAU" points={timeseries} metric="DAU" />
-            <TimeseriesChart title="WAU" points={timeseries} metric="WAU" />
-            <TimeseriesChart title="MAU" points={timeseries} metric="MAU" />
-            <TimeseriesChart title="RFP views (in bucket)" points={timeseries} metric="rfp_views_in_bucket" />
-            <TimeseriesChart title="RFP saves (in bucket)" points={timeseries} metric="rfp_saves_in_bucket" />
-            <TimeseriesChart title="RFP applies (in bucket)" points={timeseries} metric="rfp_applies_in_bucket" />
-            <TimeseriesChart title="Cumulative signups" points={timeseries} metric="cumulative_signups" />
+            <TimeseriesChart
+              title="New signups per bucket"
+              help="How many users completed signup in each bucket."
+              points={timeseries}
+              metric="signups_in_bucket"
+            />
+            <TimeseriesChart
+              title="DAU — daily active users (any activity in last 24h)"
+              help="Distinct users with any tracked activity in the last 24 hours, measured at the end of each bucket."
+              points={timeseries}
+              metric="DAU"
+            />
+            <TimeseriesChart
+              title="WAU — weekly active users (any activity in last 7d)"
+              help="Distinct users with any tracked activity in the last 7 days, measured at the end of each bucket."
+              points={timeseries}
+              metric="WAU"
+            />
+            <TimeseriesChart
+              title="MAU — monthly active users (any activity in last 30d)"
+              help="Distinct users with any tracked activity in the last 30 days, measured at the end of each bucket."
+              points={timeseries}
+              metric="MAU"
+            />
+            <TimeseriesChart
+              title="RFP detail views per bucket"
+              help="Number of RFP detail pages opened, summed across users in each bucket."
+              points={timeseries}
+              metric="rfp_views_in_bucket"
+            />
+            <TimeseriesChart
+              title="RFPs saved per bucket"
+              help="How many RFPs users saved to their tracker in each bucket."
+              points={timeseries}
+              metric="rfp_saves_in_bucket"
+            />
+            <TimeseriesChart
+              title="RFPs applied to per bucket"
+              help="How many RFPs users marked as bid-submitted in each bucket."
+              points={timeseries}
+              metric="rfp_applies_in_bucket"
+            />
+            <TimeseriesChart
+              title="Cumulative signups (all-time)"
+              help="Running total of accounts created."
+              points={timeseries}
+              metric="cumulative_signups"
+            />
           </div>
         )}
       </Section>
@@ -596,40 +648,113 @@ function humanAgo(iso: string): string {
 
 function TimeseriesChart({
   title,
+  help,
   points,
   metric,
 }: {
   title: string;
+  help?: string;
   points: TimeseriesPoint[];
   metric: keyof TimeseriesPoint;
 }) {
-  // Vertical bars per bucket. CSS-only — no chart lib. Width per bar
-  // auto-scales to the container; reading the values is via tooltips.
+  // SVG line chart. ViewBox uses a fixed coordinate space so all charts on
+  // the page render identically regardless of container width; preserveAspect
+  // is "none" so the line stretches horizontally to fill the slot.
   const values = points.map((p) => Number(p[metric] ?? 0));
   const max = Math.max(...values, 1);
+  const last = values[values.length - 1] ?? 0;
+  const W = 800;
+  const H = 100;
+  const PAD_X = 4;
+  const PAD_Y = 6;
+
+  // Y position: max is at PAD_Y, zero is at H - PAD_Y.
+  const yFor = (v: number) => {
+    if (max <= 0) return H - PAD_Y;
+    const usable = H - PAD_Y * 2;
+    return PAD_Y + usable * (1 - v / max);
+  };
+  // X position spans the chart. With one point, place it at the right edge so
+  // the "latest" reading is obvious.
+  const xFor = (i: number) => {
+    if (points.length <= 1) return W - PAD_X;
+    return PAD_X + ((W - PAD_X * 2) * i) / (points.length - 1);
+  };
+
+  const linePath = values
+    .map((v, i) => `${i === 0 ? "M" : "L"}${xFor(i).toFixed(2)},${yFor(v).toFixed(2)}`)
+    .join(" ");
+  const areaPath =
+    values.length > 0
+      ? `${linePath} L${xFor(values.length - 1).toFixed(2)},${H - PAD_Y} L${xFor(0).toFixed(2)},${H - PAD_Y} Z`
+      : "";
+
   return (
-    <div>
+    <div title={help}>
       <div className="flex items-baseline justify-between mb-1">
-        <p className="text-xs font-semibold text-slate-600">{title}</p>
-        <p className="text-[10px] text-slate-400">
-          max {max} · last {values[values.length - 1] ?? 0}
+        <p className="text-xs font-semibold text-slate-800">{title}</p>
+        <p className="text-[11px] text-slate-600">
+          max <span className="font-semibold text-slate-800">{max}</span> · latest{" "}
+          <span className="font-semibold text-slate-800">{last}</span> · {points.length}{" "}
+          {points.length === 1 ? "point" : "points"}
         </p>
       </div>
-      <div className="flex items-end gap-0.5 h-24 bg-slate-50 rounded border border-slate-100 px-1 py-1">
-        {points.map((p, i) => {
-          const v = values[i];
-          const pct = max > 0 ? (v / max) * 100 : 0;
-          return (
-            <div
-              key={p.bucket}
-              title={`${p.bucket}: ${v}`}
-              className="flex-1 min-w-[3px] bg-[#3C89C6] hover:bg-[#2d6fa0] rounded-t transition-colors"
-              style={{ height: `${Math.max(pct, v > 0 ? 2 : 0)}%` }}
+      {points.length === 0 ? (
+        <div className="h-24 flex items-center justify-center bg-slate-50 rounded border border-slate-100 text-xs text-slate-400">
+          No snapshots in window — the chart fills in as days accumulate.
+        </div>
+      ) : (
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+          className="w-full h-24 bg-slate-50 rounded border border-slate-100"
+        >
+          {/* Horizontal gridlines at 0%, 50%, 100%. */}
+          {[0, 0.5, 1].map((frac) => (
+            <line
+              key={frac}
+              x1={PAD_X}
+              x2={W - PAD_X}
+              y1={PAD_Y + (H - PAD_Y * 2) * (1 - frac)}
+              y2={PAD_Y + (H - PAD_Y * 2) * (1 - frac)}
+              stroke="#e2e8f0"
+              strokeWidth="1"
+              strokeDasharray={frac === 0 || frac === 1 ? "0" : "2,3"}
             />
-          );
-        })}
-      </div>
-      <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+          ))}
+          {/* Filled area under the line for visual weight. */}
+          {points.length > 1 && (
+            <path d={areaPath} fill="#3C89C6" fillOpacity="0.12" />
+          )}
+          {/* The line itself. */}
+          {points.length > 1 && (
+            <path
+              d={linePath}
+              fill="none"
+              stroke="#3C89C6"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
+          {/* Dot per point — readable when count is small, dense when not. */}
+          {points.map((p, i) => (
+            <circle
+              key={p.bucket}
+              cx={xFor(i)}
+              cy={yFor(values[i])}
+              r={points.length > 30 ? 1.5 : 3}
+              fill="#3C89C6"
+              stroke="white"
+              strokeWidth={points.length > 30 ? 0.5 : 1.5}
+            >
+              <title>{`${p.bucket}: ${values[i]}`}</title>
+            </circle>
+          ))}
+        </svg>
+      )}
+      <div className="flex justify-between text-[10px] text-slate-500 mt-1">
         <span>{points[0]?.bucket ?? ""}</span>
         <span>{points[points.length - 1]?.bucket ?? ""}</span>
       </div>
@@ -637,13 +762,26 @@ function TimeseriesChart({
   );
 }
 
-function Stat({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
+function Stat({
+  label,
+  value,
+  suffix,
+  help,
+}: {
+  label: string;
+  value: number;
+  suffix?: string;
+  help?: string;
+}) {
   return (
-    <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+    <div
+      className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3"
+      title={help}
+    >
+      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
       <p className="text-2xl font-extrabold text-slate-900">
         {value}
-        {suffix && <span className="text-base font-bold text-slate-500 ml-0.5">{suffix}</span>}
+        {suffix && <span className="text-base font-bold text-slate-700 ml-0.5">{suffix}</span>}
       </p>
     </div>
   );
@@ -738,19 +876,19 @@ function PerUserTable({ users }: { users: KpiSummary["per_user"] }) {
         <tbody>
           {sorted.map((u) => (
             <tr key={u.username} className="border-b border-slate-100">
-              <td className="py-1 px-2 font-medium text-slate-800">{u.username}</td>
-              <td className="py-1 px-2 text-slate-500">
+              <td className="py-1 px-2 font-medium text-slate-900">{u.username}</td>
+              <td className="py-1 px-2 text-slate-700">
                 {u.signup_at ? new Date(u.signup_at).toLocaleDateString() : "—"}
               </td>
-              <td className="py-1 px-2 text-slate-500">
+              <td className="py-1 px-2 text-slate-700">
                 {u.last_active_at
                   ? `${u.days_since_last_active ?? "?"}d ago`
                   : "—"}
               </td>
-              <td className="py-1 px-2 text-right">{u.counters.counter_rfps_viewed ?? 0}</td>
-              <td className="py-1 px-2 text-right">{u.counters.counter_rfps_saved ?? 0}</td>
-              <td className="py-1 px-2 text-right">{u.counters.counter_rfps_applied ?? 0}</td>
-              <td className="py-1 px-2 text-right">{u.counters.counter_sessions ?? 0}</td>
+              <td className="py-1 px-2 text-right text-slate-800">{u.counters.counter_rfps_viewed ?? 0}</td>
+              <td className="py-1 px-2 text-right text-slate-800">{u.counters.counter_rfps_saved ?? 0}</td>
+              <td className="py-1 px-2 text-right text-slate-800">{u.counters.counter_rfps_applied ?? 0}</td>
+              <td className="py-1 px-2 text-right text-slate-800">{u.counters.counter_sessions ?? 0}</td>
             </tr>
           ))}
         </tbody>
@@ -773,28 +911,32 @@ function UserDistributionTable({
   const label = (k: string) => k.replace(/^counter_/, "").replace(/_/g, " ");
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+      <table className="w-full text-sm">
+        <thead className="text-[10px] uppercase tracking-wider text-slate-600 border-b border-slate-200">
           <tr>
             <th className="text-left py-1.5 px-2">Metric</th>
-            <th className="text-right py-1.5 px-2">Users with</th>
-            <th className="text-right py-1.5 px-2">Total</th>
-            <th className="text-right py-1.5 px-2">Mean</th>
-            <th className="text-right py-1.5 px-2">Median</th>
-            <th className="text-right py-1.5 px-2">P90</th>
-            <th className="text-right py-1.5 px-2">Max</th>
+            <th className="text-right py-1.5 px-2" title="Number of users with a non-zero count">
+              Users with
+            </th>
+            <th className="text-right py-1.5 px-2" title="Sum across all users">Total</th>
+            <th className="text-right py-1.5 px-2" title="Average across users with non-zero count">
+              Mean
+            </th>
+            <th className="text-right py-1.5 px-2" title="Median value (typical user)">Median</th>
+            <th className="text-right py-1.5 px-2" title="90th percentile (heavy users)">P90</th>
+            <th className="text-right py-1.5 px-2" title="Highest single user">Max</th>
           </tr>
         </thead>
         <tbody>
           {entries.map(([k, d]) => (
             <tr key={k} className="border-b border-slate-100">
-              <td className="py-1 px-2 font-medium text-slate-800">{label(k)}</td>
-              <td className="py-1 px-2 text-right text-slate-500">{d.users_with_value}</td>
-              <td className="py-1 px-2 text-right font-semibold">{d.total}</td>
-              <td className="py-1 px-2 text-right">{d.mean}</td>
-              <td className="py-1 px-2 text-right">{d.median}</td>
-              <td className="py-1 px-2 text-right">{d.p90}</td>
-              <td className="py-1 px-2 text-right">{d.max}</td>
+              <td className="py-1.5 px-2 font-medium text-slate-900">{label(k)}</td>
+              <td className="py-1.5 px-2 text-right text-slate-700">{d.users_with_value}</td>
+              <td className="py-1.5 px-2 text-right font-semibold text-slate-900">{d.total}</td>
+              <td className="py-1.5 px-2 text-right text-slate-800">{d.mean}</td>
+              <td className="py-1.5 px-2 text-right text-slate-800">{d.median}</td>
+              <td className="py-1.5 px-2 text-right text-slate-800">{d.p90}</td>
+              <td className="py-1.5 px-2 text-right text-slate-800">{d.max}</td>
             </tr>
           ))}
         </tbody>

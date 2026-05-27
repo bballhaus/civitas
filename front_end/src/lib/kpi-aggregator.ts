@@ -16,6 +16,7 @@ import {
   getKpiUsersTable,
 } from "./dynamodb";
 import { putObjectJSON } from "./s3";
+import { isTestUser } from "./test-users";
 
 // Event types whose payloads we roll up beyond raw counters. Aggregations are
 // done by scanning the byEventType GSI on civitas-kpi-events for events from
@@ -180,6 +181,10 @@ async function scanAllUsers(): Promise<UserSummary[]> {
           : typeof item.pk === "string"
             ? decodeURIComponent(item.pk.replace(/^USER#/, ""))
             : "";
+      // Exclude test accounts from KPI rollups — events were still recorded
+      // for them, but they'd bias DAU/MAU, funnel rates, and per-user spread
+      // calculations. See lib/test-users.ts for the list.
+      if (isTestUser(username)) continue;
       out.push({
         username,
         signup_at: typeof item.signup_at === "string" ? item.signup_at : undefined,
@@ -509,7 +514,9 @@ async function buildEventRollups(now: Date): Promise<KpiSummary["event_rollups"]
   for (const r of allowSettled) {
     if (r.status === "fulfilled") {
       const [t, evs] = r.value;
-      eventsByType[t] = evs;
+      // Drop events authored by test accounts so rollups (CTR, dwell,
+      // filter values, etc.) reflect real users only. See lib/test-users.ts.
+      eventsByType[t] = evs.filter((ev) => !isTestUser(ev.username));
     } else {
       console.warn("[kpi-aggregator] event rollup query failed:", r.reason);
     }
