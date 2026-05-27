@@ -1,7 +1,18 @@
 // Postgres connection singleton.
 //
 // Uses postgres.js (recommended by Drizzle for Postgres). Connection pooling
-// is handled by the driver — no extra pool config needed in serverless.
+// is handled by the driver, but `max` matters in serverless: each warm
+// Vercel function instance keeps its own pool, so total connections =
+// (max per pool) × (concurrent instances). RDS db.t4g.micro caps at ~110
+// connections (with reserved superuser slots eating into that), so we
+// keep `max` small (3) to leave headroom for ~30+ concurrent instances
+// during scrape bursts. Symptom of getting this wrong is PG error 53300
+// "remaining connection slots are reserved for SUPERUSER" cascading into
+// every downstream query — observed during 2026-05-26 scrape bursts that
+// blew past the limit with the previous max=10.
+//
+// Long-term fix is RDS Proxy or pgbouncer in front of the instance. This
+// keeps us under the limit until that lands.
 //
 // The `db` export is lazy: it doesn't connect (or even check DATABASE_URL)
 // until a query runs. This matters for Next.js build-time page data
@@ -39,7 +50,9 @@ function createDb() {
   const client =
     globalThis.__civitas_pg ??
     postgres(databaseUrl, {
-      max: 10,
+      // Keep low: per-instance × #instances must stay under RDS max_connections.
+      // See header comment for the math.
+      max: 3,
       idle_timeout: 20,
       connect_timeout: 10,
       ...(isRds ? { ssl: "require" as const } : {}),
