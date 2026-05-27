@@ -407,7 +407,7 @@ export default function TrackerPage() {
   const selectedTasks = selectedRfpId ? tasksByRfp.get(selectedRfpId) ?? [] : [];
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
+    <div className="tracker-page min-h-screen relative overflow-hidden bg-[#f5f9ff]">
       <MeshBackground />
       <AppHeader />
 
