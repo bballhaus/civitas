@@ -34,14 +34,43 @@ interface AdminEventsResponse {
   error?: string;
 }
 
+type Granularity = "day" | "week" | "month";
+
+interface TimeseriesPoint {
+  bucket: string;
+  bucketStart: string;
+  total_users: number;
+  DAU: number;
+  WAU: number;
+  MAU: number;
+  signups_in_bucket: number;
+  cumulative_signups: number;
+  rfp_views_in_bucket: number;
+  rfp_saves_in_bucket: number;
+  rfp_applies_in_bucket: number;
+  proposals_generated: number;
+  poes_generated: number;
+}
+
+interface TimeseriesResponse {
+  granularity: Granularity;
+  window_days: number;
+  points: TimeseriesPoint[];
+  snapshot_count: number;
+}
+
 export default function AdminKpisPage() {
   const [summary, setSummary] = useState<KpiSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [autoRefreshing, setAutoRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drillType, setDrillType] = useState<string>("filter_applied");
   const [drillRows, setDrillRows] = useState<AdminEventRow[]>([]);
   const [drillLoading, setDrillLoading] = useState(false);
+  const [granularity, setGranularity] = useState<Granularity>("day");
+  const [timeseries, setTimeseries] = useState<TimeseriesPoint[]>([]);
+  const [timeseriesLoading, setTimeseriesLoading] = useState(false);
 
   const fetchSummary = useCallback(async () => {
     setError(null);
@@ -86,31 +115,75 @@ export default function AdminKpisPage() {
     }
   }, []);
 
+  const fetchTimeseries = useCallback(async (gran: Granularity) => {
+    setTimeseriesLoading(true);
+    try {
+      const res = await fetch(`/api/admin/kpis/timeseries?granularity=${gran}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        setTimeseries([]);
+        return;
+      }
+      const data = (await res.json()) as TimeseriesResponse;
+      setTimeseries(data.points ?? []);
+    } catch {
+      setTimeseries([]);
+    } finally {
+      setTimeseriesLoading(false);
+    }
+  }, []);
+
+  const refreshSnapshot = useCallback(
+    async (mode: "manual" | "auto") => {
+      if (mode === "manual") setRefreshing(true);
+      else setAutoRefreshing(true);
+      try {
+        const res = await fetch("/api/admin/kpis", { method: "POST" });
+        if (res.ok) {
+          const data = (await res.json()) as { snapshot: KpiSummary };
+          setSummary(data.snapshot);
+          setError(null);
+          // A fresh snapshot may have generated a new daily file in S3 —
+          // re-fetch the series so the latest day shows up.
+          void fetchTimeseries(granularity);
+        } else if (mode === "manual") {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          setError(data.error ?? `Refresh failed (${res.status})`);
+        }
+        // Auto-refresh failures are silent — the cached snapshot is fine.
+      } catch (err) {
+        if (mode === "manual") {
+          setError(err instanceof Error ? err.message : "Refresh failed");
+        }
+      } finally {
+        if (mode === "manual") setRefreshing(false);
+        else setAutoRefreshing(false);
+      }
+    },
+    [fetchTimeseries, granularity],
+  );
+
+  // On mount: render the cached snapshot immediately (fast), then kick off
+  // a background refresh so the next render has fresh data. The cached
+  // path is the only place we set `loading`; the auto-refresh uses its
+  // own indicator. Two effects so we don't refetch when granularity flips.
   useEffect(() => {
-    void fetchSummary();
-  }, [fetchSummary]);
+    void fetchSummary().then(() => {
+      void refreshSnapshot("auto");
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     void fetchDrill(drillType);
   }, [drillType, fetchDrill]);
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      const res = await fetch("/api/admin/kpis", { method: "POST" });
-      if (res.ok) {
-        const data = (await res.json()) as { snapshot: KpiSummary };
-        setSummary(data.snapshot);
-      } else {
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        setError(data.error ?? `Refresh failed (${res.status})`);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Refresh failed");
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
+  useEffect(() => {
+    void fetchTimeseries(granularity);
+  }, [granularity, fetchTimeseries]);
+
+  const onRefresh = useCallback(() => refreshSnapshot("manual"), [refreshSnapshot]);
 
   if (loading) {
     return (
@@ -161,9 +234,17 @@ export default function AdminKpisPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">KPI dashboard</h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Snapshot computed {new Date(summary.computed_at).toLocaleString()} ·
-            event rollups span last {summary.event_rollups.window_days} days
+          <p className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+            <span>
+              Snapshot {humanAgo(summary.computed_at)} · event rollups span last{" "}
+              {summary.event_rollups?.window_days ?? 30} days
+            </span>
+            {autoRefreshing && (
+              <span className="inline-flex items-center gap-1 text-[#3C89C6] font-semibold">
+                <span className="inline-block w-2 h-2 rounded-full bg-[#3C89C6] animate-pulse" />
+                refreshing…
+              </span>
+            )}
           </p>
         </div>
         <button
@@ -184,6 +265,47 @@ export default function AdminKpisPage() {
           <Stat label="WAU" value={summary.active_users.WAU} />
           <Stat label="MAU" value={summary.active_users.MAU} />
         </div>
+      </Section>
+
+      <Section
+        title="Trends over time"
+        right={
+          <div className="flex items-center gap-1 rounded-lg border border-slate-200 p-0.5">
+            {(["day", "week", "month"] as const).map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setGranularity(g)}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                  granularity === g
+                    ? "bg-[#3C89C6] text-white"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {g === "day" ? "30d" : g === "week" ? "12w" : "12mo"}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        {timeseriesLoading && timeseries.length === 0 ? (
+          <p className="text-sm text-slate-400">Loading series…</p>
+        ) : timeseries.length === 0 ? (
+          <p className="text-sm text-slate-400 italic">
+            No snapshots yet — they accumulate one per day from the cron + on-demand refreshes.
+          </p>
+        ) : (
+          <div className="space-y-5">
+            <TimeseriesChart title="Signups (in bucket)" points={timeseries} metric="signups_in_bucket" />
+            <TimeseriesChart title="DAU" points={timeseries} metric="DAU" />
+            <TimeseriesChart title="WAU" points={timeseries} metric="WAU" />
+            <TimeseriesChart title="MAU" points={timeseries} metric="MAU" />
+            <TimeseriesChart title="RFP views (in bucket)" points={timeseries} metric="rfp_views_in_bucket" />
+            <TimeseriesChart title="RFP saves (in bucket)" points={timeseries} metric="rfp_saves_in_bucket" />
+            <TimeseriesChart title="RFP applies (in bucket)" points={timeseries} metric="rfp_applies_in_bucket" />
+            <TimeseriesChart title="Cumulative signups" points={timeseries} metric="cumulative_signups" />
+          </div>
+        )}
       </Section>
 
       <Section title="Signups">
@@ -373,6 +495,10 @@ export default function AdminKpisPage() {
         <KeyValueTable counts={summary.event_rollups.event_counts} />
       </Section>
 
+      <Section title="Per-user spread (across all users with any activity)">
+        <UserDistributionTable distributions={summary.user_distributions ?? {}} />
+      </Section>
+
       <Section title="Per-user breakdown">
         <PerUserTable users={summary.per_user} />
       </Section>
@@ -438,12 +564,76 @@ function Frame({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+  right,
+}: {
+  title: string;
+  children: React.ReactNode;
+  right?: React.ReactNode;
+}) {
   return (
     <section className="mb-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 p-5">
-      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">{title}</h2>
+      <div className="flex items-center justify-between mb-3 gap-3">
+        <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">{title}</h2>
+        {right}
+      </div>
       {children}
     </section>
+  );
+}
+
+function humanAgo(iso: string): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "computed at unknown time";
+  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (diffSec < 60) return `computed ${diffSec}s ago`;
+  if (diffSec < 3600) return `computed ${Math.round(diffSec / 60)}m ago`;
+  if (diffSec < 86_400) return `computed ${Math.round(diffSec / 3600)}h ago`;
+  return `computed ${Math.round(diffSec / 86_400)}d ago`;
+}
+
+function TimeseriesChart({
+  title,
+  points,
+  metric,
+}: {
+  title: string;
+  points: TimeseriesPoint[];
+  metric: keyof TimeseriesPoint;
+}) {
+  // Vertical bars per bucket. CSS-only — no chart lib. Width per bar
+  // auto-scales to the container; reading the values is via tooltips.
+  const values = points.map((p) => Number(p[metric] ?? 0));
+  const max = Math.max(...values, 1);
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1">
+        <p className="text-xs font-semibold text-slate-600">{title}</p>
+        <p className="text-[10px] text-slate-400">
+          max {max} · last {values[values.length - 1] ?? 0}
+        </p>
+      </div>
+      <div className="flex items-end gap-0.5 h-24 bg-slate-50 rounded border border-slate-100 px-1 py-1">
+        {points.map((p, i) => {
+          const v = values[i];
+          const pct = max > 0 ? (v / max) * 100 : 0;
+          return (
+            <div
+              key={p.bucket}
+              title={`${p.bucket}: ${v}`}
+              className="flex-1 min-w-[3px] bg-[#3C89C6] hover:bg-[#2d6fa0] rounded-t transition-colors"
+              style={{ height: `${Math.max(pct, v > 0 ? 2 : 0)}%` }}
+            />
+          );
+        })}
+      </div>
+      <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+        <span>{points[0]?.bucket ?? ""}</span>
+        <span>{points[points.length - 1]?.bucket ?? ""}</span>
+      </div>
+    </div>
   );
 }
 
@@ -561,6 +751,50 @@ function PerUserTable({ users }: { users: KpiSummary["per_user"] }) {
               <td className="py-1 px-2 text-right">{u.counters.counter_rfps_saved ?? 0}</td>
               <td className="py-1 px-2 text-right">{u.counters.counter_rfps_applied ?? 0}</td>
               <td className="py-1 px-2 text-right">{u.counters.counter_sessions ?? 0}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function UserDistributionTable({
+  distributions,
+}: {
+  distributions: NonNullable<KpiSummary["user_distributions"]>;
+}) {
+  const entries = Object.entries(distributions).sort(
+    (a, b) => b[1].total - a[1].total,
+  );
+  if (entries.length === 0) return <Empty />;
+  // Shorten the counter_ prefix that's baked into our schema — pure
+  // presentation.
+  const label = (k: string) => k.replace(/^counter_/, "").replace(/_/g, " ");
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+          <tr>
+            <th className="text-left py-1.5 px-2">Metric</th>
+            <th className="text-right py-1.5 px-2">Users with</th>
+            <th className="text-right py-1.5 px-2">Total</th>
+            <th className="text-right py-1.5 px-2">Mean</th>
+            <th className="text-right py-1.5 px-2">Median</th>
+            <th className="text-right py-1.5 px-2">P90</th>
+            <th className="text-right py-1.5 px-2">Max</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map(([k, d]) => (
+            <tr key={k} className="border-b border-slate-100">
+              <td className="py-1 px-2 font-medium text-slate-800">{label(k)}</td>
+              <td className="py-1 px-2 text-right text-slate-500">{d.users_with_value}</td>
+              <td className="py-1 px-2 text-right font-semibold">{d.total}</td>
+              <td className="py-1 px-2 text-right">{d.mean}</td>
+              <td className="py-1 px-2 text-right">{d.median}</td>
+              <td className="py-1 px-2 text-right">{d.p90}</td>
+              <td className="py-1 px-2 text-right">{d.max}</td>
             </tr>
           ))}
         </tbody>
