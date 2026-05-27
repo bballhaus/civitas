@@ -1,6 +1,32 @@
 # Civitas Architecture v2 — Detailed Spec
 
-Companion to [Matching-Values.md](Matching-Values.md) and [webscraping/v2/COVERAGE.md](../webscraping/v2/COVERAGE.md). This is the working spec for the data ingestion + matching overhaul. Edit freely; nothing here is implemented yet.
+Companion to [Matching-Values.md](Matching-Values.md) and [webscraping/v2/COVERAGE.md](../webscraping/v2/COVERAGE.md).
+
+> **Status (2026-05-27): largely shipped.** The Postgres schema (§ 4),
+> onboarding flow (§ 5), claims-based evidence pipeline (§ 6), PII
+> redaction (§ 7), Voyage-3-large embeddings (§ 8), v2 matching
+> algorithm (§ 9), source-routed incumbent state machine (§ 10), and
+> v2 API surface (§ 11) are all live in production. The v2 UI surfaces
+> in § 12 (onboarding, `/profile/v2`, `/matches`, `/matches/[rfpId]`,
+> tracker) are live; the legacy `/dashboard` view is retired (see
+> [Retired Features](Retired-Features)).
+>
+> Schema since this spec was first written has gained: a `pending_users`
+> table for email-verify-before-create, an `rfp_tasks` table for the
+> bidding tracker, a `cached_*` live-match cache on `match_state` plus
+> `viewed_at` / `status_changed_at`, key-date columns on `rfp_cache`
+> (`qa_deadline`, `prebid_meeting_at`, `site_visit_at`, `award_date`,
+> `contract_start`, `contract_end`, `key_dates_sources`), a
+> `scope_summary` column for Haiku tagger output, and
+> `naics_critiqued_at` for the daily Sonnet critic pass. The pipeline
+> status enum widened to six values: `'saved' | 'in_progress' |
+> 'bid_submitted' | 'won' | 'lost' | 'no_bid'`.
+>
+> Items still open: vendor fingerprint dedup post-process,
+> `match_impressions` / `match_outcomes` logging (see
+> [Matching-Finetuning](Matching-Finetuning)), PlanetBids document
+> unblock per agency, agentic Lambda fixes for LA / SF, and Cloudflare
+> bypass for OpenGov.
 
 ---
 

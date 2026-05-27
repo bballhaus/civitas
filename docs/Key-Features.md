@@ -1,237 +1,300 @@
 # Key Features
 
-This page describes Civitas's major features and how they work end-to-end, from user interaction through to backend processing.
+Walkthrough of each live product feature, from user interaction down
+to backend persistence. For retired components (proposal / POE
+generation, legacy dashboard, v1 profile editor, v1 matcher), see
+[Retired Features](Retired-Features).
 
 ---
 
-## 1. RFP Discovery & Search
+## 1. RFP Discovery & Matching (`/matches`)
 
-### What It Does
-Users browse a catalog of California government RFPs scraped from 57+ procurement portals (Cal eProcure, PlanetBids, BidSync, OpenGov). Each RFP is automatically scored against the user's company profile and ranked by relevance.
+### What it does
 
-### How It Works
+Users land on a list of California government RFPs scraped from 60+
+procurement portals, each scored 0-100 against their onboarded
+profile. Filter chips, sort, prime / sub eligibility, incumbent
+chips, and `data_quality` badges keep the noisy long-tail
+interpretable.
 
-**Data Pipeline** (see [webscraping/v2/README.md](../webscraping/v2/README.md) for full details):
-1. A Playwright-based scraper running on AWS Lambda (`webscraping/v2/scrapers/*.py`) hits each portal, fetches detail pages, and (where available) downloads PDF attachments inline.
-2. Per-source manifests are written to `s3://civitas-ai/scrapes/v2/{source}/`.
-3. PDF text is extracted via PyMuPDF and enriched by an LLM (Claude Haiku 4.5 by default; Groq as fallback) into structured requirements: NAICS codes, certifications, licenses, clearances, deliverables, evaluation criteria, incumbent vendor.
-4. A post-scrape hook calls `/api/cron/sync-rfp-cache` to refresh the Postgres `rfp_cache` read view.
+### How it works
 
-**Serving to Frontend:**
-1. The Next.js API route (`/api/events`) reads from `rfp_cache` (or the S3 manifests directly, depending on the route), with the configured cache TTL.
-2. Raw events are transformed into structured RFP objects with inferred fields:
-   - **Location**: Extracted from title/description using regex and California city/county matching
-   - **Industry**: Inferred via keyword pattern matching (22+ industry categories)
-   - **Capabilities**: Extracted from description text (50+ capability types)
-   - **Value**: Parsed from various formats ($1.5M, $100K-$500K, TBD)
-3. LLM-extracted requirements are merged in where the source supports them (see [webscraping/v2/COVERAGE.md](../webscraping/v2/COVERAGE.md) for the per-source field matrix).
+**Data pipeline** (full detail in
+[`webscraping/v2/README.md`](../webscraping/v2/README.md) and
+[`webscraping/v2/COVERAGE.md`](../webscraping/v2/COVERAGE.md)):
 
-**Dashboard UI:**
-- RFPs displayed as cards with match percentage, agency, deadline, and estimated value
-- 12 filter categories allow precise searching
-- Sort by match score (default), deadline, or estimated value
-- Deferred rendering keeps the UI responsive during filter changes
+1. AWS Lambda fires every 48 hours
+   ([`webscraping/v2/deploy/template.yaml`](../webscraping/v2/deploy/template.yaml)).
+   Source scrapers under `webscraping/v2/scrapers/` hit each portal,
+   write per-source manifests to `s3://civitas-ai/scrapes/v2/{source}/`,
+   and (for Cal eProcure + OpenGov) download attachments inline.
+2. PDF text is extracted via PyMuPDF and enriched by Claude Haiku 4.5
+   (`webscraping/v2/pipeline/enrich.py`) into structured requirements:
+   NAICS, certifications, licenses, clearances, deliverables,
+   evaluation criteria, incumbent vendor, key dates (Q&A,
+   pre-bid, site visit, award, contract start / end).
+3. The scraping Lambda calls
+   [`/api/cron/sync-rfp-cache`](../front_end/src/app/api/cron/sync-rfp-cache/route.ts),
+   which populates `rfp_cache`, runs the Haiku-based NAICS tagger
+   (`lib/rfp-tagger.ts`) for `primary_naics` + up to 4
+   `secondary_naics` + a one-sentence `scope_summary`, and refreshes
+   Voyage-3-large embeddings on changed rows.
+4. A separate daily cron
+   ([`/api/cron/critique-rfp-tags`](../front_end/src/app/api/cron/critique-rfp-tags/route.ts))
+   runs a Sonnet 4.6 audit (`lib/rfp-tag-critic.ts`) over rows where
+   `naics_critiqued_at IS NULL`, corrects systematic Haiku failure
+   modes (tagging the agency instead of the work, etc.), and re-embeds
+   anything Sonnet changed.
 
----
+**Match scoring** (`lib/matching-v2.ts` — full spec in
+[Matching-Algorithm-v2](Matching-Algorithm-v2)):
 
-## 2. AI-Powered Profile Building
+- Hard gates fire only on non-empty RFP data — `licenses_required: []`
+  on a PlanetBids RFP means "we don't know," not "no license needed."
+- Range matches on scope, duration, complexity.
+- Semantic match on specialty + capability embeddings via pgvector,
+  confidence-weighted by source data quality.
+- Relationship signals (agency, soft certs, vendor history).
+- Incumbent state machine (`likely` / `open_field` / `unknown`)
+  adjusts win probability separately from score.
+- Sub-on-prime track runs in parallel — failing a prime gate routes
+  the RFP to sub eligibility rather than disqualifying.
+- Every category emits a citation: the RFP phrase + the profile claim
+  that justified it.
 
-### What It Does
-Users can upload past contracts and proposals, and the system automatically extracts company metadata to build their profile, eliminating manual data entry.
+**Serving to the frontend:**
 
-### How It Works
-
-**Upload Flow:**
-1. User uploads one or more documents (PDF, DOCX, TXT) on the `/upload` or `/contracts` page
-2. Files are sent to the Next.js API via `POST /api/profile/extract/` or `POST /api/contracts/`
-3. For each document:
-   - Text is extracted using `mupdf` (PDF) or `mammoth` (DOCX)
-   - A PII redaction pass runs before any LLM call (see `lib/pii-redaction.ts`)
-   - Text is sent through the provider-agnostic `lib/llm.ts` (defaults to Groq `llama-3.1-8b-instant`; configurable via `civitas.config.json`)
-   - The LLM returns JSON with: contractor name, certifications, clearances, NAICS codes, work locations, capabilities, contract value, and more
-4. Results from all documents are aggregated and deduplicated
-5. The aggregated profile is returned to the frontend for user review (the v2 contracts flow surfaces a claims review screen — see [Architecture-v2 § 6.5](Architecture-v2.md))
-
-**Profile Fields Extracted:**
-- Company name
-- Industry tags and NAICS codes
-- Certifications (ISO 9001, CMMI, FedRAMP, etc.)
-- Security clearances (Public Trust through TS/SCI)
-- Work locations (cities and counties)
-- Capabilities and technology stack
-- Agency experience
-- Contract types and total contract value
-
-**Individual Contract Upload:**
-Users can also upload contracts one at a time via `POST /api/contracts/`. Each contract is saved with its extracted metadata, and the overall profile is recomputed to reflect the new data.
-
----
-
-## 3. RFP Matching Algorithm
-
-### What It Does
-Every RFP is scored from 0-100 against the user's profile, with a detailed breakdown showing exactly why the score is what it is. RFPs are classified into tiers: Excellent (80+), Strong (60-79), Moderate (40-59), or Low (<40).
-
-### How It Works
-
-The matching algorithm (`front_end/src/lib/rfp-matching.ts`) runs entirely client-side and uses a three-stage pipeline:
-
-1. **Hard Disqualifiers** — Checks for required certifications, clearances, and set-aside types. If the profile doesn't meet a hard requirement, the RFP is marked as "Disqualified" with a score of 0.
-
-2. **Synonym Expansion** — Profile and RFP terms are expanded using 50+ domain-specific synonym groups (e.g., "cloud" matches "AWS", "Azure", "SaaS"). This prevents false negatives from terminology differences.
-
-3. **Weighted Scoring** — 10 categories are scored independently and combined:
-
-| Category | Max Points | What's Compared |
-|---|---|---|
-| Capabilities | 25 | Profile services vs. RFP requirements |
-| Industry | 15 | Profile industries vs. RFP industry |
-| NAICS Codes | 10 | Code matching with prefix support |
-| Certifications | 10 | Required certs vs. held certs |
-| Clearances | 10 | Required level vs. held level (hierarchical) |
-| Location | 10 | Work areas vs. RFP location (metro-aware) |
-| Agency Experience | 5 | Past agency work vs. RFP agency |
-| Contract Type | 5 | Contract type familiarity |
-| Size Status | 5 | Business size classification match |
-| Description | 5 | Free-text similarity (Jaccard) |
-
-For a deeper dive, see the [Matching Algorithm](Matching-Algorithm) page.
+- `/api/match` (list) and `/api/match/[rfpId]` (detail) read
+  pre-scored matches from `match_state.cached_*`. Missing entries
+  trigger an on-demand score plus a background populate via
+  `lib/match-rescore-trigger.ts`.
+- Profile changes, RFP edits, and NAICS critique runs invalidate the
+  cache; `lib/match-rescore.ts` is the sole writer.
+- `/matches/[rfpId]` fires `POST /api/rfp-views` on mount so the daily
+  roundup can skip already-viewed RFPs.
 
 ---
 
-## 4. AI Proposal Generation
+## 2. Onboarding Wizard (`/onboarding`)
 
-### What It Does
-Users can generate a complete proposal draft tailored to a specific RFP, using their company profile as context. Proposals can be iteratively refined with feedback.
+### What it does
 
-### How It Works
+A 9-step guided interview that captures the matching-critical fields
+directly from the user, instead of relying on document extraction. Each
+step persists immediately; the user can leave and resume.
 
-1. User clicks "Generate Proposal" on an RFP detail page
-2. Frontend sends the RFP data, company profile, and optional past proposals to `POST /api/generate-proposal`
-3. The server-side API route constructs a prompt and calls the configured LLM (`lib/llm.ts`) with:
-   - Full RFP details (requirements, deliverables, evaluation criteria)
-   - Company profile (capabilities, certifications, experience)
-   - Optional: text from past proposals for style matching (up to 80K characters)
-4. The LLM generates a structured proposal with 5 sections:
-   - Executive Summary
-   - Understanding of Requirements
-   - Approach & Methodology
-   - Relevant Experience & Qualifications
-   - Why Choose Us
+### How it works
 
-**Style Matching:** If users provide past proposals, the LLM analyzes their writing style and mimics tone, vocabulary, and sentence structure in the generated proposal.
+1. Identity (company, year founded, employee band, website)
+2. Specialties — primary, 2-3 picks, embedded via Voyage
+3. Capabilities — broader picks; also embedded
+4. NAICS codes — searchable, multi-select
+5. Licenses — typed by class (CSLB A / B / C-XX, PE, DIR, ...)
+6. Certifications — hard vs soft, two columns
+7. Geography — cities / counties / metros with a hard flag
+8. Scope & duration — `scope_min_usd`, `scope_max_usd`, duration
+   preference, complexity preference
+9. Capacity & history — prime-vs-sub posture, gov experience tiers,
+   agency relationship seeds
 
-**Iterative Refinement:** Users can provide feedback (e.g., "emphasize our cloud experience more") and the system regenerates with those instructions.
+Each step's data goes through a `CommitProvider` that batches PATCH
+writes to the per-entity endpoints under `/api/profile/`. On Finish,
+`POST /api/onboarding/state/` sets `profiles.onboarded_at` and the
+user is redirected to `/upload` (or `/profile/v2` in edit mode).
 
-**Persistence:** Generated proposals are saved to the user's S3 profile and can be retrieved later.
-
----
-
-## 5. AI Plan of Execution
-
-### What It Does
-Generates an internal planning document to help users decide whether to pursue an RFP and prepare for it. Unlike proposals, these are candid assessments meant for internal use.
-
-### How It Works
-
-1. User clicks "Generate Plan" on an RFP detail page
-2. Frontend sends data to `POST /api/generate-plan-of-execution`
-3. The configured LLM generates a plan with 5 sections:
-   - **Contract Requirements Summary** — Scope, deliverables, timeline, compliance needs
-   - **Capability Gap Analysis** — What the company has vs. what the RFP requires
-   - **Action Items** — Concrete steps to close gaps (hiring, certifications, partnerships), each with priority and timeline
-   - **Execution Phases** — Kickoff, milestones, resource allocation if the bid wins
-   - **Risks & Considerations** — Hard gaps, capacity issues, deadline pressure
-
-The plan uses decisive language and is honest about gaps, making it a practical decision-making tool rather than a marketing document.
+Onboarding step UI lives in `app/onboarding/Steps.tsx` and is reused
+verbatim inside `/profile/v2`'s `EditableSection`s, so the wizard and
+the profile editor stay in lock-step.
 
 ---
 
-## 6. RFP Status Tracking
+## 3. Contract Claim Review (`/contracts`, `/contracts/[id]/review`)
 
-### What It Does
-Users can track their progress on RFPs through three states: Saved, Applied, and In Progress. Status is persisted across sessions and devices.
+### What it does
 
-### How It Works
+Users upload past proposals, executed contracts, capability statements,
+and license certificates. The system classifies each document, extracts
+typed facts ("claims") with snippets and confidence, and surfaces them
+for accept / edit / reject before any profile row changes.
 
-**Status States:**
-- **Saved** — Bookmarked for later review
-- **Applied** — User has submitted an application
-- **In Progress** — User is actively working on the RFP (plan/proposal generated)
+### How it works
 
-**Backend Storage:**
-Status is tracked via `PATCH /api/user/rfp-status/` (and the v2 `/api/match/{rfp_id}/` endpoint) and persisted in the Postgres `match_state` table, keyed by `(user_id, rfp_id)`.
+1. **Upload** to `/api/contracts/v2/` — file is validated (size, type,
+   magic bytes), saved to `s3://civitas-ai/uploads/{user_id}/{contract_id}/`,
+   text extracted via mupdf / mammoth, PII-redacted, then
+   classified with Claude Haiku 4.5
+   (`lib/contract-pipeline-v2.ts`).
+2. **Classifier** outputs `document_type`: `proposal` /
+   `executed_contract` / `capability_statement` / `license_doc` /
+   `rfp_solicitation` / `other`, plus a `contract_status` for
+   proposals / executed contracts. The `rfp_solicitation` category is
+   a guardrail — if the user accidentally uploads the agency's RFP
+   instead of their own work, the UI redirects rather than extracting
+   "RFP requires Class A license" *as if the user holds Class A*.
+3. **Targeted extractor** (Sonnet 4.6) runs the per-`document_type`
+   prompt; output is an array of claims with `field_path`, `value`,
+   `snippet`, and a `confidence` that's multiplied by a source-type
+   weight (executed contract = 1.0, proposal won = 0.9, proposal lost
+   = 0.7, capability statement = 0.75, etc.).
+4. **Review** at `/contracts/[id]/review` — grouped by `field_path`,
+   each claim shows its snippet, confidence, and source-type label.
+   Accept / Edit / Reject per claim; bulk "accept all from this
+   document." Accept writes through `lib/claim-acceptance.ts` to the
+   corresponding profile table.
 
-The Home page (`/home`) displays quick stats and lists for each status category, with upcoming deadline alerts for the next 30 days.
-
----
-
-## 7. Contract Management
-
-### What It Does
-Users maintain a portfolio of past contracts that feeds their profile. Contracts can be uploaded, edited, and deleted.
-
-### How It Works
-
-**Upload:** `POST /api/contracts/` with a file and optional metadata. The backend extracts text via `mupdf`/`mammoth`, runs PII redaction, calls the configured LLM for metadata extraction, saves the raw file to S3 (`uploads/{user_id}/{contract_id}/...`), and records the contract + extracted claims in Postgres.
-
-**Auto-Extraction:** On upload, the LLM identifies:
-- Issuing agency and contractor name
-- Contract value and duration
-- Required certifications and clearances
-- NAICS codes and industry tags
-- Work locations and scope
-
-**Provenance:** Each extracted fact lands in the `claims` table with the source snippet, confidence score, and a `pending`/`accepted`/`rejected` status. Users review claims before they're applied to the profile (see [Architecture-v2 § 6.5](Architecture-v2.md)).
-
----
-
-## 8. Web Scraping Pipeline
-
-### What It Does
-Automatically collects California government RFPs from 57+ procurement portals and enriches them with data extracted from PDF attachments. Full details in [webscraping/v2/README.md](../webscraping/v2/README.md) and the per-source field matrix in [webscraping/v2/COVERAGE.md](../webscraping/v2/COVERAGE.md).
-
-### How It Works
-
-**Stage 1: Scraping** (`webscraping/v2/scrapers/*.py`)
-- Playwright + Chromium (containerized) in an AWS Lambda; EventBridge fires every 12 hours.
-- Source-specific scrapers: `caleprocure.py`, `planetbids.py`, `bidsync.py`, `opengov.py`, `agentic.py`.
-- Cal eProcure downloads PDFs inline via the session-bound href; PlanetBids gathers market intel (prospective bidders / bid results / awards) but most PDFs are gated; BidSync gives only search-result metadata; OpenGov hits the direct JSON API.
-- Manifests are written per-source to `s3://civitas-ai/scrapes/v2/{source}/...`.
-
-**Stage 2: Enrichment** (`webscraping/v2/pipeline/enrich.py`)
-- Extracts text from downloaded PDFs via PyMuPDF.
-- Sends text through the configured LLM (Claude Haiku 4.5 default with prompt caching on the system message; Groq fallback via `LLM_PROVIDER=groq`).
-- Extracts structured requirements: NAICS codes, certifications, licenses, clearances, deliverables, evaluation criteria, key requirements, incumbent vendor and contract end date.
-- SSRF protection blocks fetches to private IPs and metadata endpoints (see [Security & Optimization](Security.md)).
-
-**Stage 3: Serving**
-- A post-scrape hook calls `/api/cron/sync-rfp-cache` to refresh the Postgres `rfp_cache` and re-embed RFPs for semantic matching.
-- The frontend `/api/events` and `/api/match` routes read from `rfp_cache`.
-- Match scoring treats empty fields as **unknown, not zero** — important because PlanetBids `licenses_required: []` means "we don't know," not "no license required."
+A claim that's accepted, then later edited in the profile UI, retains
+the snippet provenance so `/api/profile/provenance` can answer
+"why does my profile say X."
 
 ---
 
-## 9. Authentication & Security
+## 4. Bidding Tracker (`/tracker`, `/home`)
 
-### What It Does
-Secure user authentication with session cookies and Bearer tokens, supporting both browser-based and API access patterns.
+### What it does
 
-### How It Works
+Once a user saves an RFP, it enters their bidding pipeline. They
+move it through six states — `saved` → `in_progress` → `bid_submitted`
+→ `won` / `lost` / `no_bid` — and check off a default 7-item task
+list (review attachments, confirm bid/no-bid, submit Q&A, attend
+pre-bid, draft, internal review, submit bid). Custom tasks can be
+added inline.
 
-**JWT Auth:**
-- HS256 JWT signed via `jose`; secret loaded from `JWT_SECRET` env var (server throws on missing/default).
-- Stored in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie; never accessible to JS.
-- Token expiry: 7 days (configurable via `auth.jwtExpiryDays` in `civitas.config.json`).
+### How it works
 
-**Password Security:**
-- Minimum 8 characters, at least one uppercase letter, one lowercase letter, one special character.
-- Bcrypt with 12 rounds. Legacy Django PBKDF2 hashes are transparently re-hashed to bcrypt on first login.
-- Validated on both frontend (real-time) and backend (server-side).
+- **Pipeline state** lives in `match_state.status` with a
+  `status_changed_at` audit column. Transitions go through
+  `PATCH /api/user/rfp-status/`; the same route also writes
+  match-feedback (`good` / `bad` + reason).
+- **Default tasks** are seeded on first save by
+  `POST /api/user/rfp-status/` from a template; further task CRUD
+  goes through `/api/tasks/` and `/api/tasks/[id]/`.
+- **Calendar** uses FullCalendar (`/tracker`) and a hand-rolled mini
+  calendar (`/home`). RFP deadlines + extracted key dates
+  (`qa_deadline`, `prebid_meeting_at`, `site_visit_at`, etc.) and
+  custom task due dates are merged into one stream.
+- **Home dashboard** shows pipeline counts per bucket plus a "Due in
+  30 days" tile and the upcoming-deadlines list. Quick stats come
+  from `GET /api/tracker`.
 
-**Data Isolation:**
-- User and profile rows live in Postgres, scoped by `user_id`; every query joins through `users(id)` so cross-user reads require explicit query bugs.
-- Raw uploads live in S3 under `uploads/{user_id}/...` and are never publicly accessible.
-- Auth is checked at the API route boundary before any DB or S3 read.
+---
 
-See [Security & Optimization](Security.md) for the full security control matrix.
+## 5. RFP Detail (`/matches/[rfpId]`)
+
+### What it does
+
+The full match deep-dive. Prime + Sub track tabs, per-category citation,
+LLM-generated context summaries, attachments, key dates, action panel.
+
+### How it works
+
+The page loads `/api/match/[rfpId]` once on mount, which returns the
+full v2 `DetailResponse` (RFP metadata, score, win probability,
+tier, prime / sub eligibility, gate failures, incumbent state,
+`data_quality`, breakdown rows with citations, sub-track breakdown).
+
+Three LLM summaries are computed on demand and lazy-loaded:
+
+- **Match summary** (`/api/match-summary/`) — natural language "why is
+  this a good / bad fit?"
+- **RFP requirements summary** (`/api/rfp-requirements-summary/`) —
+  structured "what does this RFP ask for?"
+- **Capabilities analysis** (`/api/capabilities-analysis/`) — gap
+  analysis between profile capabilities and RFP requirements.
+
+Save / unsave + pipeline status update inline. Good / bad match
+feedback writes to `match_state.feedback_*` with a snapshot of the
+score the user saw (so feedback remains explainable after the live
+score changes).
+
+Attachments are proxied through `/api/attachments/[...key]` (signed
+S3 URL with auth check); the page also fires fine-grained KPI events
+(`rfp_section_expanded`, `rfp_attachment_clicked`,
+`rfp_external_link_clicked`, `rfp_dwell`).
+
+---
+
+## 6. Daily Roundup Email
+
+### What it does
+
+Once-a-day morning digest of new, high-fit, unviewed RFPs, sent at each
+user's local 7am to anyone who opts in during onboarding.
+
+### How it works
+
+1. EventBridge fires
+   [`infra/notifications/lambda.mjs`](../infra/notifications/lambda.mjs)
+   every hour.
+2. The Lambda POSTs `/api/cron/daily-roundup/` with the cron Bearer
+   secret.
+3. The route reads `profiles WHERE daily_roundup_enabled = true`,
+   filters to users whose local hour is 7 (via
+   `daily_roundup_timezone`), runs `matching-v2.ts` against the
+   currently-open RFP catalog, filters out anything with a non-null
+   `match_state.viewed_at`, keeps matches scoring ≥75, and sends
+   the digest via Resend
+   ([`lib/email.ts`](../front_end/src/lib/email.ts) →
+   `sendDailyRoundupEmail`).
+
+The Lambda is intentionally trivial so business logic stays in
+Next.js (DB schema, matcher, Resend wiring) without being duplicated.
+
+---
+
+## 7. Authentication & Session
+
+### What it does
+
+JWT-based auth with HttpOnly cookies. Production signup requires email
+verification; a `SKIP_EMAIL_VERIFICATION` flag bypasses for the test
+cohort.
+
+### How it works
+
+- **Login** (`/api/auth/login/`): bcrypt-verify, set
+  `HttpOnly` / `Secure` / `SameSite=Strict` JWT cookie (7-day expiry).
+- **Signup** (`/api/auth/signup/`): write `pending_users`, send Resend
+  verification email. Click-through promotes the row into `users`
+  inside a transaction and sets the cookie.
+- **Password rules**: 8+ chars, one upper / one lower / one special.
+  Bcrypt (12 rounds). Django PBKDF2 hashes transparently re-hashed on
+  login.
+- **Password reset**: `/api/auth/forgot-password/` →
+  `users.password_reset_token` + 1-hour expiry → reset link →
+  `/api/auth/reset-password/`.
+- **Data isolation**: every server route calls
+  `getAuthenticatedUser(request)` from `lib/auth.ts` before any DB or
+  S3 read; queries always join through `users(id)`.
+
+See [Security & Optimization](Security) for the full security control
+matrix.
+
+---
+
+## 8. Admin KPI Dashboard (`/admin/kpis`)
+
+### What it does
+
+Internal-only dashboard for measuring product usage. Allowlist-gated.
+Shows total / DAU / WAU / MAU, signup funnel rollups, per-event
+counters, time-series charts, and raw event drill-down.
+
+### How it works
+
+- `lib/event-log.ts` writes every server event to
+  `civitas-kpi-events` (DynamoDB), updating per-user counters and
+  funnel checkpoints in `civitas-kpi-users`.
+- `lib/event-tracker.ts` plus `/api/events/track/` are the client-side
+  equivalent (allowlisted `CLIENT_EVENT_TYPES` only).
+- `lib/kpi-aggregator.ts` runs nightly via
+  `/api/admin/aggregate-kpis/` (cron-secret-protected) and writes
+  `metrics/aggregate/latest.json` plus
+  `metrics/aggregate/daily/{YYYY-MM-DD}.json` to S3.
+- `/admin/kpis` reads the snapshot via `/api/admin/kpis/`, time-series
+  via `/api/admin/kpis/timeseries/?granularity=day|week|month`, and
+  raw events via `/api/admin/events/?type=...` (DynamoDB
+  `byEventType` GSI).
+
+A CLI alternative — `npm run kpi:funnel [username]` — runs against
+DynamoDB directly. See [KPIs](KPIs) for the event taxonomy and the
+report format.

@@ -4,7 +4,25 @@ This document covers all security controls implemented in Civitas, the audit tha
 
 ## Audit Summary (April 2026)
 
-A full security audit was performed across the frontend (Next.js), backend (API routes), scraping pipeline (Python/Lambda), and infrastructure (AWS). The audit identified 17 issues across critical, high, and medium severity. All actionable issues have been resolved.
+A full security audit was performed across the frontend (Next.js),
+backend (API routes), scraping pipeline (Python / Lambda), and
+infrastructure (AWS). The audit identified 17 issues across critical,
+high, and medium severity. All actionable issues have been resolved.
+Subsequent additions:
+
+- v2 contract pipeline (Sonnet extractor + Haiku classifier) inherits
+  the same system / user message separation as the legacy extractor;
+  the `rfp_solicitation` guardrail blocks the silent-takeover case
+  where a user uploads an agency RFP as if it were their own.
+- NAICS tagger ([`lib/rfp-tagger.ts`](../front_end/src/lib/rfp-tagger.ts))
+  and critic ([`lib/rfp-tag-critic.ts`](../front_end/src/lib/rfp-tag-critic.ts))
+  both run with prompt-cached system messages; only the title /
+  description / attachment rollup arrives as user content.
+- Cron routes (`/api/cron/*`) require a shared `Authorization: Bearer
+  ${CIVITAS_CRON_SECRET}`.
+- Admin routes (`/api/admin/*` excluding the cron variant) require both
+  a JWT cookie and an allowlist match in
+  [`lib/admin-auth.ts`](../front_end/src/lib/admin-auth.ts).
 
 ## Authentication
 
@@ -48,9 +66,18 @@ Full forgot-password flow with token-based reset:
 
 ### Email Verification
 
-- **Production:** Token-based verification email sent via Resend on signup
-- **Development:** Auto-verified when `NODE_ENV=development` and `RESEND_API_KEY` / `CIVITAS_FROM_EMAIL` are unset
-- **Storage:** `email_verified` and `email_verification_token` fields on the `users` table
+- **Production:** Email-verify-before-create. `POST /api/auth/signup/`
+  writes a `pending_users` row with a verification token and emails the
+  link via Resend; clicking the link promotes the row into `users` in a
+  transaction.
+- **Development:** Auto-verified when `NODE_ENV=development` and
+  `RESEND_API_KEY` / `CIVITAS_FROM_EMAIL` are unset (the helper logs
+  the would-be message and returns success).
+- **Test cohort bypass:** `SKIP_EMAIL_VERIFICATION=true` on the signup
+  route creates the user immediately and short-circuits the verification
+  step.
+- **Storage:** `pending_users.verification_token`,
+  `users.email_verified`.
 
 **File:** `front_end/src/app/api/auth/verify-email/route.ts`
 
@@ -136,9 +163,28 @@ All RFP ID fields are validated with `^[\w\-.:]{1,200}$` — alphanumeric, dashe
 
 **Before:** User-uploaded document text was interpolated directly into the LLM prompt via string replacement (`prompt.replace("{text}", text)`). A malicious document could inject instructions.
 
-**After:** System/user message separation. The extraction instructions are sent as a `system` message, and document text is sent as a `user` message. The system prompt explicitly instructs the LLM to ignore any directives in the document text.
+**After:** System/user message separation across every LLM call. The
+instructions are sent as a `system` message (prompt-cached where the
+provider supports it), and untrusted text is sent as a `user` message.
+The system prompts explicitly instruct the LLM to ignore any directives
+in the user content.
 
-**Files:** `front_end/src/lib/extraction.ts`, `webscraping/v2/pipeline/enrich.py`
+**Files:** `front_end/src/lib/extraction.ts`,
+`front_end/src/lib/contract-pipeline-v2.ts`,
+`front_end/src/lib/rfp-tagger.ts`,
+`front_end/src/lib/rfp-tag-critic.ts`,
+`webscraping/v2/pipeline/enrich.py`
+
+### Document type guardrail
+
+The v2 contract classifier
+([`lib/contract-pipeline-v2.ts`](../front_end/src/lib/contract-pipeline-v2.ts))
+returns `rfp_solicitation` when a user accidentally uploads an agency's
+RFP instead of their own past proposal. The pipeline then skips
+extraction entirely and redirects in the UI — without this category, an
+agency RFP saying "vendor shall hold Class A license" would silently
+become a claim that *the user* holds Class A. See
+[Architecture-v2 § 6.4](Architecture-v2.md#64-stage-2-targeted-extractors).
 
 ## Infrastructure Security
 
@@ -174,23 +220,32 @@ All S3 clients use the AWS SDK default credential provider chain instead of expl
 
 ## Email (Resend)
 
-Transactional emails for verification, password reset, and the daily roundup digest are sent via Resend.
+Transactional emails for verification, password reset, and the daily
+roundup digest are sent via Resend.
 
 **File:** `front_end/src/lib/email.ts`
 
 ### Setup
 
-1. Add the sending domain (e.g. `civitas-ai.net`) to the Resend dashboard and verify DNS.
+1. Add the sending domain (e.g. `civitas-ai.net`) to the Resend
+   dashboard and verify DNS.
 2. Set `RESEND_API_KEY` (starts with `re_`) in environment variables.
 3. Set `CIVITAS_FROM_EMAIL`, e.g. `Civitas <register@civitas-ai.net>`.
 
 ### Bounce / Complaint Handling
 
-The legacy AWS SES bounce webhook (`/api/email/...` with SNS signature verification in `lib/sns-verify.ts`) is retained for backward compatibility with previously-sent SES messages; new outbound mail flows entirely through Resend.
+The legacy AWS SES bounce webhook
+([`/api/email/ses-events/`](../front_end/src/app/api/email/ses-events/route.ts)
+with SNS signature verification in
+[`lib/sns-verify.ts`](../front_end/src/lib/sns-verify.ts)) is retained
+for backward compatibility with previously-sent SES messages. No new
+outbound mail goes through SES. See [Retired Features](Retired-Features).
 
 ### Graceful Fallback
 
-If `RESEND_API_KEY` or `CIVITAS_FROM_EMAIL` is unset, `lib/email.ts` logs the message to the console and returns success so signup/reset/daily-roundup flows continue to work locally.
+If `RESEND_API_KEY` or `CIVITAS_FROM_EMAIL` is unset, `lib/email.ts`
+logs the message to the console and returns success so
+signup / reset / daily-roundup flows continue to work locally.
 
 ## Security Event Logging
 
