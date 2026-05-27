@@ -27,10 +27,12 @@ const TEST_USERS_RAW: string[] = [
   "tester",
   "newsierra",
   "civtest",
+  "civvtest",
   "bbbbb",
   "newaCC",
   "SierraWestInc",
   "sw",
+  "ssss",
   "ssssss",
 ];
 

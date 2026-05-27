@@ -16,7 +16,7 @@ import {
   getKpiUsersTable,
 } from "./dynamodb";
 import { putObjectJSON } from "./s3";
-import { TEST_USERS, isTestEmail } from "./test-users";
+import { TEST_USERS, TEST_EMAILS, isTestEmail } from "./test-users";
 import { db } from "@/db/client";
 import { users as usersTable } from "@/db/schema";
 
@@ -30,18 +30,27 @@ import { users as usersTable } from "@/db/schema";
  * filters correctly.
  */
 async function resolveTestUsernames(): Promise<ReadonlySet<string>> {
-  const fromUsernames = new Set(TEST_USERS);
+  const out = new Set(TEST_USERS);
+  // Also treat every test EMAIL as a direct username match. Some events
+  // recorded the email string into the username field (e.g. abandoned
+  // signups where the prospective username happened to be the email, or
+  // older code paths). Adding the emails here catches those rows without
+  // requiring a Postgres user row to exist.
+  for (const e of TEST_EMAILS) out.add(e);
+  // Plus: any Postgres user whose email matches the test-email list — this
+  // catches "real" accounts that completed signup with a test email but
+  // chose a non-email-shaped username.
   try {
     const rows = await db
       .select({ username: usersTable.username, email: usersTable.email })
       .from(usersTable);
     for (const r of rows) {
-      if (isTestEmail(r.email)) fromUsernames.add(r.username.toLowerCase());
+      if (isTestEmail(r.email)) out.add(r.username.toLowerCase());
     }
   } catch (err) {
-    console.warn("[kpi-aggregator] test-email resolution failed; falling back to username-only list:", err);
+    console.warn("[kpi-aggregator] test-email resolution failed; falling back to static lists:", err);
   }
-  return fromUsernames;
+  return out;
 }
 
 // Event types whose payloads we roll up beyond raw counters. Aggregations are
