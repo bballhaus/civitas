@@ -60,11 +60,26 @@ export async function POST(request: Request) {
 
     // Slow work post-response. Recompute first so LLM-inferred codes for
     // free-text adds get persisted before the rescore reads naics_codes.
+    //
+    // Rescore is gated on onboardedAt to skip the wasted per-pick work
+    // during onboarding (see specialties/route.ts for the full rationale).
+    // Finish runs one rescore once the profile is settled.
     after(async () => {
       try {
         await recomputeProfileNaics(auth.userId);
       } catch (err) {
         console.error("[capabilities] naics recompute failed:", err);
+      }
+      let isOnboarded = true;
+      try {
+        const [row] = await db
+          .select({ onboardedAt: profiles.onboardedAt })
+          .from(profiles)
+          .where(eq(profiles.userId, auth.userId))
+          .limit(1);
+        isOnboarded = row?.onboardedAt != null;
+      } catch (err) {
+        console.error("[capabilities] onboardedAt lookup failed; assuming onboarded:", err);
       }
       try {
         await refreshProfileEmbeddings(auth.userId);
@@ -75,10 +90,12 @@ export async function POST(request: Request) {
           console.error("[capabilities] embed refresh failed:", err);
         }
       }
-      try {
-        await rescoreUserMatches(auth.userId);
-      } catch (err) {
-        console.error("[capabilities] rescore failed:", err);
+      if (isOnboarded) {
+        try {
+          await rescoreUserMatches(auth.userId);
+        } catch (err) {
+          console.error("[capabilities] rescore failed:", err);
+        }
       }
     });
 

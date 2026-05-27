@@ -84,11 +84,30 @@ export async function POST(request: Request) {
     // be dropped because their backing spec was deleted). Fail-soft
     // throughout — a Voyage outage or an Anthropic error shouldn't
     // visibly affect the user's onboarding.
+    //
+    // Rescore is gated on onboardedAt: during onboarding a user typically
+    // adds ~10 specialties/capabilities, and rescoring after every single
+    // add wastes 9 full match runs whose results are immediately stale by
+    // the next pick. The onboarding Finish path (POST /api/onboarding/state)
+    // runs a single rescore once the profile is settled. The pending flag
+    // is already set above, so /matches still shows the "updating" banner
+    // if the user navigates there mid-onboarding.
     after(async () => {
       try {
         await recomputeProfileNaics(auth.userId);
       } catch (err) {
         console.error("[specialties] naics recompute failed:", err);
+      }
+      let isOnboarded = true;
+      try {
+        const [row] = await db
+          .select({ onboardedAt: profiles.onboardedAt })
+          .from(profiles)
+          .where(eq(profiles.userId, auth.userId))
+          .limit(1);
+        isOnboarded = row?.onboardedAt != null;
+      } catch (err) {
+        console.error("[specialties] onboardedAt lookup failed; assuming onboarded:", err);
       }
       try {
         await refreshProfileEmbeddings(auth.userId);
@@ -99,10 +118,12 @@ export async function POST(request: Request) {
           console.error("[specialties] embed refresh failed:", err);
         }
       }
-      try {
-        await rescoreUserMatches(auth.userId);
-      } catch (err) {
-        console.error("[specialties] rescore failed:", err);
+      if (isOnboarded) {
+        try {
+          await rescoreUserMatches(auth.userId);
+        } catch (err) {
+          console.error("[specialties] rescore failed:", err);
+        }
       }
     });
 

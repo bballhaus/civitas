@@ -176,27 +176,29 @@ export default function OnboardingPage() {
     trackEvent("onboarding_step_viewed", { step, stepName: stepLabel(step) });
   }, [step, loading]);
 
-  const goNext = async () => {
+  const goNext = () => {
     trackEvent("onboarding_step_advanced", { step, stepName: stepLabel(step) });
-    // Drain any in-flight optimistic POSTs *before* refreshing — otherwise
-    // a rapid Continue after a NAICS pick races the GET ahead of the POST,
-    // refresh returns server state without the row, and setSnapshot wipes
-    // the optimistic chip the user just placed. Bounded with a 2.5s
-    // timeout because a hung POST (network blip, Lambda overload) used to
-    // make the Continue button visibly do nothing — the await never
-    // returned. Falling through after the timeout means the wizard keeps
-    // advancing; the next page mount re-fetches state anyway.
-    try {
-      await withTimeout(commitHandler.drainPending(), 2500, "drainPending");
-    } catch (err) {
-      console.error("[onboarding] drainPending failed/timed out:", err);
-    }
-    try {
-      await withTimeout(refreshSnapshot(), 2500, "refreshSnapshot");
-    } catch (err) {
-      console.error("[onboarding] refreshSnapshot failed/timed out:", err);
-    }
+    // Advance immediately. The next step renders from the local snapshot,
+    // which already reflects the user's optimistic edits — there's no UX
+    // reason to block the click on a server reconciliation. mergeOptimisticRows
+    // (see top of file) + scheduleRefresh (in commit.tsx) handle drift in
+    // the background, so a chip the user just placed survives the
+    // intervening GET even if the POST hasn't landed yet.
     if (step < TOTAL_STEPS) setStep(step + 1);
+    // Fire reconciliation post-advance. Bounded so a hung POST/GET can't
+    // leak handlers forever, but errors are now non-blocking by design.
+    (async () => {
+      try {
+        await withTimeout(commitHandler.drainPending(), 2500, "drainPending");
+      } catch (err) {
+        console.error("[onboarding] drainPending failed/timed out:", err);
+      }
+      try {
+        await withTimeout(refreshSnapshot(), 2500, "refreshSnapshot");
+      } catch (err) {
+        console.error("[onboarding] refreshSnapshot failed/timed out:", err);
+      }
+    })();
   };
   const goBack = () => {
     if (step > 1) {
