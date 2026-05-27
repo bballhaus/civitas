@@ -2,13 +2,13 @@
 // (Architecture-v2 § 11)
 
 import { NextResponse, after } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/db/client";
 import { profiles } from "@/db/schema";
 import { addSpecialty } from "@/db/queries/profile";
 import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
-import { recomputeProfileNaics } from "@/lib/profile-naics";
+import { naicsCodeForValue, recomputeProfileNaics } from "@/lib/profile-naics";
 import { rescoreUserMatches } from "@/lib/match-rescore";
 
 export async function POST(request: Request) {
@@ -40,44 +40,56 @@ export async function POST(request: Request) {
       canonicalId,
     });
 
-    // Derive profile.naics_codes from NAICS-titled specialties. Server-side
-    // so it covers API-direct adds and /profile-setup edits, not just the
-    // onboarding picker. Stays inline (not deferred to after()) so the
-    // onboarding wizard's GET /api/onboarding/state on Continue returns
-    // fresh codes for Step 4. Fail-soft — a stale naics_codes column
-    // shouldn't block adding a specialty. The `added` list is bubbled back
-    // in the response for any callers that still consume it; the
-    // onboarding UI no longer renders the inferred-NAICS banner so this is
-    // effectively just a contract leftover.
-    let addedNaicsCodes: string[] = [];
+    // Fast inline path: when the user picked a NAICS-titled value from the
+    // catalog (the common case in onboarding), look up the code in-memory
+    // and union it into profile.naics_codes via a single combined UPDATE
+    // that also sets the rescore pending flag. Avoids the 3 SELECT + 1
+    // UPDATE round-trips that the full recomputeProfileNaics costs on
+    // every pick, which was driving the Continue button's drainPending
+    // wait into the 500-800ms range steady-state.
+    //
+    // Free-text values fall through to the after() recompute below — they
+    // need LLM inference to map to codes anyway, so the snapshot.naicsCodes
+    // landing one Continue-cycle late is acceptable (the user reviews/edits
+    // codes on Step 4 either way).
+    const titleCode = naicsCodeForValue(value);
     try {
-      const result = await recomputeProfileNaics(auth.userId);
-      addedNaicsCodes = result.added;
+      if (titleCode) {
+        await db
+          .update(profiles)
+          .set({
+            naicsCodes: sql`(
+              SELECT ARRAY(
+                SELECT DISTINCT unnest(COALESCE(${profiles.naicsCodes}, ARRAY[]::text[]) || ARRAY[${titleCode}]::text[])
+              )
+            )`,
+            matchScoresPendingSince: new Date(),
+          })
+          .where(eq(profiles.userId, auth.userId));
+      } else {
+        await db
+          .update(profiles)
+          .set({ matchScoresPendingSince: new Date() })
+          .where(eq(profiles.userId, auth.userId));
+      }
     } catch (err) {
-      console.error("[specialties] naics recompute failed:", err);
+      console.error("[specialties] inline naics/pending update failed:", err);
     }
 
-    // Set the rescore pending flag inline so /matches's stale banner fires
-    // immediately on the user's next GET, even before the post-response
-    // rescore has finished. Same effect as triggerProfileChangedRescore
-    // used to give us, just hoisted out so the slow work can move into
-    // after() below.
-    try {
-      await db
-        .update(profiles)
-        .set({ matchScoresPendingSince: new Date() })
-        .where(eq(profiles.userId, auth.userId));
-    } catch (err) {
-      console.error("[specialties] failed to set rescore pending flag:", err);
-    }
-
-    // Voyage embed (~500ms per pick) + RFP rescore (sweeps the cache) used
-    // to block the response, making the onboarding Continue button wait
-    // for the slowest in-flight POST when the optimistic handler drained
-    // pending. Move both into after() so the row insert alone determines
-    // the POST latency (~50ms). Sequenced — rescore reads the freshly
-    // written embeddings, so embed must finish first. Both are fail-soft.
+    // Slow work runs post-response on the same Lambda. Order matters:
+    //   recompute (may LLM-infer for free-text) → embed → rescore.
+    // The recompute is the authoritative reconcile against all of the
+    // user's specs/caps — fixes any drift the fast inline path missed
+    // (e.g. a free-text value's LLM-inferred codes, or codes that should
+    // be dropped because their backing spec was deleted). Fail-soft
+    // throughout — a Voyage outage or an Anthropic error shouldn't
+    // visibly affect the user's onboarding.
     after(async () => {
+      try {
+        await recomputeProfileNaics(auth.userId);
+      } catch (err) {
+        console.error("[specialties] naics recompute failed:", err);
+      }
       try {
         await refreshProfileEmbeddings(auth.userId);
       } catch (err) {
@@ -94,7 +106,11 @@ export async function POST(request: Request) {
       }
     });
 
-    return NextResponse.json({ ...row, addedNaicsCodes }, { status: 201 });
+    // addedNaicsCodes is kept on the response for back-compat; no current
+    // caller consumes it (the onboarding inferred-NAICS banner that read
+    // this field was removed). LLM-inferred codes for free-text adds now
+    // land on the profile via the after() recompute, not in this payload.
+    return NextResponse.json({ ...row, addedNaicsCodes: [] }, { status: 201 });
   } catch (err) {
     console.error("Add specialty error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
