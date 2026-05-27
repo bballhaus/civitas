@@ -80,7 +80,29 @@ const ROLLUP_EVENT_TYPES = [
   "search_submitted",
   "search_result_count",
   "sort_changed",
+  "page_viewed",
 ] as const;
+
+/**
+ * Map a raw pagePath to a stable category. Detail pages (`/matches/abc123`)
+ * collapse to `rfp_detail` so per-user counts aren't fragmented across every
+ * RFP UUID; everything else keeps its top-level segment.
+ */
+function pageCategory(rawPath: string | undefined | null): string {
+  const p = (rawPath ?? "").toLowerCase();
+  if (!p) return "unknown";
+  if (p.startsWith("/matches/") || p.startsWith("/dashboard/rfp/")) return "rfp_detail";
+  if (p === "/home" || p.startsWith("/home")) return "home";
+  if (p === "/dashboard" || p.startsWith("/dashboard")) return "dashboard";
+  if (p === "/matches" || p.startsWith("/matches")) return "matches";
+  if (p === "/tracker" || p.startsWith("/tracker")) return "tracker";
+  if (p.startsWith("/profile")) return "profile";
+  if (p.startsWith("/onboarding")) return "onboarding";
+  if (p.startsWith("/contracts")) return "contracts";
+  if (p.startsWith("/upload")) return "upload";
+  if (p === "/" || p === "") return "root";
+  return p.split("/")[1] ?? "other";
+}
 
 const EVENT_WINDOW_DAYS = 30;
 
@@ -189,6 +211,23 @@ export interface KpiSummary {
     onboarding_step_skip_rate: Record<string, number>;
     onboarding_validation_errors: Record<string, number>;
     sort_key_distribution: Record<string, number>;
+    /**
+     * Per-user page-view distribution, segmented by page category
+     * (home / dashboard / matches / tracker / rfp_detail / profile / ...).
+     * Each entry carries: how many distinct users have visited that page,
+     * total events, mean/median/p90/max visits per user.
+     */
+    page_views_by_path: Record<
+      string,
+      {
+        users_with_value: number;
+        total: number;
+        mean: number;
+        median: number;
+        p90: number;
+        max: number;
+      }
+    >;
   };
 }
 
@@ -460,6 +499,7 @@ function aggregate(users: UserSummary[], now: Date): KpiSummary {
       onboarding_step_skip_rate: {},
       onboarding_validation_errors: {},
       sort_key_distribution: {},
+      page_views_by_path: {},
     },
   };
 }
@@ -700,6 +740,38 @@ async function buildEventRollups(
     sort_key_distribution[k] = (sort_key_distribution[k] ?? 0) + 1;
   }
 
+  // Page views, segmented by page category and grouped by user. The summary
+  // counter_page_views totals every path; this rollup splits it so the
+  // dashboard can show "median tracker visits per user", "median homepage
+  // visits per user", etc. Per-user counts let us compute spread (mean,
+  // median, p90, max) the same way we do for any other counter.
+  const pageViewsByUserAndPath: Record<string, Map<string, number>> = {};
+  for (const ev of eventsByType["page_viewed"] ?? []) {
+    if (!ev.username) continue;
+    const cat = pageCategory(typeof ev.payload.pagePath === "string" ? ev.payload.pagePath : "");
+    const userMap = (pageViewsByUserAndPath[cat] ??= new Map());
+    userMap.set(ev.username, (userMap.get(ev.username) ?? 0) + 1);
+  }
+  const page_views_by_path: KpiSummary["event_rollups"]["page_views_by_path"] = {};
+  for (const [cat, userMap] of Object.entries(pageViewsByUserAndPath)) {
+    const values = Array.from(userMap.values()).filter((v) => v > 0);
+    if (values.length === 0) continue;
+    const sum = values.reduce((a, b) => a + b, 0);
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const med =
+      sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    const p90Idx = Math.min(sorted.length - 1, Math.floor(0.9 * sorted.length));
+    page_views_by_path[cat] = {
+      users_with_value: values.length,
+      total: sum,
+      mean: Math.round((sum / values.length) * 100) / 100,
+      median: Math.round(med * 100) / 100,
+      p90: sorted[p90Idx],
+      max: Math.max(...values),
+    };
+  }
+
   return {
     window_days: EVENT_WINDOW_DAYS,
     event_counts,
@@ -722,6 +794,7 @@ async function buildEventRollups(
     onboarding_step_skip_rate,
     onboarding_validation_errors,
     sort_key_distribution,
+    page_views_by_path,
   };
 }
 

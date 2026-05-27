@@ -551,6 +551,16 @@ export default function AdminKpisPage() {
         <UserDistributionTable distributions={summary.user_distributions ?? {}} />
       </Section>
 
+      <Section title="Page views per user, by page">
+        <p className="text-xs text-slate-500 mb-2">
+          Where individual users spend their time. Same stats as the spread above (users with non-zero, total, mean, median, p90, max) but segmented by page. Detail pages (e.g. <code>/matches/[id]</code>) collapse to <code>rfp_detail</code>.
+        </p>
+        <UserDistributionTable
+          distributions={summary.event_rollups?.page_views_by_path ?? {}}
+          metricLabel="Page"
+        />
+      </Section>
+
       <Section title="Per-user breakdown">
         <PerUserTable users={summary.per_user} />
       </Section>
@@ -1006,22 +1016,34 @@ function PerUserTable({ users }: { users: KpiSummary["per_user"] }) {
 
 function UserDistributionTable({
   distributions,
+  metricLabel = "Metric",
 }: {
-  distributions: NonNullable<KpiSummary["user_distributions"]>;
+  distributions: Record<
+    string,
+    {
+      users_with_value: number;
+      total: number;
+      mean: number;
+      median: number;
+      p90: number;
+      max: number;
+    }
+  >;
+  metricLabel?: string;
 }) {
   const entries = Object.entries(distributions).sort(
     (a, b) => b[1].total - a[1].total,
   );
   if (entries.length === 0) return <Empty />;
   // Shorten the counter_ prefix that's baked into our schema — pure
-  // presentation.
+  // presentation. Non-counter keys (e.g. page categories) pass through.
   const label = (k: string) => k.replace(/^counter_/, "").replace(/_/g, " ");
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="text-[10px] uppercase tracking-wider text-slate-600 border-b border-slate-200">
           <tr>
-            <th className="text-left py-1.5 px-2">Metric</th>
+            <th className="text-left py-1.5 px-2">{metricLabel}</th>
             <th className="text-right py-1.5 px-2" title="Number of users with a non-zero count">
               Users with
             </th>
