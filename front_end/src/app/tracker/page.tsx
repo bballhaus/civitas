@@ -188,6 +188,19 @@ export default function TrackerPage() {
     trackEvent("page_viewed", { pagePath: "/tracker" });
   }, [authChecked, reload]);
 
+  // One column_viewed event per pipeline column, fired after the first load
+  // so we can see which lanes have content the user actually sees on entry.
+  // Cardinality is bounded (6 statuses) so this is safe to fire every load.
+  const columnsLoggedRef = React.useRef(false);
+  useEffect(() => {
+    if (loading || columnsLoggedRef.current) return;
+    columnsLoggedRef.current = true;
+    for (const status of PIPELINE_ORDER) {
+      const count = payload.rfps.filter((r) => r.status === status).length;
+      trackEvent("tracker_column_viewed", { columnKey: status, itemCount: count });
+    }
+  }, [loading, payload.rfps]);
+
   const tasksByRfp = useMemo(() => {
     const m = new Map<string, RfpTask[]>();
     for (const t of payload.tasks) {
@@ -293,12 +306,22 @@ export default function TrackerPage() {
       setBusy(rfpId);
       // Optimistic update so the card jumps to the new column immediately;
       // any failure gets reverted by the reload() below.
+      // Snapshot the prior status so we can emit a tracker_status_changed
+      // event with `from` + `to` (the server-side rfp_* events don't carry
+      // the prior status, so this is the only place we can capture the
+      // transition).
+      const prevRfp = payload.rfps.find((r) => r.id === rfpId);
       setPayload((prev) => ({
         ...prev,
         rfps: prev.rfps.map((r) => (r.id === rfpId && status ? { ...r, status } : r)),
       }));
       try {
         await setRfpStatus(rfpId, status);
+        trackEvent("tracker_status_changed_from_tracker", {
+          rfpId,
+          from: prevRfp?.status ?? "unknown",
+          to: status ?? "cleared",
+        });
         await reload();
       } catch {
         await reload();
@@ -306,7 +329,7 @@ export default function TrackerPage() {
         setBusy(null);
       }
     },
-    [reload],
+    [reload, payload.rfps],
   );
 
   const handleDropOnColumn = useCallback(
@@ -345,6 +368,7 @@ export default function TrackerPage() {
       if (!label.trim()) return;
       const task = await createTask({ rfp_id: rfpId, label: label.trim(), due_date: dueDate });
       setPayload((prev) => ({ ...prev, tasks: [...prev.tasks, task] }));
+      trackEvent("tracker_note_added", { rfpId, hasDueDate: !!dueDate });
     },
     [],
   );
@@ -356,6 +380,7 @@ export default function TrackerPage() {
         ...prev,
         tasks: prev.tasks.map((t) => (t.id === taskId ? updated : t)),
       }));
+      trackEvent("tracker_note_edited", { rfpId: updated.rfpId });
     },
     [],
   );

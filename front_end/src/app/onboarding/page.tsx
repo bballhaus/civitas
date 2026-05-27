@@ -5,7 +5,7 @@
 // matching child-collection route under /api/profile/*; this page owns step
 // state and resume only. See OnboardingSteps for the per-screen renderers.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
@@ -170,10 +170,26 @@ export default function OnboardingPage() {
 
   // Fire a step-view event whenever the active step changes (incl. the
   // resume on mount, after the state fetch resolves the user's nextStep).
-  // Guarded on `loading` so we don't double-fire during the initial fetch.
+  // Cleanup fires `onboarding_step_dwell` with the time the user spent on
+  // the step we're leaving — this is how time-per-step is derived (cheaper
+  // than reconstructing from successive view timestamps server-side).
+  const stepEnterRef = useRef<number>(0);
   useEffect(() => {
     if (loading) return;
     trackEvent("onboarding_step_viewed", { step, stepName: stepLabel(step) });
+    stepEnterRef.current = Date.now();
+    const enteredStep = step;
+    const enteredLabel = stepLabel(step);
+    return () => {
+      const dur = Date.now() - stepEnterRef.current;
+      if (dur >= 250) {
+        trackEvent("onboarding_step_dwell", {
+          step: enteredStep,
+          stepName: enteredLabel,
+          durationMs: dur,
+        });
+      }
+    };
   }, [step, loading]);
 
   const goNext = async () => {

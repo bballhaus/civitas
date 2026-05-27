@@ -18,11 +18,12 @@
 //     precision the matcher doesn't have.
 //   - "Hide likely incumbents" filter (§ 12).
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { MeshBackground } from "@/components/MeshBackground";
+import { trackEvent } from "@/lib/event-tracker";
 import {
   FilterPanel,
   applyFilters,
@@ -173,6 +174,97 @@ function MatchesPageInner() {
     [data, filters],
   );
 
+  // Page view, filter-change diff, result count, and impression tracking.
+  // Filters object on this page is a Record-shaped state — diff every key,
+  // emit filter_applied with values (joined) or filter_cleared on emptying.
+  useEffect(() => {
+    trackEvent("page_viewed", { pagePath: "/matches" });
+  }, []);
+
+  const prevFiltersRef = useRef(filters);
+  useEffect(() => {
+    const prev = prevFiltersRef.current;
+    const cur = filters;
+    if (prev !== cur) {
+      const prevRec = prev as unknown as Record<string, unknown>;
+      const curRec = cur as unknown as Record<string, unknown>;
+      const keys = new Set([...Object.keys(prevRec), ...Object.keys(curRec)]);
+      for (const k of keys) {
+        const a = prevRec[k];
+        const b = curRec[k];
+        const sameRef = a === b;
+        if (sameRef) continue;
+        const aArr = Array.isArray(a) ? a.map(String) : [];
+        const bArr = Array.isArray(b) ? b.map(String) : [];
+        if (
+          aArr.length === bArr.length &&
+          aArr.every((v, i) => v === bArr[i]) &&
+          typeof a === typeof b
+        )
+          continue;
+        if (Array.isArray(b)) {
+          if (b.length === 0) {
+            trackEvent("filter_cleared", { filterName: k });
+          } else {
+            const joined = bArr.join("|");
+            trackEvent("filter_applied", {
+              filterName: k,
+              filterValueCount: bArr.length,
+              filterValues: joined.length > 180 ? joined.slice(0, 180) + "…" : joined,
+              source: "matches",
+            });
+          }
+        } else if (typeof b === "boolean") {
+          if (!b) trackEvent("filter_cleared", { filterName: k });
+          else trackEvent("filter_applied", { filterName: k, filterValues: "true", source: "matches" });
+        } else if (typeof b === "number" || typeof b === "string") {
+          trackEvent("filter_applied", {
+            filterName: k,
+            filterValues: String(b).slice(0, 180),
+            source: "matches",
+          });
+        }
+      }
+      prevFiltersRef.current = cur;
+    }
+  }, [filters]);
+
+  // Result count + impression batch.
+  const lastResultKey = useRef("");
+  useEffect(() => {
+    if (!data) return;
+    const key = `${filtered.length}::${data.matches.length}`;
+    if (key === lastResultKey.current) return;
+    lastResultKey.current = key;
+    trackEvent("search_result_count", {
+      resultCount: filtered.length,
+      zeroResults: filtered.length === 0,
+      source: "matches",
+      totalCount: data.matches.length,
+    });
+  }, [filtered.length, data]);
+
+  const lastImpressionRef = useRef("");
+  useEffect(() => {
+    const top = filtered.slice(0, 25);
+    const key = top.map((m) => m.rfpId).join(",");
+    if (key === lastImpressionRef.current) return;
+    const handle = setTimeout(() => {
+      lastImpressionRef.current = key;
+      for (let i = 0; i < top.length; i++) {
+        const m = top[i];
+        trackEvent("rfp_impression", {
+          rfpId: m.rfpId,
+          position: i,
+          source: "matches",
+          matchTier: m.tier,
+          matchScore: m.score,
+        });
+      }
+    }, 800);
+    return () => clearTimeout(handle);
+  }, [filtered]);
+
   if (loading) {
     return <MatchesLoading />;
   }
@@ -264,8 +356,8 @@ function MatchesPageInner() {
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {filtered.map((m) => (
-              <MatchCard key={m.rfpId} m={m} />
+            {filtered.map((m, idx) => (
+              <MatchCard key={m.rfpId} m={m} position={idx} />
             ))}
           </div>
         )}
@@ -274,13 +366,22 @@ function MatchesPageInner() {
   );
 }
 
-function MatchCard({ m }: { m: MatchListItem }) {
+function MatchCard({ m, position }: { m: MatchListItem; position: number }) {
   const tier = TIER_STYLES[m.tier];
   const coverage = COVERAGE_LABEL[m.dataQuality.coverage];
 
   return (
     <Link
       href={`/matches/${encodeURIComponent(m.rfpId)}`}
+      onClick={() =>
+        trackEvent("rfp_viewed", {
+          rfpId: m.rfpId,
+          source: "matches",
+          position,
+          matchTier: m.tier,
+          matchScore: m.score,
+        })
+      }
       className="block bg-white/80 backdrop-blur-sm rounded-2xl border border-white/60 shadow-lg shadow-slate-200/50 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 ease-out overflow-hidden group"
     >
       <div className="p-5 border-l-4" style={{ borderLeftColor: tierAccent(m.tier) }}>

@@ -35,12 +35,14 @@ function StatCard({
   accent,
   icon,
   href,
+  ctaKey,
 }: {
   label: string;
   value: number;
   accent: "blue" | "emerald" | "amber" | "violet";
   icon: React.ReactNode;
   href?: string;
+  ctaKey?: string;
 }) {
   const styles = {
     blue: "from-blue-500 to-blue-600",
@@ -67,7 +69,18 @@ function StatCard({
       </div>
     </div>
   );
-  return href ? <Link href={href}>{inner}</Link> : inner;
+  return href ? (
+    <Link
+      href={href}
+      onClick={() =>
+        ctaKey && trackEvent("home_cta_clicked", { ctaKey, value })
+      }
+    >
+      {inner}
+    </Link>
+  ) : (
+    inner
+  );
 }
 
 interface CalEntry {
@@ -271,6 +284,21 @@ export default function HomePage() {
       .slice(0, 7);
   }, [payload.rfps, nowMs]);
 
+  // Widget impressions — fires once per home-page load, after data lands.
+  // Lets us measure CTR per widget (clicks come from home_cta_clicked +
+  // home_recent_match_clicked).
+  const widgetsLoggedRef = React.useRef(false);
+  useEffect(() => {
+    if (loading || widgetsLoggedRef.current) return;
+    widgetsLoggedRef.current = true;
+    trackEvent("home_widget_viewed", { widgetKey: "stats", itemCount: 4 });
+    trackEvent("home_widget_viewed", { widgetKey: "calendar", itemCount: entries.length });
+    trackEvent("home_widget_viewed", {
+      widgetKey: "upcoming_deadlines",
+      itemCount: upcoming.length,
+    });
+  }, [loading, entries.length, upcoming.length]);
+
   if (!authChecked) {
     return (
       <div className="min-h-screen relative overflow-hidden bg-[#f5f9ff]">
@@ -323,6 +351,7 @@ export default function HomePage() {
           <div className="flex flex-wrap gap-2">
             <Link
               href="/tracker"
+              onClick={() => trackEvent("home_cta_clicked", { ctaKey: "open_tracker" })}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-slate-700 font-semibold border border-slate-200 hover:bg-slate-50"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -332,6 +361,7 @@ export default function HomePage() {
             </Link>
             <Link
               href="/matches"
+              onClick={() => trackEvent("home_cta_clicked", { ctaKey: "view_matches" })}
               className="flex items-center gap-3 px-5 py-2.5 rounded-xl bg-[#3C89C6] text-white shadow-lg shadow-[#3C89C6]/25 hover:bg-[#2d6fa0] hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 ease-out group border border-[#2d6fa0]/20"
             >
               <svg className="w-5 h-5 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -344,10 +374,10 @@ export default function HomePage() {
 
         {/* Quick stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 mb-8">
-          <StatCard label="Saved" value={stats.saved} accent="blue" icon={iconSaved} href="/tracker" />
-          <StatCard label="In progress" value={stats.in_progress} accent="violet" icon={iconInProgress} href="/tracker" />
-          <StatCard label="Bid submitted" value={stats.bid_submitted} accent="emerald" icon={iconBid} href="/tracker" />
-          <StatCard label="Due in 30 days" value={stats.dueIn30} accent="amber" icon={iconDeadline} href="/tracker" />
+          <StatCard label="Saved" value={stats.saved} accent="blue" icon={iconSaved} href="/tracker" ctaKey="stat_saved" />
+          <StatCard label="In progress" value={stats.in_progress} accent="violet" icon={iconInProgress} href="/tracker" ctaKey="stat_in_progress" />
+          <StatCard label="Bid submitted" value={stats.bid_submitted} accent="emerald" icon={iconBid} href="/tracker" ctaKey="stat_bid_submitted" />
+          <StatCard label="Due in 30 days" value={stats.dueIn30} accent="amber" icon={iconDeadline} href="/tracker" ctaKey="stat_due_in_30" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -385,10 +415,17 @@ export default function HomePage() {
                 </p>
               ) : (
                 <ul className="space-y-1.5">
-                  {upcoming.map((rfp) => (
+                  {upcoming.map((rfp, idx) => (
                     <li key={rfp.id}>
                       <Link
                         href={`/matches/${encodeURIComponent(rfp.id)}`}
+                        onClick={() =>
+                          trackEvent("home_recent_match_clicked", {
+                            rfpId: rfp.id,
+                            position: idx,
+                            source: "upcoming_deadlines",
+                          })
+                        }
                         className="block p-2.5 rounded-lg border border-slate-100 hover:border-amber-200 hover:bg-amber-50/50 transition-all"
                       >
                         <p className="font-semibold text-slate-900 text-sm line-clamp-2">{rfp.title}</p>
