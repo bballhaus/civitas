@@ -215,16 +215,14 @@ moot: SES is no longer the outbound provider.
 
 ---
 
-## Legacy 12-hour scrape schedule
+## Legacy 48-hour scrape schedule
 
 **Status:** Replaced.
 
 **Now:** EventBridge fires
 [`webscraping/v2/deploy/template.yaml`](../webscraping/v2/deploy/template.yaml)
-on `rate(48 hours)` with `{"mode":"all"}`, plus a daily
-exploration / onboarding rule at `cron(0 13 * * ? *)`. The old 12-hour
-cadence was reduced once the catalog stopped meaningfully changing
-between runs and Anthropic token spend started dominating.
+on `rate(12 hours)` with `{"mode":"all"}`, plus a daily
+exploration / onboarding rule at `cron(0 13 * * ? *)`. 
 
 The daily-roundup Lambda runs on `rate(1 hour)` so it can fire at each
 user's local 7am for any timezone.
