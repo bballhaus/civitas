@@ -81,6 +81,7 @@ const ROLLUP_EVENT_TYPES = [
   "search_result_count",
   "sort_changed",
   "page_viewed",
+  "error_occurred",
 ] as const;
 
 /**
@@ -228,6 +229,28 @@ export interface KpiSummary {
         max: number;
       }
     >;
+    /**
+     * Application errors observed in the window. Sourced from
+     * `error_occurred` events fired from server routes (catch blocks) and the
+     * client (window error / unhandledrejection / explicit trackError calls).
+     */
+    errors: {
+      total: number;
+      by_source: Record<string, number>;
+      by_code: Record<string, number>;
+      by_source_code: Record<string, number>;
+      by_severity: Record<string, number>;
+      recent: Array<{
+        timestamp: string;
+        username?: string;
+        source: string;
+        code: string;
+        message: string;
+        severity: string;
+        statusCode?: number;
+        context?: string;
+      }>;
+    };
   };
 }
 
@@ -500,6 +523,14 @@ function aggregate(users: UserSummary[], now: Date): KpiSummary {
       onboarding_validation_errors: {},
       sort_key_distribution: {},
       page_views_by_path: {},
+      errors: {
+        total: 0,
+        by_source: {},
+        by_code: {},
+        by_source_code: {},
+        by_severity: {},
+        recent: [],
+      },
     },
   };
 }
@@ -772,6 +803,53 @@ async function buildEventRollups(
     };
   }
 
+  // Errors. Group by source / code / source::code / severity, plus a recent
+  // feed for drill-down. Recent is sorted newest-first; the GSI query already
+  // returns by timestamp prefix so we just slice the top N after a sort to be
+  // safe against pagination order quirks.
+  const errorEvents = eventsByType["error_occurred"] ?? [];
+  const errors_by_source: Record<string, number> = {};
+  const errors_by_code: Record<string, number> = {};
+  const errors_by_source_code: Record<string, number> = {};
+  const errors_by_severity: Record<string, number> = {};
+  for (const ev of errorEvents) {
+    const source = String(ev.payload.source ?? "unknown");
+    const code = String(ev.payload.code ?? "UNSPECIFIED");
+    const severity = String(ev.payload.severity ?? "error");
+    errors_by_source[source] = (errors_by_source[source] ?? 0) + 1;
+    errors_by_code[code] = (errors_by_code[code] ?? 0) + 1;
+    errors_by_source_code[`${source}::${code}`] =
+      (errors_by_source_code[`${source}::${code}`] ?? 0) + 1;
+    errors_by_severity[severity] = (errors_by_severity[severity] ?? 0) + 1;
+  }
+  const errors_recent = [...errorEvents]
+    .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
+    .slice(0, 50)
+    .map((ev) => {
+      const out: {
+        timestamp: string;
+        username?: string;
+        source: string;
+        code: string;
+        message: string;
+        severity: string;
+        statusCode?: number;
+        context?: string;
+      } = {
+        timestamp: ev.timestamp,
+        username: ev.username,
+        source: String(ev.payload.source ?? "unknown"),
+        code: String(ev.payload.code ?? "UNSPECIFIED"),
+        message: String(ev.payload.message ?? ""),
+        severity: String(ev.payload.severity ?? "error"),
+      };
+      if (typeof ev.payload.statusCode === "number") out.statusCode = ev.payload.statusCode;
+      if (typeof ev.payload.context === "string" && ev.payload.context) {
+        out.context = ev.payload.context;
+      }
+      return out;
+    });
+
   return {
     window_days: EVENT_WINDOW_DAYS,
     event_counts,
@@ -795,6 +873,14 @@ async function buildEventRollups(
     onboarding_validation_errors,
     sort_key_distribution,
     page_views_by_path,
+    errors: {
+      total: errorEvents.length,
+      by_source: errors_by_source,
+      by_code: errors_by_code,
+      by_source_code: errors_by_source_code,
+      by_severity: errors_by_severity,
+      recent: errors_recent,
+    },
   };
 }
 

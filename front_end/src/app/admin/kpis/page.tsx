@@ -519,6 +519,13 @@ export default function AdminKpisPage() {
         <KeyValueTable counts={summary.event_rollups.onboarding_validation_errors} />
       </Section>
 
+      <Section title="Errors (last 30d)">
+        <p className="text-xs text-slate-500 mb-3">
+          Aggregated from <code>error_occurred</code> events fired by server route catch blocks and the browser&apos;s global error handlers. <code>__anon__</code> means the error fired without an authenticated user (signup, login pre-auth, public pages).
+        </p>
+        <ErrorsPanel errors={summary.event_rollups?.errors} />
+      </Section>
+
       <Section title="Homepage CTAs">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -932,6 +939,111 @@ function SimpleBarTable({
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function ErrorsPanel({
+  errors,
+}: {
+  errors: KpiSummary["event_rollups"]["errors"] | undefined;
+}) {
+  if (!errors || errors.total === 0) {
+    return <Empty />;
+  }
+  const severityChip = (sev: string) => {
+    const map: Record<string, string> = {
+      fatal: "bg-red-200 text-red-900",
+      error: "bg-red-100 text-red-800",
+      warn: "bg-amber-100 text-amber-800",
+    };
+    return map[sev] ?? "bg-slate-100 text-slate-700";
+  };
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Stat label="Total errors" value={errors.total} />
+        <Stat label="Distinct sources" value={Object.keys(errors.by_source).length} />
+        <Stat label="Distinct codes" value={Object.keys(errors.by_code).length} />
+        <Stat label="Distinct source::code" value={Object.keys(errors.by_source_code).length} />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div>
+          <p className="text-xs font-bold uppercase text-slate-500 mb-2">By source</p>
+          <KeyValueTable counts={errors.by_source} />
+        </div>
+        <div>
+          <p className="text-xs font-bold uppercase text-slate-500 mb-2">By code</p>
+          <KeyValueTable counts={errors.by_code} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div>
+          <p className="text-xs font-bold uppercase text-slate-500 mb-2">By source::code</p>
+          <KeyValueTable counts={errors.by_source_code} />
+        </div>
+        <div>
+          <p className="text-xs font-bold uppercase text-slate-500 mb-2">By severity</p>
+          <KeyValueTable counts={errors.by_severity} />
+        </div>
+      </div>
+
+      <div>
+        <p className="text-xs font-bold uppercase text-slate-500 mb-2">
+          Recent errors (newest first, up to 50)
+        </p>
+        <div className="overflow-x-auto rounded-lg border border-slate-200">
+          <table className="w-full text-xs">
+            <thead className="text-[10px] uppercase tracking-wider text-slate-500 bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="text-left py-1.5 px-2">When</th>
+                <th className="text-left py-1.5 px-2">User</th>
+                <th className="text-left py-1.5 px-2">Source</th>
+                <th className="text-left py-1.5 px-2">Code</th>
+                <th className="text-left py-1.5 px-2">Sev</th>
+                <th className="text-left py-1.5 px-2">Message</th>
+                <th className="text-left py-1.5 px-2">Context</th>
+              </tr>
+            </thead>
+            <tbody>
+              {errors.recent.map((r, i) => (
+                <tr key={i} className="border-b border-slate-100 align-top">
+                  <td className="py-1 px-2 text-slate-500 whitespace-nowrap font-mono">
+                    {r.timestamp ? new Date(r.timestamp).toLocaleString() : "—"}
+                  </td>
+                  <td className="py-1 px-2 text-slate-700 whitespace-nowrap">
+                    {r.username ?? "—"}
+                  </td>
+                  <td className="py-1 px-2 text-slate-800 whitespace-nowrap font-mono">
+                    {r.source}
+                  </td>
+                  <td className="py-1 px-2 text-slate-800 whitespace-nowrap font-mono">
+                    {r.code}
+                    {typeof r.statusCode === "number" && (
+                      <span className="ml-1 text-slate-400">({r.statusCode})</span>
+                    )}
+                  </td>
+                  <td className="py-1 px-2">
+                    <span
+                      className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${severityChip(r.severity)}`}
+                    >
+                      {r.severity}
+                    </span>
+                  </td>
+                  <td className="py-1 px-2 text-slate-900 break-all max-w-[28rem]">
+                    {r.message || <span className="text-slate-400 italic">—</span>}
+                  </td>
+                  <td className="py-1 px-2 text-slate-500 break-all max-w-[14rem] font-mono">
+                    {r.context ?? "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

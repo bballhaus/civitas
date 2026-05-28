@@ -9,7 +9,7 @@ import {
 } from "@/lib/auth";
 import { getUserById, updatePasswordHash } from "@/db/queries/users";
 import { logSecurityEvent } from "@/lib/security-log";
-import { recordEvent } from "@/lib/event-log";
+import { recordEvent, recordError } from "@/lib/event-log";
 
 export async function POST(request: Request) {
   const auth = await getAuthenticatedUser(request);
@@ -59,6 +59,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Password changed successfully." });
   } catch (err) {
     console.error("Change password error:", err);
+    recordError(auth.username, {
+      source: "api/auth/change-password",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message: err instanceof Error ? err.message : String(err),
+      statusCode: 500,
+    });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

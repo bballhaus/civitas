@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { chatCompletion } from "@/lib/llm";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { recordEvent } from "@/lib/event-log";
+import { recordEvent, recordError } from "@/lib/event-log";
 
 const PROMPT = `You are an expert government contracting consultant creating an INTERNAL planning document for a vendor considering pursuing an RFP. This document is for internal use only—it is NOT a proposal to submit. It helps the user plan and decide whether to bid.
 
@@ -128,6 +128,13 @@ ${profile ? JSON.stringify(profile, null, 2) : "No user profile provided. Create
     return NextResponse.json({ plan });
   } catch (err) {
     console.error("[generate-plan-of-execution] Error:", err);
+    const user = await getAuthenticatedUser(req).catch(() => null);
+    recordError(user?.username ?? null, {
+      source: "api/generate-plan-of-execution",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message: err instanceof Error ? err.message : String(err),
+      statusCode: 500,
+    });
     return NextResponse.json(
       {
         error:

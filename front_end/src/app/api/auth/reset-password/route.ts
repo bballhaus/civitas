@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { hashPassword, validatePassword } from "@/lib/auth";
 import { getUserData, saveUserData } from "@/lib/user-data";
 import { logSecurityEvent } from "@/lib/security-log";
-import { recordEvent } from "@/lib/event-log";
+import { recordEvent, recordError } from "@/lib/event-log";
 
 export async function POST(request: Request) {
   try {
@@ -52,6 +52,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Password has been reset. You can now log in." });
   } catch (err) {
     console.error("Reset password error:", err);
+    recordError(null, {
+      source: "api/auth/reset-password",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message: err instanceof Error ? err.message : String(err),
+      statusCode: 500,
+    });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

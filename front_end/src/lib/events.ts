@@ -49,6 +49,7 @@ export const SERVER_EVENT_TYPES = [
   "profile_extracted",
   "profile_updated",
   "onboarding_completed",
+  "error_occurred",
 ] as const;
 
 export const CLIENT_EVENT_TYPES = [
@@ -92,6 +93,7 @@ export const CLIENT_EVENT_TYPES = [
   "page_viewed",
   "session_start",
   "session_heartbeat",
+  "error_occurred",
 ] as const;
 
 export const ALL_EVENT_TYPES = [
@@ -150,6 +152,18 @@ export function isEventType(s: string): s is EventType {
  *   - widgetKey?: string     — homepage widget identifier
  *   - columnKey?: string     — tracker column key ("saved" | "in_progress" | ...)
  *   - from?: string / to?: string  — RFP status transition (tracker_status_changed_from_tracker)
+ *   - source?: string        — for error_occurred: where the error came from
+ *                              (e.g. "api/generate-proposal", "client/global",
+ *                              "scrape/enrich"). Keep stable for rollups.
+ *   - code?: string          — for error_occurred: short stable code
+ *                              (e.g. "GROQ_TIMEOUT", "FETCH_FAILED", "UNHANDLED").
+ *   - message?: string       — for error_occurred: human-readable detail,
+ *                              truncated to MAX_STRING_LEN in the sanitizer.
+ *   - severity?: string      — for error_occurred: "warn" | "error" | "fatal"
+ *                              (default "error").
+ *   - statusCode?: number    — for error_occurred from HTTP routes.
+ *   - context?: string       — for error_occurred: optional short context
+ *                              (rfpId, route path, step name).
  */
 export interface EventPayload {
   [key: string]: unknown;
@@ -219,6 +233,7 @@ export const EVENT_COUNTER: Partial<Record<EventType, string>> = {
   tracker_note_edited: "counter_tracker_notes_edited",
   onboarding_validation_error: "counter_onboarding_validation_errors",
   onboarding_field_touched: "counter_onboarding_field_touches",
+  error_occurred: "counter_errors",
 };
 
 /**

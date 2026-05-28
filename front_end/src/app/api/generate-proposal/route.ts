@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { chatCompletion } from "@/lib/llm";
 import { extractTextFromPdf } from "@/lib/extraction";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { recordEvent } from "@/lib/event-log";
+import { recordEvent, recordError } from "@/lib/event-log";
 
 export const runtime = "nodejs";
 
@@ -216,6 +216,13 @@ ${pastProposalText}`;
     return NextResponse.json({ proposal });
   } catch (err) {
     console.error("[generate-proposal] Error:", err);
+    const user = await getAuthenticatedUser(req).catch(() => null);
+    recordError(user?.username ?? null, {
+      source: "api/generate-proposal",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message: err instanceof Error ? err.message : String(err),
+      statusCode: 500,
+    });
     return NextResponse.json(
       {
         error:

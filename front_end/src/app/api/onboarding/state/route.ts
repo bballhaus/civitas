@@ -18,7 +18,7 @@ import {
   getFullProfile,
   computeCompletenessScore,
 } from "@/db/queries/profile";
-import { recordEvent } from "@/lib/event-log";
+import { recordEvent, recordError } from "@/lib/event-log";
 import { refreshProfileEmbeddings, EmbeddingConfigError } from "@/lib/embeddings";
 import { rescoreUserMatches } from "@/lib/match-rescore";
 
@@ -71,6 +71,12 @@ export async function GET(request: Request) {
           .where(eq(profiles.userId, profile.userId));
       } catch (err) {
         console.error("[onboarding/state] completeness persist failed:", err);
+        recordError(auth.username, {
+          source: "api/onboarding/state",
+          code: "COMPLETENESS_PERSIST_FAILED",
+          message: err instanceof Error ? err.message : String(err),
+          severity: "warn",
+        });
       }
     });
   }
@@ -174,8 +180,19 @@ export async function POST(request: Request) {
     } catch (err) {
       if (err instanceof EmbeddingConfigError) {
         console.warn("[onboarding] Skipping embeddings — VOYAGE_API_KEY not set");
+        recordError(auth.username, {
+          source: "api/onboarding/state",
+          code: "EMBEDDING_CONFIG_MISSING",
+          message: err.message,
+          severity: "warn",
+        });
       } else {
         console.error("[onboarding] Embedding refresh failed:", err);
+        recordError(auth.username, {
+          source: "api/onboarding/state",
+          code: "EMBEDDING_REFRESH_FAILED",
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     }
     if (!wasOnboardedBefore) {
@@ -183,6 +200,11 @@ export async function POST(request: Request) {
         await rescoreUserMatches(auth.userId);
       } catch (err) {
         console.error("[onboarding] Finish rescore failed:", err);
+        recordError(auth.username, {
+          source: "api/onboarding/state",
+          code: "FINISH_RESCORE_FAILED",
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   });
