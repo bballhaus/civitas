@@ -190,6 +190,65 @@ export async function recordEvent(
   }
 }
 
+const ANON_USERNAME = "__anon__";
+const MAX_ERROR_STRING = 500;
+
+export interface ErrorEventInput {
+  source: string;
+  code?: string;
+  message?: string;
+  severity?: "warn" | "error" | "fatal";
+  statusCode?: number;
+  context?: string;
+}
+
+/**
+ * Record an `error_occurred` event. Fire-and-forget — never throws.
+ *
+ * For authenticated requests, pass the username so the per-user `counter_errors`
+ * gets incremented alongside the raw event log entry. For anonymous flows
+ * (signup, login pre-auth, public pages, server-side jobs without a user
+ * context) pass `null` — the raw event is still written to the event log under
+ * the synthetic `__anon__` bucket but no per-user summary row is touched, so
+ * the dashboard rollups stay clean.
+ */
+export function recordError(
+  username: string | null | undefined,
+  input: ErrorEventInput,
+): void {
+  const payload: EventPayload = {
+    source: String(input.source).slice(0, 200),
+    code: String(input.code ?? "UNSPECIFIED").slice(0, 200),
+    message: String(input.message ?? "").slice(0, MAX_ERROR_STRING),
+    severity: input.severity ?? "error",
+  };
+  if (typeof input.statusCode === "number") payload.statusCode = input.statusCode;
+  if (input.context) payload.context = String(input.context).slice(0, 200);
+
+  const hasUser = !!(username && username.length > 0);
+  if (hasUser) {
+    void recordEvent(username as string, "error_occurred", payload).catch((err) => {
+      console.warn("[recordError] swallowed:", err);
+    });
+    return;
+  }
+  // Anonymous: write only the raw event item, skip the user-summary update so
+  // we don't manufacture a fake `__anon__` user row in the KPI users table.
+  const now = new Date();
+  const ts = now.toISOString();
+  const item = buildEventItem(
+    ANON_USERNAME,
+    "error_occurred",
+    ts,
+    payload,
+    undefined,
+    ttlFromNow(now),
+  );
+  void writeEventItem(item).catch((err) => {
+    console.warn("[recordError] anonymous write failed:", err);
+  });
+}
+
 /**
  * Record a batch of events for a single user. Used by /api/events/track
  * for client-batched events sent via sendBeacon.

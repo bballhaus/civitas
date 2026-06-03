@@ -14,7 +14,7 @@ import {
   updateProfileFields,
   refreshCompletenessScore,
 } from "@/db/queries/profile";
-import { recordEvent } from "@/lib/event-log";
+import { recordEvent, recordError } from "@/lib/event-log";
 import { triggerProfileChangedRescore } from "@/lib/match-rescore-trigger";
 
 // Whitelist of profile fields the client is allowed to PATCH directly.
@@ -96,6 +96,12 @@ export async function PATCH(request: Request) {
     return NextResponse.json(updated);
   } catch (err) {
     console.error("Profile PATCH error:", err);
+    recordError(auth.username, {
+      source: "api/profile",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message: err instanceof Error ? err.message : String(err),
+      statusCode: 500,
+    });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

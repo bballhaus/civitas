@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { chatCompletionStream } from "@/lib/llm";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { recordError } from "@/lib/event-log";
 
 // Streaming response: first byte typically lands in 200-500ms vs. the 10-15s
 // non-streaming turnaround that used to dominate the RFP detail page load.
@@ -120,6 +122,11 @@ Produce the capabilities analysis:`;
           controller.close();
         } catch (err) {
           console.error("[capabilities-analysis] streaming error:", err);
+          recordError(null, {
+            source: "api/capabilities-analysis",
+            code: "STREAM_ERROR",
+            message: err instanceof Error ? err.message : String(err),
+          });
           controller.error(err);
         }
       },
@@ -134,6 +141,13 @@ Produce the capabilities analysis:`;
     });
   } catch (err) {
     console.error("[capabilities-analysis] Error:", err);
+    const u = await getAuthenticatedUser(req).catch(() => null);
+    recordError(u?.username ?? null, {
+      source: "api/capabilities-analysis",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message: err instanceof Error ? err.message : String(err),
+      statusCode: 500,
+    });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to generate analysis" },
       { status: 500 }

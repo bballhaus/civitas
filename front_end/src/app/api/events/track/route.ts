@@ -21,9 +21,13 @@ const RATE = config.kpi.rateLimit;
 const MAX_BATCH = config.kpi.maxBatchSize;
 const MAX_PAYLOAD_KEYS = 20;
 const MAX_STRING_LEN = 200;
+// error_occurred payloads carry a free-form message field that benefits from
+// extra room (truncated stack traces, validation context); keep the rest of
+// the surface tight.
+const MAX_ERROR_MESSAGE_LEN = 1000;
 const MAX_BODY_BYTES = 64 * 1024; // 64KB
 
-function sanitizePayload(raw: unknown): Record<string, unknown> {
+function sanitizePayload(raw: unknown, eventType?: string): Record<string, unknown> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out: Record<string, unknown> = {};
   let n = 0;
@@ -31,7 +35,11 @@ function sanitizePayload(raw: unknown): Record<string, unknown> {
     if (n >= MAX_PAYLOAD_KEYS) break;
     if (typeof k !== "string" || k.length > 64) continue;
     if (typeof v === "string") {
-      out[k] = v.slice(0, MAX_STRING_LEN);
+      const cap =
+        eventType === "error_occurred" && k === "message"
+          ? MAX_ERROR_MESSAGE_LEN
+          : MAX_STRING_LEN;
+      out[k] = v.slice(0, cap);
     } else if (typeof v === "number" && Number.isFinite(v)) {
       out[k] = v;
     } else if (typeof v === "boolean") {
@@ -91,9 +99,10 @@ export async function POST(request: Request) {
     if (!raw || typeof raw !== "object") continue;
     const r = raw as Record<string, unknown>;
     if (typeof r.type !== "string" || !isClientEventType(r.type)) continue;
+    const type = r.type;
     validated.push({
-      type: r.type as EventType,
-      payload: sanitizePayload(r.payload),
+      type: type as EventType,
+      payload: sanitizePayload(r.payload, type),
       sessionId:
         typeof r.sessionId === "string" && r.sessionId.length <= 64
           ? r.sessionId

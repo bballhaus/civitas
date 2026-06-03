@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { verifyPassword, signJwt, setAuthCookie } from "@/lib/auth";
 import { getUserByUsername } from "@/db/queries/users";
 import { logSecurityEvent } from "@/lib/security-log";
-import { recordEvent } from "@/lib/event-log";
+import { recordEvent, recordError } from "@/lib/event-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 // 5 login attempts per 15 minutes per IP
@@ -70,6 +70,12 @@ export async function POST(request: Request) {
     return response;
   } catch (err) {
     console.error("Login error:", err);
+    recordError(null, {
+      source: "api/auth/login",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message: err instanceof Error ? err.message : String(err),
+      statusCode: 500,
+    });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -6,7 +6,7 @@ import {
 } from "@/lib/contract-storage";
 import { extractMetadataFromDocument } from "@/lib/extraction";
 import { refreshProfileFromContracts } from "@/lib/profile-storage";
-import { recordEvent } from "@/lib/event-log";
+import { recordEvent, recordError } from "@/lib/event-log";
 import { config } from "@/lib/config";
 
 export const runtime = "nodejs"; // mupdf requires Node runtime (WASM)
@@ -173,6 +173,13 @@ export async function POST(request: Request) {
     return NextResponse.json(contract, { status: 201 });
   } catch (err) {
     console.error("Contract create error:", err);
+    const u = await getAuthenticatedUser(request).catch(() => null);
+    recordError(u?.username ?? null, {
+      source: "api/contracts",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message: err instanceof Error ? err.message : String(err),
+      statusCode: 500,
+    });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Internal server error" },
       { status: 500 }

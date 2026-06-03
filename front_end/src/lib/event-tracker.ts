@@ -46,7 +46,9 @@ function ensureSessionId(): string {
 
 /**
  * Initialize the tracker. Idempotent — safe to call from multiple components.
- * Wires up periodic flush, visibilitychange, and pagehide listeners.
+ * Wires up periodic flush, visibilitychange, pagehide listeners, plus global
+ * uncaught-error capture so any throw the app fails to catch lands as an
+ * `error_occurred` KPI event.
  */
 export function initEventTracker(): void {
   if (typeof window === "undefined" || state.initialized) return;
@@ -61,6 +63,36 @@ export function initEventTracker(): void {
     if (document.visibilityState === "hidden") void flush(true);
   });
   window.addEventListener("pagehide", () => void flush(true));
+
+  window.addEventListener("error", (ev) => {
+    trackError({
+      source: "client/window",
+      code: "UNCAUGHT",
+      message: ev.message || String(ev.error ?? "unknown"),
+      context: `${ev.filename ?? ""}:${ev.lineno ?? ""}`,
+    });
+  });
+  window.addEventListener("unhandledrejection", (ev) => {
+    const reason = ev.reason;
+    const msg =
+      reason instanceof Error
+        ? reason.message
+        : typeof reason === "string"
+          ? reason
+          : (() => {
+              try {
+                return JSON.stringify(reason);
+              } catch {
+                return String(reason);
+              }
+            })();
+    trackError({
+      source: "client/promise",
+      code: "UNHANDLED_REJECTION",
+      message: msg,
+      context: window.location.pathname,
+    });
+  });
 
   trackEvent("session_start", { pagePath: window.location.pathname });
 }
@@ -106,6 +138,31 @@ async function flush(useBeacon: boolean): Promise<void> {
   } catch {
     // Best-effort: drop on error.
   }
+}
+
+export interface ClientErrorInput {
+  source: string;
+  code?: string;
+  message?: string;
+  severity?: "warn" | "error" | "fatal";
+  statusCode?: number;
+  context?: string;
+}
+
+/**
+ * Fire an `error_occurred` KPI event from the client. Best-effort: same
+ * delivery semantics as trackEvent (batched flush via /api/events/track).
+ */
+export function trackError(input: ClientErrorInput): void {
+  const payload: EventPayload = {
+    source: String(input.source).slice(0, 200),
+    code: String(input.code ?? "UNSPECIFIED").slice(0, 200),
+    message: String(input.message ?? "").slice(0, 1000),
+    severity: input.severity ?? "error",
+  };
+  if (typeof input.statusCode === "number") payload.statusCode = input.statusCode;
+  if (input.context) payload.context = String(input.context).slice(0, 200);
+  trackEvent("error_occurred", payload);
 }
 
 /**

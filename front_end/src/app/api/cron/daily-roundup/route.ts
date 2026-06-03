@@ -22,6 +22,7 @@ import { getFullProfile } from "@/db/queries/profile";
 import { matchV2 } from "@/lib/matching-v2";
 import { sendDailyRoundupEmail, type RoundupRfp } from "@/lib/email";
 import { visibleRfpSourceClause } from "@/lib/rfp-source-visibility";
+import { recordError } from "@/lib/event-log";
 
 const DIGEST_HOUR = 7; // 7am local
 const DEDUPE_HOURS = 23; // belt-and-suspenders against duplicate firings
@@ -75,6 +76,13 @@ export async function POST(request: Request) {
   } catch (err) {
     console.error("[cron/daily-roundup] handler crashed:", err);
     const message = err instanceof Error ? err.message : String(err);
+    recordError(null, {
+      source: "cron/daily-roundup",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message,
+      statusCode: 500,
+      severity: "fatal",
+    });
     return NextResponse.json(
       { error: "Internal error", message },
       { status: 500 },

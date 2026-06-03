@@ -22,7 +22,7 @@ import { setEmailVerified } from "@/db/queries/users";
 import { upsertPendingUser } from "@/db/queries/pending-users";
 import { sendVerificationEmail } from "@/lib/email";
 import { logSecurityEvent } from "@/lib/security-log";
-import { recordEvent } from "@/lib/event-log";
+import { recordEvent, recordError } from "@/lib/event-log";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 const SIGNUP_MAX_REQUESTS = 5;
@@ -172,6 +172,12 @@ export async function POST(request: Request) {
     );
   } catch (err) {
     console.error("Signup error:", err);
+    recordError(null, {
+      source: "api/auth/signup",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message: err instanceof Error ? err.message : String(err),
+      statusCode: 500,
+    });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

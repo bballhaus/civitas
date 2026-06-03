@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { chatCompletionStream } from "@/lib/llm";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { recordError } from "@/lib/event-log";
 
 // Streaming response: the client reads `res.body` and re-renders on each
 // chunk so the section paints in progressively instead of blocking for the
@@ -115,6 +117,11 @@ Summarize the contract requirements:`;
           controller.close();
         } catch (err) {
           console.error("[rfp-requirements-summary] streaming error:", err);
+          recordError(null, {
+            source: "api/rfp-requirements-summary",
+            code: "STREAM_ERROR",
+            message: err instanceof Error ? err.message : String(err),
+          });
           controller.error(err);
         }
       },
@@ -130,6 +137,13 @@ Summarize the contract requirements:`;
     });
   } catch (err) {
     console.error("[rfp-requirements-summary] Error:", err);
+    const u = await getAuthenticatedUser(req).catch(() => null);
+    recordError(u?.username ?? null, {
+      source: "api/rfp-requirements-summary",
+      code: err instanceof Error ? err.name : "UNKNOWN",
+      message: err instanceof Error ? err.message : String(err),
+      statusCode: 500,
+    });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to generate summary" },
       { status: 500 }

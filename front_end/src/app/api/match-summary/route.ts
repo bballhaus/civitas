@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { chatCompletionStream } from "@/lib/llm";
+import { recordError } from "@/lib/event-log";
 
 // Streams a plain-text response so the detail page can render the summary
 // progressively (first token in ~200-500ms vs ~1-3s for the full payload).
@@ -111,6 +112,11 @@ Negative reasons: ${
         controller.close();
       } catch (err) {
         console.error("[match-summary] streaming error:", err);
+        recordError(null, {
+          source: "api/match-summary",
+          code: "STREAM_ERROR",
+          message: err instanceof Error ? err.message : String(err),
+        });
         // The stream may have emitted partial output already; closing with
         // an error surfaces as a network-level failure on the client, which
         // its catch handler treats as "fall back to rule-based summary".
