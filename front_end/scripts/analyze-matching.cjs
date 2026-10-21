@@ -1,11 +1,6 @@
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
-const s3 = new S3Client({
-  region: "us-east-1",
-  credentials: {
-    accessKeyId: "AKIAX4YLG4KAF6CC3OV2",
-    secretAccessKey: "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",
-  },
-});
+// Credentials come from the standard AWS chain (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars or ~/.aws).
+const s3 = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
 
 async function fetchS3(key) {
   const cmd = new GetObjectCommand({ Bucket: "civitas-uploads", Key: key });

@@ -83,3 +83,8 @@ venv/
 
 # webscraping downloads
 /webscraping/downloads/
+# Ad-hoc scraper output dumped at repo root (generated, not source)
+/out.json
+
+# Scraped contact lists (personal data)
+outreach/contacts*.csv

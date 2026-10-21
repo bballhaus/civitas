@@ -15,9 +15,11 @@ PlanetBids portals publish a **Prospective Bidders** list for each open bid, sho
 | `send_emails.py` | Sends personalized cold emails via SMTP with dry-run, batching, and logging |
 | `email_template.html` | Email template with `{{contact_name}}` and `{{company}}` placeholders |
 | `.env.example` | SMTP credential template — copy to `.env` and fill in |
-| `contacts_bay_area.csv` | 170 Bay Area contractor contacts |
-| `contacts.csv` | 230 SoCal contractor contacts |
-| `contacts_all.csv` | 388 merged contacts (Bay Area first, then SoCal, deduplicated) |
+| `contacts_bay_area.csv` | Bay Area contractor contacts (generated locally; not tracked) |
+| `contacts.csv` | SoCal contractor contacts (generated locally; not tracked) |
+| `contacts_all.csv` | Merged contacts, Bay Area first, deduplicated (generated locally; not tracked) |
+
+The contact CSVs hold personal data and are gitignored. Regenerate them with the scrape scripts below.
 
 ## Usage
 
