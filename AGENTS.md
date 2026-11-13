@@ -21,7 +21,7 @@ Lambda, EventBridge).
 - outreach/ - user-discovery scripts (contact scraping, SMTP cold email). Contact CSVs are generated locally and gitignored.
 - tests/ - standalone PDF parsing benchmark (pdf_parsing_benchmark.py) and its report.
 - docs/ - project wiki (architecture, matching, security, KPIs); docs/test-profiles/ holds QA PDFs.
-- .github/workflows/ - manual-only workflows: scrape.yml (scraping fallback) and investigate.yml (portal investigation agent).
+- .github/workflows/ - tests.yml (Python and frontend unit tests on every push and pull request) plus manual-only scrape.yml (scraping fallback) and investigate.yml (portal investigation agent).
 - civitas.config.json - operational settings (LLM provider/model, auth, rate limits, cache, upload, KPI tables).
 - docker-compose.yml - local Postgres 16 with pgvector.
 - RFP_Parsing.py - retired v1 utility.
@@ -45,6 +45,8 @@ pip install -r webscraping/v2/requirements.txt
 playwright install chromium
 ```
 
+For tests, install webscraping/v2/requirements-dev.txt instead (requirements.txt plus pytest).
+
 webscraping/requirements.txt is the old v1 (Selenium) dependency list; use the v2 file.
 
 ## Run, test, lint
@@ -54,15 +56,16 @@ Frontend (run inside front_end/):
 - `npm run dev` - dev server at http://localhost:3000
 - `npm run build` - production build
 - `npm run lint` - ESLint (eslint.config.mjs, Next core-web-vitals + TypeScript rules)
-- Tests: there is no `test` script. Unit tests in src/lib/__tests__/ use node:test and run with `npx tsx --test src/lib/__tests__/<file>.test.ts`.
-- Typecheck: no script is defined; tsconfig.json has `strict: true`, and `npm run build` typechecks.
+- `npm test` - unit tests in src/lib/__tests__/ (node:test via tsx). Run one file with `npx tsx --test src/lib/__tests__/<file>.test.ts`.
+- `npm run typecheck` - `tsc --noEmit` (tsconfig.json has `strict: true`).
+- `npm run lint` currently reports existing errors, so CI does not run it.
 - DB: `npm run db:generate` (new migration from src/db/schema.ts), `npm run db:migrate`, `npm run db:studio`. `db:push` skips migration files; dev only.
 
 Scraper (run from repo root so `webscraping.v2` imports resolve):
 
 - `python -m webscraping.v2.orchestrator.runner --list` - list registered sites (no network)
 - `python -m webscraping.v2.orchestrator.runner --site <site_id> --skip-upload` - scrape one site without writing to S3 (still hits the live portal; see guardrails). Also `--skip-enrich`, `-v`.
-- Tests: `python -m pytest webscraping/v2/tests/test_unit.py -v` (no network). pytest is not listed in requirements.txt; install it separately.
+- Tests: `python -m pytest webscraping/v2/tests/test_unit.py -v` (no network). pytest comes from webscraping/v2/requirements-dev.txt.
 - No Python linter or formatter is configured.
 
 ## Environment variables
