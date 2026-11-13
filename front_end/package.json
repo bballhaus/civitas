@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start -p $PORT",
     "lint": "eslint",
+    "test": "tsx --test src/lib/__tests__/*.test.ts",
+    "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
